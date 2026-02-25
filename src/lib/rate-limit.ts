@@ -11,9 +11,9 @@ function ensureCleanup() {
   if (cleanTimer) return;
   cleanTimer = setInterval(() => {
     const now = Date.now();
-    for (const [k, v] of store.entries()) {
+    Array.from(store.entries()).forEach(([k, v]) => {
       if (v.resetAt < now) store.delete(k);
-    }
+    });
   }, CLEAN_INTERVAL_MS);
 }
 

@@ -123,7 +123,7 @@ export default function PublishRidePage() {
         .maybeSingle();
       if (data && userProfile) {
         const seatCount = data.vehicle_seat_count != null ? Number(data.vehicle_seat_count) : userProfile.vehicle_seat_count;
-        setUserProfile((prev) => (prev ? { ...prev, ...data, vehicle_seat_count: seatCount ?? prev.vehicle_seat_count } : prev));
+        setUserProfile((prev: any) => (prev ? { ...prev, ...data, vehicle_seat_count: seatCount ?? prev.vehicle_seat_count } : prev));
         if (seatCount != null) setAvailableSeats(Math.max(6, seatCount));
       }
     };
@@ -734,7 +734,7 @@ export default function PublishRidePage() {
             <div>
               <label className="block text-sm font-medium mb-1">Vehículo (datos de tu cuenta)</label>
               <p className="w-full px-3 py-2 border rounded bg-gray-50 text-gray-700">
-                {userProfile?.vehicle_model ?? vehicleModel || '—'} {userProfile?.vehicle_year ?? vehicleYear ? `(${userProfile?.vehicle_year ?? vehicleYear})` : ''}
+                {(userProfile?.vehicle_model ?? vehicleModel) || '—'} {userProfile?.vehicle_year ?? vehicleYear ? `(${userProfile?.vehicle_year ?? vehicleYear})` : ''}
               </p>
             </div>
           </div>

@@ -100,20 +100,25 @@ export default function ReservarPage() {
           }
         }
 
-        let bksRes = await supabase
+        const bksSelectWithSeats = 'id, passenger_id, seats_count, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label, selected_seat_ids';
+        const bksSelectWithoutSeats = 'id, passenger_id, seats_count, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label';
+        const bksRes1 = await supabase
           .from('bookings')
-          .select('id, passenger_id, seats_count, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label, selected_seat_ids')
+          .select(bksSelectWithSeats)
           .eq('ride_id', rideId)
           .neq('status', 'cancelled');
-        if (bksRes.error?.code === '42703' || bksRes.error?.message?.includes('column')) {
-          bksRes = await supabase
+        let bks: any[];
+        if (bksRes1.error?.code === '42703' || bksRes1.error?.message?.includes('column')) {
+          const bksRes2 = await supabase
             .from('bookings')
-            .select('id, passenger_id, seats_count, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label')
+            .select(bksSelectWithoutSeats)
             .eq('ride_id', rideId)
             .neq('status', 'cancelled');
+          bks = (bksRes2.data ?? []).map((b: any) => ({ ...b, selected_seat_ids: null }));
+        } else {
+          bks = bksRes1.data ?? [];
         }
-        const bks = bksRes.data;
-        setBookings(bks || []);
+        setBookings(bks);
 
         const { data: tripRequestsRows } = await supabase
           .from('trip_requests')

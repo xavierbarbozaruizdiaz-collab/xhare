@@ -50,33 +50,48 @@ export default function MyBookingsPage() {
         router.push('/login');
         return;
       }
-      let res = await supabase
-        .from('bookings')
-        .select(`
+      const selectWithSeats = `
           id, ride_id, seats_count, price_paid, status, pickup_label, dropoff_label, selected_seat_ids,
           ride:rides(
             id, origin_label, destination_label, departure_time, price_per_seat,
             driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count)
           )
-        `)
+        `;
+      const selectWithoutSeats = `
+          id, ride_id, seats_count, price_paid, status, pickup_label, dropoff_label,
+          ride:rides(
+            id, origin_label, destination_label, departure_time, price_per_seat,
+            driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count)
+          )
+        `;
+      let rows: any[] = [];
+      const res1 = await supabase
+        .from('bookings')
+        .select(selectWithSeats)
         .eq('passenger_id', session.user.id)
         .order('created_at', { ascending: false })
         .limit(50);
-      if (res.error?.code === '42703' || res.error?.message?.includes('column')) {
-        res = await supabase
+      if (res1.error?.code === '42703' || res1.error?.message?.includes('column')) {
+        const res2 = await supabase
           .from('bookings')
-          .select(`
-            id, ride_id, seats_count, price_paid, status, pickup_label, dropoff_label,
-            ride:rides(
-              id, origin_label, destination_label, departure_time, price_per_seat,
-              driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count)
-            )
-          `)
+          .select(selectWithoutSeats)
           .eq('passenger_id', session.user.id)
           .order('created_at', { ascending: false })
           .limit(50);
+        rows = (res2.data ?? []).map((b: any) => ({ ...b, selected_seat_ids: null }));
+      } else {
+        rows = res1.data ?? [];
       }
-      setBookings(res.data || []);
+      const normalized = rows.map((b: any) => ({
+        ...b,
+        ride: b.ride
+          ? {
+              ...b.ride,
+              driver: Array.isArray(b.ride?.driver) ? b.ride.driver[0] ?? null : b.ride.driver ?? null,
+            }
+          : null,
+      }));
+      setBookings(normalized);
     } catch {
       router.push('/login');
     } finally {

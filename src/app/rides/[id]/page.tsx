@@ -170,20 +170,30 @@ export default function RideDetailPage() {
         router.push('/search');
         return;
       }
-      setRide(data);
-      let bksRes = await supabase
+      const rideNormalized = {
+        ...data,
+        driver: Array.isArray(data.driver) ? data.driver[0] ?? null : data.driver ?? null,
+      };
+      setRide(rideNormalized);
+      const bksSelectWithSeats = 'id, passenger_id, seats_count, price_paid, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label, selected_seat_ids';
+      const bksSelectWithoutSeats = 'id, passenger_id, seats_count, price_paid, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label';
+      const bksRes1 = await supabase
         .from('bookings')
-        .select('id, passenger_id, seats_count, price_paid, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label, selected_seat_ids')
+        .select(bksSelectWithSeats)
         .eq('ride_id', rideId)
         .neq('status', 'cancelled');
-      if (bksRes.error?.code === '42703' || bksRes.error?.message?.includes('column')) {
-        bksRes = await supabase
+      let bksRows: any[];
+      if (bksRes1.error?.code === '42703' || bksRes1.error?.message?.includes('column')) {
+        const bksRes2 = await supabase
           .from('bookings')
-          .select('id, passenger_id, seats_count, price_paid, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label')
+          .select(bksSelectWithoutSeats)
           .eq('ride_id', rideId)
           .neq('status', 'cancelled');
+        bksRows = (bksRes2.data ?? []).map((b: any) => ({ ...b, selected_seat_ids: null }));
+      } else {
+        bksRows = bksRes1.data ?? [];
       }
-      setBookings(bksRes.data || []);
+      setBookings(bksRows);
 
       const { data: tripRequestsRows } = await supabase
         .from('trip_requests')
@@ -208,7 +218,7 @@ export default function RideDetailPage() {
         setPublicInfo({ booked_seats: bookedSeats, pickups, dropoffs });
       } else {
         const { data: seatRows } = await supabase.rpc('get_ride_booked_seats', { ride_ids: [rideId] });
-        const bks = bksRes.data || [];
+        const bks = bksRows;
         const pickupsFromBookings = bks
           .filter((b: any) => b.pickup_lat != null && b.pickup_lng != null)
           .map((b: any) => ({ lat: Number(b.pickup_lat), lng: Number(b.pickup_lng), label: b.pickup_label ?? undefined }));

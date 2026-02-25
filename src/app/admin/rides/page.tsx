@@ -54,7 +54,13 @@ export default function AdminRidesPage() {
         `)
         .order('departure_time', { ascending: false })
         .limit(100);
-      setRides(data ?? []);
+      const rows = data ?? [];
+      setRides(
+        rows.map((row) => ({
+          ...row,
+          driver: Array.isArray(row.driver) ? row.driver[0] ?? null : row.driver ?? null,
+        })) as Ride[]
+      );
     })().finally(() => setLoading(false));
   }, []);
 

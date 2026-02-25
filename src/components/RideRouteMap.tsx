@@ -56,8 +56,8 @@ export default function RideRouteMap({
 
   useEffect(() => {
     if (!containerRef.current || sortedStops.length === 0) return;
-    const center = sortedStops.length > 0
-      ? [sortedStops[0].lat, sortedStops[0].lng] as [number, number]
+    const center: [number, number] = sortedStops.length > 0
+      ? [sortedStops[0].lat, sortedStops[0].lng]
       : [-25.2637, -57.5759];
     const map = L.map(containerRef.current, { zoomControl: false }).setView(center, 12);
     mapRef.current = map;
