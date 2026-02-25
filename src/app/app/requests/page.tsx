@@ -23,7 +23,9 @@ export default function RequestsPage() {
       return;
     }
     try {
-      const response = await fetch('/api/requests');
+      const accessToken = session.access_token;
+      const headers: HeadersInit = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+      const response = await fetch('/api/requests', { headers });
       if (response.ok) {
         const data = await response.json();
         setRequests(Array.isArray(data) ? data : []);

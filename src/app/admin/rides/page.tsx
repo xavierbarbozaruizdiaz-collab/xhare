@@ -55,12 +55,26 @@ export default function AdminRidesPage() {
         .order('departure_time', { ascending: false })
         .limit(100);
       const rows = data ?? [];
-      setRides(
-        rows.map((row) => ({
-          ...row,
-          driver: Array.isArray(row.driver) ? row.driver[0] ?? null : row.driver ?? null,
-        })) as Ride[]
-      );
+      const normalized: Ride[] = rows.map((row: any) => {
+        const rawDriver = row.driver;
+        const driver = Array.isArray(rawDriver) ? rawDriver[0] ?? null : rawDriver ?? null;
+        return {
+          id: row.id,
+          origin_label: row.origin_label ?? null,
+          destination_label: row.destination_label ?? null,
+          departure_time: row.departure_time ?? null,
+          status: row.status ?? 'draft',
+          available_seats: row.available_seats ?? null,
+          total_seats: row.total_seats ?? null,
+          price_per_seat: row.price_per_seat ?? null,
+          created_at: row.created_at ?? null,
+          driver_id: row.driver_id ?? null,
+          driver: driver && typeof driver === 'object' && 'full_name' in driver
+            ? { full_name: (driver as { full_name?: string | null }).full_name ?? null }
+            : null,
+        };
+      });
+      setRides(normalized);
     })().finally(() => setLoading(false));
   }, []);
 

@@ -50,13 +50,19 @@ export default function RideDetailPage() {
   // Conductor: enviar ubicación cada 25 s (alineado con rate limit 15 s y carga en pasajeros)
   useEffect(() => {
     if (!rideId || !currentUser || ride?.driver_id !== currentUser.id || ride?.status !== 'en_route') return;
-    const sendLocation = () => {
-      if (!navigator.geolocation) return;
+    const sendLocation = async () => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) return;
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           fetch(`/api/rides/${rideId}/location`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+            },
             body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
           }).catch(() => {});
         },
@@ -64,8 +70,10 @@ export default function RideDetailPage() {
         { enableHighAccuracy: true, timeout: 8000, maximumAge: 5000 }
       );
     };
-    sendLocation();
-    const interval = setInterval(sendLocation, 25000);
+    void sendLocation();
+    const interval = setInterval(() => {
+      void sendLocation();
+    }, 25000);
     return () => clearInterval(interval);
   }, [rideId, currentUser?.id, ride?.driver_id, ride?.status]);
 
@@ -99,6 +107,26 @@ export default function RideDetailPage() {
     const sorted = [...ride.ride_stops].sort((a: any, b: any) => (a.stop_order ?? 0) - (b.stop_order ?? 0));
     return sorted.slice(1, -1).map((s: any) => ({ lat: s.lat, lng: s.lng })).filter((p: any) => p.lat != null && p.lng != null);
   }, [ride]);
+
+  const firstNavigationTarget = useMemo(() => {
+    if (!ride || basePolyline.length < 1) return null;
+    const origin = basePolyline[0];
+    const points: { point: { lat: number; lng: number }; pos: number }[] = [];
+
+    driverIntermediateStops.forEach((p: { lat: number; lng: number }) => {
+      points.push({ point: p, pos: getPositionAlongPolyline(p, basePolyline) });
+    });
+    passengerPickups.forEach((p: { lat: number; lng: number }) => {
+      points.push({ point: p, pos: getPositionAlongPolyline(p, basePolyline) });
+    });
+
+    if (points.length === 0) {
+      return origin;
+    }
+
+    points.sort((a, b) => a.pos - b.pos);
+    return points[0].point;
+  }, [ride, basePolyline, driverIntermediateStops, passengerPickups]);
 
   useEffect(() => {
     if (basePolyline.length < 2) {
@@ -241,13 +269,32 @@ export default function RideDetailPage() {
     }
   }
 
+  function openNavigationToFirstPoint() {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
+    const target = firstNavigationTarget;
+    if (!target) return;
+    const { lat, lng } = target;
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '');
+    const destination = `${lat},${lng}`;
+    const url = isIOS
+      ? `http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    window.open(url, '_blank');
+  }
+
   async function setRideStatus(newStatus: 'en_route' | 'completed') {
     if (!rideId || ride?.driver_id !== currentUser?.id || updatingStatus) return;
     setUpdatingStatus(true);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
       const res = await fetch(`/api/rides/${rideId}/update-status`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ status: newStatus }),
       });
       const data = await res.json().catch(() => ({}));
@@ -267,6 +314,9 @@ export default function RideDetailPage() {
       }
       if (newStatus === 'en_route' && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission().catch(() => {});
+      }
+      if (newStatus === 'en_route') {
+        openNavigationToFirstPoint();
       }
     } finally {
       setUpdatingStatus(false);
