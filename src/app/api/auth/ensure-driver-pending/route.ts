@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createServiceClient } from '@/lib/supabase/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+const ENSURE_DRIVER_WINDOW_MS = 60_000;
+const ENSURE_DRIVER_MAX_PER_WINDOW = 10;
 
 /**
  * El cliente guarda la sesión en localStorage; el servidor no la ve por cookies.
@@ -12,6 +16,14 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
  */
 export async function POST(request: NextRequest) {
   try {
+    const clientId = getClientId(request);
+    if (!checkRateLimit(`ensure-driver:${clientId}`, ENSURE_DRIVER_WINDOW_MS, ENSURE_DRIVER_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un minuto.' },
+        { status: 429 }
+      );
+    }
+
     let userId: string | null = null;
 
     const body = await request.json().catch(() => ({}));

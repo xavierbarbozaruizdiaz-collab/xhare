@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 
+/**
+ * Lista viajes del conductor. Fuente principal: rides + ride_stops + bookings.
+ * No usa ride_passengers para métricas/listado principal.
+ */
 export async function GET(request: NextRequest) {
   try {
     const supabase = createServerClient();
-    
+
     const {
       data: { user },
       error: authError,
@@ -14,7 +18,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user is driver
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
@@ -30,10 +33,7 @@ export async function GET(request: NextRequest) {
       .select(`
         *,
         ride_stops(*),
-        ride_passengers(
-          *,
-          ride_requests(*)
-        )
+        bookings(id, passenger_id, seats_count, status, price_paid, pickup_label, dropoff_label)
       `)
       .eq('driver_id', user.id)
       .order('departure_time', { ascending: true });
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json(rides);
+    return NextResponse.json(rides ?? []);
   } catch (error) {
     return NextResponse.json(
       { error: 'Internal server error' },
@@ -50,4 +50,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

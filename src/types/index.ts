@@ -18,9 +18,6 @@ export type RideStatus =
   | 'draft'
   | 'published'
   | 'booked'
-  | 'building' 
-  | 'ready' 
-  | 'assigned' 
   | 'en_route' 
   | 'completed' 
   | 'cancelled';

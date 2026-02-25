@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { z } from 'zod';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
+const RIDE_STATUSES = ['draft', 'published', 'booked', 'en_route', 'completed', 'cancelled'] as const;
 const updateStatusSchema = z.object({
-  status: z.enum(['building', 'ready', 'assigned', 'en_route', 'completed', 'cancelled']),
+  status: z.enum(RIDE_STATUSES),
 });
+
+const UPDATE_STATUS_WINDOW_MS = 60_000;
+const UPDATE_STATUS_MAX_PER_WINDOW = 30;
 
 export async function POST(
   request: NextRequest,
@@ -21,6 +26,14 @@ export async function POST(
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const clientId = getClientId(request, user.id);
+    if (!checkRateLimit(`update-status:${clientId}`, UPDATE_STATUS_WINDOW_MS, UPDATE_STATUS_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas actualizaciones. Esperá un momento.' },
+        { status: 429 }
+      );
     }
 
     // Check if user is driver
@@ -48,7 +61,12 @@ export async function POST(
     const body = await request.json();
     const validated = updateStatusSchema.parse(body);
 
-    const updatePayload: { status: string; driver_lat?: null; driver_lng?: null; driver_location_updated_at?: null } = { status: validated.status };
+    const updatePayload: Record<string, unknown> = { status: validated.status };
+    if (validated.status === 'en_route') {
+      updatePayload.started_at = new Date().toISOString();
+      updatePayload.current_stop_index = 0;
+      updatePayload.awaiting_stop_confirmation = false;
+    }
     if (validated.status === 'completed') {
       updatePayload.driver_lat = null;
       updatePayload.driver_lng = null;

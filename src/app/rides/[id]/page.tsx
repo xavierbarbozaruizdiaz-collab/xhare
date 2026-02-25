@@ -27,10 +27,41 @@ export default function RideDetailPage() {
   const [computedDurationMinutes, setComputedDurationMinutes] = useState<number | null>(null);
   const [publicInfo, setPublicInfo] = useState<{ booked_seats: number; pickups: Array<{ lat: number; lng: number; label?: string }>; dropoffs: Array<{ lat: number; lng: number; label?: string }> } | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [boardingEvents, setBoardingEvents] = useState<Array<{ booking_id: string; stop_index: number; event_type: string }>>([]);
+  const [arriveModalOpen, setArriveModalOpen] = useState(false);
+  const [arriveDecisions, setArriveDecisions] = useState<Record<string, 'boarded' | 'no_show' | 'dropped_off'>>({});
+  const [submittingArrive, setSubmittingArrive] = useState(false);
+  const [hasRatedDriver, setHasRatedDriver] = useState(false);
+  const [passengerRatingsGiven, setPassengerRatingsGiven] = useState<Set<string>>(new Set());
+  const [passengerNames, setPassengerNames] = useState<Record<string, string>>({});
+  const [rateDriverModalOpen, setRateDriverModalOpen] = useState(false);
+  const [ratePassengerModalOpen, setRatePassengerModalOpen] = useState(false);
+  const [rateDriverStars, setRateDriverStars] = useState(0);
+  const [ratePassengerStars, setRatePassengerStars] = useState(0);
+  const [passengerToRate, setPassengerToRate] = useState<{ passengerId: string; fullName: string } | null>(null);
+  const [submittingRating, setSubmittingRating] = useState(false);
+  const [skippedRateDriver, setSkippedRateDriver] = useState(false);
+  const [locationSendFailed, setLocationSendFailed] = useState(false);
+  const [connectionLost, setConnectionLost] = useState(false);
 
   useEffect(() => {
     loadRide();
   }, [rideId]);
+
+  // Detección de conexión perdida (online/offline)
+  useEffect(() => {
+    const setOnline = () => setConnectionLost(false);
+    const setOffline = () => setConnectionLost(true);
+    if (typeof navigator !== 'undefined') {
+      setConnectionLost(!navigator.onLine);
+      window.addEventListener('online', setOnline);
+      window.addEventListener('offline', setOffline);
+      return () => {
+        window.removeEventListener('online', setOnline);
+        window.removeEventListener('offline', setOffline);
+      };
+    }
+  }, []);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -39,6 +70,15 @@ export default function RideDetailPage() {
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, [rideId]);
+
+  useEffect(() => {
+    if (!ride || !currentUser || ride.driver_id === currentUser.id) return;
+    const myB = (bookings || []).find((b: any) => b.passenger_id === currentUser.id);
+    if (ride.status === 'completed' && myB && !hasRatedDriver && !skippedRateDriver && !rateDriverModalOpen) {
+      setRateDriverModalOpen(true);
+      setRateDriverStars(0);
+    }
+  }, [ride?.status, ride?.driver_id, currentUser?.id, bookings, hasRatedDriver, skippedRateDriver, rateDriverModalOpen]);
 
   // Actualizar datos del viaje (posición del conductor) cada 15 s cuando está en curso (producción)
   useEffect(() => {
@@ -64,9 +104,14 @@ export default function RideDetailPage() {
               Authorization: `Bearer ${accessToken}`,
             },
             body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-          }).catch(() => {});
+          })
+            .then((res) => {
+              if (res.ok) setLocationSendFailed(false);
+              else setLocationSendFailed(true);
+            })
+            .catch(() => setLocationSendFailed(true));
         },
-        () => {},
+        () => setLocationSendFailed(true),
         { enableHighAccuracy: true, timeout: 8000, maximumAge: 5000 }
       );
     };
@@ -223,6 +268,43 @@ export default function RideDetailPage() {
       }
       setBookings(bksRows);
 
+      const { data: events } = await supabase
+        .from('ride_boarding_events')
+        .select('booking_id, stop_index, event_type')
+        .eq('ride_id', rideId);
+      setBoardingEvents(events ?? []);
+
+      if (user && data.driver_id !== user.id) {
+        const { data: dr } = await supabase
+          .from('driver_ratings')
+          .select('id')
+          .eq('ride_id', rideId)
+          .eq('passenger_id', user.id)
+          .maybeSingle();
+        setHasRatedDriver(!!dr);
+      } else {
+        setHasRatedDriver(false);
+      }
+
+      if (user && data.driver_id === user.id && bksRows.length > 0) {
+        const pids = Array.from(new Set((bksRows as any[]).map((b: any) => b.passenger_id).filter(Boolean)));
+        const { data: pr } = await supabase
+          .from('passenger_ratings')
+          .select('passenger_id')
+          .eq('ride_id', rideId);
+        setPassengerRatingsGiven(new Set((pr ?? []).map((r: any) => r.passenger_id)));
+        const { data: profs } = await supabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', pids);
+        const names: Record<string, string> = {};
+        (profs ?? []).forEach((p: any) => { names[p.id] = p.full_name || 'Pasajero'; });
+        setPassengerNames(names);
+      } else {
+        setPassengerNames({});
+        setPassengerRatingsGiven(new Set());
+      }
+
       const { data: tripRequestsRows } = await supabase
         .from('trip_requests')
         .select('origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label')
@@ -323,6 +405,130 @@ export default function RideDetailPage() {
     }
   }
 
+  async function handleLlegue() {
+    if (!rideId || ride?.driver_id !== currentUser?.id || ride?.status !== 'en_route' || ride?.awaiting_stop_confirmation) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+    const res = await fetch(`/api/rides/${rideId}/set-awaiting-confirmation`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ awaiting: true }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data?.error || 'No se pudo marcar llegada.');
+      return;
+    }
+    setArriveDecisions({});
+    setArriveModalOpen(true);
+    await loadRide();
+  }
+
+  async function handleConfirmArrive() {
+    if (!rideId || !allArriveDecisionsSet || submittingArrive) return;
+    setSubmittingArrive(true);
+    try {
+      const passengers = passengersAtCurrentStop.map((p) => ({
+        id: p.bookingId,
+        action: (p.type === 'dropoff' ? 'dropped_off' : (arriveDecisions[decisionKey(p.bookingId, p.type)] ?? 'boarded')) as 'boarded' | 'no_show' | 'dropped_off',
+      }));
+      const droppedPassengerIds = passengersAtCurrentStop
+        .filter((p) => p.type === 'dropoff')
+        .map((p) => p.passengerId);
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      const res = await fetch(`/api/rides/${rideId}/arrive`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ stopOrder: currentStop?.stop_order ?? currentStopIndex, passengers }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data?.error || 'No se pudo confirmar.');
+        return;
+      }
+      setArriveModalOpen(false);
+      setArriveDecisions({});
+      await loadRide();
+      if (droppedPassengerIds.length > 0) {
+        const { data: pr } = await supabase.from('passenger_ratings').select('passenger_id').eq('ride_id', rideId);
+        const rated = new Set((pr ?? []).map((r: any) => r.passenger_id));
+        const firstToRate = droppedPassengerIds.find((id) => !rated.has(id));
+        if (firstToRate) {
+          setPassengerToRate({ passengerId: firstToRate, fullName: passengerNames[firstToRate] ?? 'Pasajero' });
+          setRatePassengerStars(0);
+          setRatePassengerModalOpen(true);
+        }
+      }
+    } finally {
+      setSubmittingArrive(false);
+    }
+  }
+
+  function openNavigationToNextStop() {
+    if (typeof window === 'undefined' || !nextStop) return;
+    const { lat, lng } = nextStop;
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '');
+    const destination = `${lat},${lng}`;
+    const url = isIOS
+      ? `http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&dirflg=d`
+      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    window.open(url, '_blank');
+  }
+
+  async function handleSubmitRateDriver() {
+    if (!rideId || rateDriverStars < 1 || rateDriverStars > 5 || submittingRating) return;
+    setSubmittingRating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      const res = await fetch(`/api/rides/${rideId}/rate-driver`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ stars: rateDriverStars }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data?.error || 'No se pudo enviar la calificación.');
+        return;
+      }
+      setRateDriverModalOpen(false);
+      setHasRatedDriver(true);
+      await loadRide();
+    } finally {
+      setSubmittingRating(false);
+    }
+  }
+
+  async function handleSubmitRatePassenger() {
+    if (!rideId || !passengerToRate || ratePassengerStars < 1 || ratePassengerStars > 5 || submittingRating) return;
+    setSubmittingRating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      const res = await fetch(`/api/rides/${rideId}/rate-passenger`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ passengerId: passengerToRate.passengerId, stars: ratePassengerStars }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data?.error || 'No se pudo enviar la calificación.');
+        return;
+      }
+      setRatePassengerModalOpen(false);
+      setPassengerToRate(null);
+      setPassengerRatingsGiven((prev) => new Set(prev).add(passengerToRate.passengerId));
+      await loadRide();
+    } finally {
+      setSubmittingRating(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -338,6 +544,64 @@ export default function RideDetailPage() {
         { lat: ride.origin_lat, lng: ride.origin_lng, label: ride.origin_label, stop_order: 0 },
         { lat: ride.destination_lat, lng: ride.destination_lng, label: ride.destination_label, stop_order: 1 },
       ].filter((s: any) => s.lat != null && s.lng != null);
+
+  const sortedStops = useMemo(() => [...stops].sort((a: any, b: any) => (a.stop_order ?? 0) - (b.stop_order ?? 0)), [stops]);
+  const currentStopIndex = Math.min(ride.current_stop_index ?? 0, Math.max(0, sortedStops.length - 1));
+  const currentStop = sortedStops[currentStopIndex] ?? null;
+  const nextStop = sortedStops[currentStopIndex + 1] ?? null;
+
+  const hasBoardingEvent = (bookingId: string, stopIdx: number, eventType: string) =>
+    boardingEvents.some((e) => e.booking_id === bookingId && e.stop_index === stopIdx && e.event_type === eventType);
+
+  const passengersAtCurrentStop = useMemo(() => {
+    if (!ride || ride.status !== 'en_route' || basePolyline.length < 2) return [];
+    const list: Array<{ bookingId: string; passengerId: string; type: 'pickup' | 'dropoff'; label: string }> = [];
+    const stopPositions = sortedStops.map((s: any) => getPositionAlongPolyline({ lat: s.lat, lng: s.lng }, basePolyline));
+    const getStopIndex = (lat: number, lng: number) => {
+      const pos = getPositionAlongPolyline({ lat, lng }, basePolyline);
+      let best = 0;
+      let bestDist = Math.abs(stopPositions[0] - pos);
+      for (let i = 1; i < stopPositions.length; i++) {
+        const d = Math.abs(stopPositions[i] - pos);
+        if (d < bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      }
+      return best;
+    };
+    (bookings || []).forEach((b: any) => {
+      if (b.status === 'cancelled') return;
+      const hasPickup = b.pickup_lat != null && b.pickup_lng != null;
+      const hasDropoff = b.dropoff_lat != null && b.dropoff_lng != null;
+      if (hasPickup) {
+        const pickupIdx = getStopIndex(Number(b.pickup_lat), Number(b.pickup_lng));
+        if (pickupIdx === currentStopIndex && !hasBoardingEvent(b.id, currentStopIndex, 'boarded') && !hasBoardingEvent(b.id, currentStopIndex, 'no_show')) {
+          list.push({ bookingId: b.id, passengerId: b.passenger_id, type: 'pickup', label: b.pickup_label ? shortLabel(b.pickup_label, 30) : 'Recogida' });
+        }
+      }
+      if (hasDropoff) {
+        const dropoffIdx = getStopIndex(Number(b.dropoff_lat), Number(b.dropoff_lng));
+        if (dropoffIdx === currentStopIndex && !hasBoardingEvent(b.id, currentStopIndex, 'dropped_off')) {
+          list.push({ bookingId: b.id, passengerId: b.passenger_id, type: 'dropoff', label: b.dropoff_label ? shortLabel(b.dropoff_label, 30) : 'Bajada' });
+        }
+      }
+    });
+    return list;
+  }, [ride, bookings, basePolyline, sortedStops, currentStopIndex, boardingEvents]);
+
+  const decisionKey = (bookingId: string, type: 'pickup' | 'dropoff') => `${bookingId}-${type}`;
+  const allArriveDecisionsSet = passengersAtCurrentStop.length === 0 || passengersAtCurrentStop.every((p) => {
+    const d = arriveDecisions[decisionKey(p.bookingId, p.type)];
+    if (p.type === 'dropoff') return d === 'dropped_off';
+    return d === 'boarded' || d === 'no_show';
+  });
+
+  const onboardCount = useMemo(() => {
+    const hasBoard = (bId: string) => boardingEvents.some((e) => e.booking_id === bId && e.event_type === 'boarded');
+    const hasDrop = (bId: string) => boardingEvents.some((e) => e.booking_id === bId && e.event_type === 'dropped_off');
+    return (bookings || []).filter((b: any) => b.status !== 'cancelled' && hasBoard(b.id) && !hasDrop(b.id)).length;
+  }, [bookings, boardingEvents]);
 
   const driver = ride.driver;
   const polyline = effectivePolyline ?? basePolyline;
@@ -409,6 +673,14 @@ export default function RideDetailPage() {
         )}
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          {ride?.status === 'en_route' && ride?.driver_id === currentUser?.id && (locationSendFailed || connectionLost) && (
+            <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-800 text-sm flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              {connectionLost
+                ? 'Sin conexión. Los pasajeros no ven tu ubicación hasta que se recupere.'
+                : 'No se pudo enviar la ubicación. Revisá la conexión o el GPS.'}
+            </div>
+          )}
           {/* Ruta en el mapa */}
           <div className="p-4 border-b border-gray-100">
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Ruta del viaje</h2>
@@ -592,14 +864,42 @@ export default function RideDetailPage() {
                   </button>
                 )}
                 {ride.status === 'en_route' && (
-                  <button
-                    type="button"
-                    onClick={() => setRideStatus('completed')}
-                    disabled={updatingStatus}
-                    className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition disabled:opacity-50"
-                  >
-                    {updatingStatus ? '...' : 'Finalizar viaje'}
-                  </button>
+                  <>
+                    {ride.awaiting_stop_confirmation && (
+                      <p className="text-sm text-amber-700 w-full">Confirmá pasajeros en el modal para poder continuar.</p>
+                    )}
+                    {!ride.awaiting_stop_confirmation && (
+                      <button
+                        type="button"
+                        onClick={handleLlegue}
+                        className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-amber-600 text-white font-semibold rounded-xl hover:bg-amber-700 transition"
+                      >
+                        Llegué
+                      </button>
+                    )}
+                    {!ride.awaiting_stop_confirmation && nextStop && (
+                      <button
+                        type="button"
+                        onClick={openNavigationToNextStop}
+                        className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition"
+                      >
+                        Continuar viaje
+                      </button>
+                    )}
+                    {onboardCount > 0 && (
+                      <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-green-100 text-green-800 text-sm font-medium">
+                        A bordo: {onboardCount}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setRideStatus('completed')}
+                      disabled={updatingStatus}
+                      className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition disabled:opacity-50"
+                    >
+                      {updatingStatus ? '...' : 'Finalizar viaje'}
+                    </button>
+                  </>
                 )}
                 {ride.status !== 'en_route' && (
                   <Link
@@ -640,6 +940,164 @@ export default function RideDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal Llegué: confirmar pasajeros en la parada */}
+      {arriveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="arrive-modal-title">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] flex flex-col">
+            <h2 id="arrive-modal-title" className="text-lg font-semibold text-gray-900 p-4 border-b border-gray-200">
+              Llegada a parada {currentStop?.label ? shortLabel(currentStop.label, 40) : `#${currentStopIndex + 1}`}
+            </h2>
+            <div className="p-4 overflow-y-auto flex-1">
+              {passengersAtCurrentStop.length === 0 ? (
+                <p className="text-gray-600">No hay pasajeros en esta parada. Confirmá para continuar.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {passengersAtCurrentStop.map((p) => (
+                    <li key={`${p.bookingId}-${p.type}`} className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2 last:border-0">
+                      <span className="text-sm text-gray-700">{p.label}</span>
+                      {p.type === 'pickup' ? (
+                        <span className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setArriveDecisions((prev) => ({ ...prev, [decisionKey(p.bookingId, p.type)]: 'boarded' }))}
+                            className={`px-3 py-1.5 rounded-lg text-sm font-medium ${arriveDecisions[decisionKey(p.bookingId, p.type)] === 'boarded' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                          >
+                            Subió
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setArriveDecisions((prev) => ({ ...prev, [decisionKey(p.bookingId, p.type)]: 'no_show' }))}
+                            className={`px-3 py-1.5 rounded-lg text-sm font-medium ${arriveDecisions[decisionKey(p.bookingId, p.type)] === 'no_show' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                          >
+                            No subió
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setArriveDecisions((prev) => ({ ...prev, [decisionKey(p.bookingId, p.type)]: 'dropped_off' }))}
+                          className={`px-3 py-1.5 rounded-lg text-sm font-medium ${arriveDecisions[decisionKey(p.bookingId, p.type)] === 'dropped_off' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                        >
+                          Bajó
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-200 flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  setArriveModalOpen(false);
+                  const { data: { session } } = await supabase.auth.getSession();
+                  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                  if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+                  await fetch(`/api/rides/${rideId}/set-awaiting-confirmation`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ awaiting: false }),
+                  });
+                  await loadRide();
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmArrive}
+                disabled={!allArriveDecisionsSet || submittingArrive}
+                className="flex-1 px-4 py-2 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {submittingArrive ? '...' : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal pasajero: Calificar chofer */}
+      {rateDriverModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="rate-driver-title">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
+            <h2 id="rate-driver-title" className="text-lg font-semibold text-gray-900 mb-3">Calificar chofer</h2>
+            <p className="text-sm text-gray-600 mb-4">¿Cómo fue tu experiencia con el conductor?</p>
+            <div className="flex gap-2 justify-center mb-6">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setRateDriverStars(n)}
+                  className={`w-10 h-10 rounded-full text-lg font-medium ${rateDriverStars >= n ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-500'}`}
+                  aria-label={`${n} estrella${n > 1 ? 's' : ''}`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setRateDriverModalOpen(false); setSkippedRateDriver(true); }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50"
+              >
+                Omitir
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitRateDriver}
+                disabled={rateDriverStars < 1 || submittingRating}
+                className="flex-1 px-4 py-2 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50"
+              >
+                {submittingRating ? '...' : 'Enviar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal chofer: Calificar pasajero */}
+      {ratePassengerModalOpen && passengerToRate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="rate-passenger-title">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
+            <h2 id="rate-passenger-title" className="text-lg font-semibold text-gray-900 mb-3">Calificar pasajero</h2>
+            <p className="text-sm text-gray-600 mb-4">¿Cómo fue tu experiencia con <strong>{passengerToRate.fullName}</strong>?</p>
+            <div className="flex gap-2 justify-center mb-6">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setRatePassengerStars(n)}
+                  className={`w-10 h-10 rounded-full text-lg font-medium ${ratePassengerStars >= n ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-500'}`}
+                  aria-label={`${n} estrella${n > 1 ? 's' : ''}`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setRatePassengerModalOpen(false); setPassengerToRate(null); }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50"
+              >
+                Omitir
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitRatePassenger}
+                disabled={ratePassengerStars < 1 || submittingRating}
+                className="flex-1 px-4 py-2 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50"
+              >
+                {submittingRating ? '...' : 'Enviar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

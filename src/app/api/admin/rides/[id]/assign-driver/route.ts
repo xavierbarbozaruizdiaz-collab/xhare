@@ -52,18 +52,51 @@ export async function POST(
       );
     }
 
-    // Update ride
-    const { error: updateError } = await supabase
+    // Ride must exist and be in assignable state (published only)
+    const { data: ride, error: rideError } = await supabase
       .from('rides')
-      .update({
-        driver_id: validated.driver_id,
-        status: 'assigned',
-      })
-      .eq('id', rideId);
+      .select('id, status')
+      .eq('id', rideId)
+      .single();
+
+    if (rideError || !ride) {
+      return NextResponse.json({ error: 'Ride not found' }, { status: 404 });
+    }
+
+    const notAssignable = ['en_route', 'completed', 'cancelled'];
+    if (notAssignable.includes(ride.status)) {
+      return NextResponse.json(
+        { error: `No se puede asignar conductor: el viaje está ${ride.status}. Solo se puede asignar cuando el viaje está publicado.` },
+        { status: 400 }
+      );
+    }
+
+    if (ride.status !== 'published') {
+      return NextResponse.json(
+        { error: 'Solo se puede asignar conductor a un viaje con estado "published".' },
+        { status: 400 }
+      );
+    }
+
+    // Update ride: set driver_id, keep status published (driver asignado = published + driver_id)
+    const { data: updated, error: updateError } = await supabase
+      .from('rides')
+      .update({ driver_id: validated.driver_id })
+      .eq('id', rideId)
+      .eq('status', 'published')
+      .select('id')
+      .maybeSingle();
 
     if (updateError) {
       return NextResponse.json(
         { error: updateError.message },
+        { status: 400 }
+      );
+    }
+
+    if (!updated) {
+      return NextResponse.json(
+        { error: 'No se pudo actualizar el viaje. El estado pudo haber cambiado.' },
         { status: 400 }
       );
     }

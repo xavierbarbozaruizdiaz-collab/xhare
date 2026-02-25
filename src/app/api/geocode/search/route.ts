@@ -1,9 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
 const USER_AGENT = 'XhareTransporte/1.0 (https://github.com/xhare-transporte)';
 
+const GEOCODE_WINDOW_MS = 60_000;
+const GEOCODE_MAX_PER_WINDOW = 60;
+
 export async function GET(request: NextRequest) {
+  const clientId = getClientId(request);
+  if (!checkRateLimit(`geocode-search:${clientId}`, GEOCODE_WINDOW_MS, GEOCODE_MAX_PER_WINDOW)) {
+    return NextResponse.json(
+      { error: 'Demasiadas búsquedas. Esperá un minuto.' },
+      { status: 429 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q');
   const countrycodes = searchParams.get('countrycodes') ?? 'py';

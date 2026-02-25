@@ -103,12 +103,12 @@ export async function matchRouteFixed(
         (bucketMinutes * 60 * 1000)
     );
 
-    // 7. Find or create a ride for this departure time
+    // 7. Find or create a ride for this departure time (draft = sin conductor asignado aún)
     const { data: existingRides } = await supabase
       .from('rides')
       .select('*, ride_passengers(count)')
       .eq('mode', 'route_fixed')
-      .eq('status', 'building')
+      .eq('status', 'draft')
       .eq('departure_time', bucketTime.toISOString())
       .eq('route_id', route.id);
 
@@ -130,7 +130,7 @@ export async function matchRouteFixed(
           mode: 'route_fixed',
           route_id: route.id,
           capacity,
-          status: 'building',
+          status: 'draft',
           departure_time: bucketTime.toISOString(),
         })
         .select()
