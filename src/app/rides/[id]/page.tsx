@@ -570,15 +570,29 @@ export default function RideDetailPage() {
         const { data: { session: refreshed } } = await supabase.auth.refreshSession();
         session = refreshed ?? session;
       }
-      console.log('SESSION_CHECK', {
-        hasSession: !!session,
-        hasToken: !!session?.access_token,
-        expiresAt: session?.expires_at ?? null,
-      });
-      let res = await doFetch(session?.access_token ?? undefined);
+      const token = session?.access_token ?? undefined;
+      if (!token) {
+        alert('Tu sesión no está lista, volvé a iniciar sesión');
+        return;
+      }
+      if (process.env.NODE_ENV === 'development') {
+        console.log('SESSION_CHECK', {
+          hasSession: !!session,
+          hasToken: !!token,
+          expiresAt: session?.expires_at ?? null,
+        });
+      }
+      let res = await doFetch(token);
       if (res.status === 401 && session?.refresh_token) {
         const { data: { session: refreshed } } = await supabase.auth.refreshSession();
-        res = await doFetch(refreshed?.access_token ?? undefined);
+        const refreshedToken = refreshed?.access_token ?? undefined;
+        if (!refreshedToken) {
+          alert('Sesión expirada o no válida. Cerrando sesión para que vuelvas a ingresar.');
+          await supabase.auth.signOut();
+          router.push('/login');
+          return;
+        }
+        res = await doFetch(refreshedToken);
       }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -631,8 +645,18 @@ export default function RideDetailPage() {
   async function handleLlegue() {
     if (!rideId || ride?.driver_id !== currentUser?.id || ride?.status !== 'en_route' || ride?.awaiting_stop_confirmation) return;
     const { data: { session } } = await supabase.auth.getSession();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+    const token = session?.access_token;
+    if (!token) {
+      alert('Tu sesión no está lista, volvé a iniciar sesión');
+      return;
+    }
+    if (process.env.NODE_ENV === 'development') {
+      console.log('SESSION_CHECK', { hasToken: !!token });
+    }
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
     const res = await fetch(`/api/rides/${rideId}/set-awaiting-confirmation`, {
       method: 'POST',
       headers,
@@ -660,8 +684,18 @@ export default function RideDetailPage() {
         .filter((p) => p.type === 'dropoff')
         .map((p) => p.passengerId);
       const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      const token = session?.access_token;
+      if (!token) {
+        alert('Tu sesión no está lista, volvé a iniciar sesión');
+        return;
+      }
+      if (process.env.NODE_ENV === 'development') {
+        console.log('SESSION_CHECK', { hasToken: !!token });
+      }
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      };
       const res = await fetch(`/api/rides/${rideId}/arrive`, {
         method: 'POST',
         headers,
@@ -706,8 +740,18 @@ export default function RideDetailPage() {
     setSubmittingRating(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      const token = session?.access_token;
+      if (!token) {
+        alert('Tu sesión no está lista, volvé a iniciar sesión');
+        return;
+      }
+      if (process.env.NODE_ENV === 'development') {
+        console.log('SESSION_CHECK', { hasToken: !!token });
+      }
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      };
       const res = await fetch(`/api/rides/${rideId}/rate-driver`, {
         method: 'POST',
         headers,
@@ -731,8 +775,18 @@ export default function RideDetailPage() {
     setSubmittingRating(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      const token = session?.access_token;
+      if (!token) {
+        alert('Tu sesión no está lista, volvé a iniciar sesión');
+        return;
+      }
+      if (process.env.NODE_ENV === 'development') {
+        console.log('SESSION_CHECK', { hasToken: !!token });
+      }
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      };
       const res = await fetch(`/api/rides/${rideId}/rate-passenger`, {
         method: 'POST',
         headers,
@@ -1198,8 +1252,18 @@ export default function RideDetailPage() {
                 onClick={async () => {
                   setArriveModalOpen(false);
                   const { data: { session } } = await supabase.auth.getSession();
-                  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-                  if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+                  const token = session?.access_token;
+                  if (!token) {
+                    alert('Tu sesión no está lista, volvé a iniciar sesión');
+                    return;
+                  }
+                  if (process.env.NODE_ENV === 'development') {
+                    console.log('SESSION_CHECK', { hasToken: !!token });
+                  }
+                  const headers: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                  };
                   await fetch(`/api/rides/${rideId}/set-awaiting-confirmation`, {
                     method: 'POST',
                     headers,

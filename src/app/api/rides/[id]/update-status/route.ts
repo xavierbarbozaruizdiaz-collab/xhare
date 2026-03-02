@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies, headers } from 'next/headers';
 import { z } from 'zod';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import { requireDriverOwnsRide } from '@/lib/api-auth';
@@ -18,7 +19,11 @@ export async function POST(
   try {
     const hasAuthHeader = !!(request.headers.get('authorization') ?? request.headers.get('Authorization'));
     if (process.env.NODE_ENV === 'development') {
-      console.log('[update-status] AUTH_DEBUG', { hasAuthorizationHeader: !!hasAuthHeader });
+      console.log('[update-status] AUTH_DEBUG', { hasAuthorizationHeader: hasAuthHeader });
+      console.log('[update-status] AUTH DEBUG HEADERS', {
+        authHeader: headers().get('authorization') ?? headers().get('Authorization'),
+        cookies: cookies().getAll(),
+      });
     }
     const auth = await requireDriverOwnsRide(params.id, request);
     if (auth instanceof NextResponse) {
