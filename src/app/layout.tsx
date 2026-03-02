@@ -4,6 +4,7 @@ import './globals.css'
 import ActiveRideBar from '@/components/ActiveRideBar'
 import OfferAcceptedNotifier from '@/components/OfferAcceptedNotifier'
 import ErrorBoundary from '@/components/ErrorBoundary'
+import PushRegistration from '@/components/PushRegistration'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -22,6 +23,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <ActiveRideBar />
         <OfferAcceptedNotifier />
+        <PushRegistration />
         <ErrorBoundary>{children}</ErrorBoundary>
       </body>
     </html>

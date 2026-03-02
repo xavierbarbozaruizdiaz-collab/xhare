@@ -5,10 +5,15 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-export function createServerClient() {
+/** Optional request: when provided (e.g. in Route Handlers), auth is read from that request's headers. */
+export function createServerClient(incomingRequest?: Request) {
   const cookieStore = cookies();
-  const requestHeaders = headers();
-  const authHeader = requestHeaders.get('authorization');
+  const sourceHeaders = incomingRequest ? incomingRequest.headers : headers();
+  const authHeader = sourceHeaders.get('authorization') ?? sourceHeaders.get('Authorization');
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[createServerClient] AUTH_DEBUG', { authSource: authHeader ? 'Bearer' : 'cookie' });
+  }
 
   // Prefer explicit Authorization header (Bearer token from client) if present.
   if (authHeader) {

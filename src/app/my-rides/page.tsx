@@ -6,11 +6,12 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import UserRoleBadge from '@/components/UserRoleBadge';
 import PageLoading from '@/components/PageLoading';
+import AppDrawer from '@/components/AppDrawer';
 
 /** Acorta dirección para la lista; título completo en detalle. */
-function shortLabel(label: string | null, maxChars = 42): string {
-  if (!label) return '—';
-  const t = label.trim();
+function shortLabel(label: string | null | undefined, maxChars = 42): string {
+  if (label == null || typeof label !== 'string') return '—';
+  const t = String(label).trim();
   return t.length <= maxChars ? t : t.slice(0, maxChars) + '…';
 }
 
@@ -44,6 +45,7 @@ export default function MyRidesPage() {
   const [reservedByRide, setReservedByRide] = useState<Record<string, number>>({});
   const [expectedAmountByRide, setExpectedAmountByRide] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     checkUser();
@@ -70,7 +72,7 @@ export default function MyRidesPage() {
         .select('*')
         .eq('driver_id', session.user.id)
         .order('departure_time', { ascending: false })
-        .limit(50);
+        .limit(100);
       setRides(data || []);
 
       const rideIds = (data || []).map((r: any) => r.id).filter(Boolean);
@@ -99,42 +101,170 @@ export default function MyRidesPage() {
 
   if (loading) return <PageLoading />;
 
+  const now = new Date();
+  const upcomingRides = rides.filter((r: any) => {
+    const status = r.status ?? '';
+    const dep = r.departure_time ? new Date(r.departure_time) : null;
+    if (status === 'completed' || status === 'cancelled') return false;
+    if (dep && dep < now) return false;
+    return true;
+  });
+  const finishedRides = rides.filter((r: any) => {
+    const status = r.status ?? '';
+    const dep = r.departure_time ? new Date(r.departure_time) : null;
+    if (status === 'completed') return true;
+    if (status === 'cancelled') return true;
+    if (dep && dep < now) return true;
+    return false;
+  });
+
+  function renderRideList(list: any[], showReagendar: boolean) {
+    return list.map((r: any) => {
+      const status = statusConfig(r.status);
+      const totalSeats = Number(r.total_seats ?? r.available_seats ?? 15);
+      const reserved = reservedByRide[r.id] ?? 0;
+      const remaining = Math.max(0, totalSeats - reserved);
+      const sc = status?.className ?? '';
+      const chipClass =
+        sc.includes('green') ? 'chip-success' :
+        sc.includes('amber') ? 'chip-warning' :
+        sc.includes('blue') ? 'chip-info' :
+        sc.includes('red') ? 'chip-error' : 'chip-neutral';
+      return (
+        <li key={r.id}>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => router.push(`/rides/${r.id}`)}
+            onKeyDown={(e) => e.key === 'Enter' && router.push(`/rides/${r.id}`)}
+            className="block bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:border-green-300 hover:shadow-md transition cursor-pointer"
+          >
+            <div className="flex justify-between items-start gap-3 mb-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-gray-900 truncate" title={r.origin_label ?? ''}>
+                  {shortLabel(r.origin_label)}
+                </p>
+                <p className="text-sm text-gray-500 mt-0.5 truncate" title={r.destination_label ?? ''}>
+                  → {shortLabel(r.destination_label)}
+                </p>
+              </div>
+              <span className={`flex-shrink-0 ${chipClass}`}>{status.label}</span>
+            </div>
+            <div className="flex flex-wrap gap-4 text-sm text-gray-600">
+              <span title={r.departure_time ?? ''}>
+                📅 {formatDate(r.departure_time)} · {formatTime(r.departure_time)}
+              </span>
+              {!showReagendar && (
+                <span>
+                  💺 {remaining} plazas{reserved > 0 ? ` (${reserved} reservados)` : ''}
+                </span>
+              )}
+              {(expectedAmountByRide[r.id] ?? 0) > 0 && (
+                <span className="font-medium text-green-700">
+                  A cobrar: {Number(expectedAmountByRide[r.id]).toLocaleString('es-PY')} PYG
+                </span>
+              )}
+              {((expectedAmountByRide[r.id] ?? 0) === 0 && r.price_per_seat != null && Number(r.price_per_seat) > 0) && !showReagendar && (
+                <span>{Number(r.price_per_seat).toLocaleString('es-PY')} PYG / asiento</span>
+              )}
+            </div>
+            <div className="mt-3 flex gap-4 items-center flex-wrap">
+              <span className="text-sm font-medium text-green-600">Ver viaje →</span>
+              {!showReagendar && (
+                <Link
+                  href={`/rides/${r.id}/edit`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-sm btn-tertiary py-0"
+                >
+                  Editar
+                </Link>
+              )}
+              {showReagendar && (
+                <Link
+                  href={`/publish?from_ride_id=${encodeURIComponent(r.id)}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-sm font-medium text-green-600 hover:text-green-700"
+                >
+                  Volver a agendar
+                </Link>
+              )}
+            </div>
+          </div>
+        </li>
+      );
+    });
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-4 py-4">
-        <div className="container mx-auto flex justify-between items-center">
-          <Link href="/my-rides" className="text-2xl font-bold text-green-600">Xhare</Link>
-          <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-gray-50 app-mobile-shell">
+      <AppDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
+        <ul className="space-y-0.5">
+          <li className="flex items-center gap-2 py-3 pb-2">
             <UserRoleBadge />
-            <Link
-              href="/driver/trip-requests"
-              className="px-4 py-2.5 text-gray-700 hover:text-green-600 font-medium"
-            >
+          </li>
+          <li>
+            <Link href="/driver/trip-requests" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center">
               Solicitudes de trayecto
             </Link>
-            <Link href="/messages" className="px-4 py-2.5 text-gray-700 hover:text-green-600 font-medium">
+          </li>
+          <li>
+            <Link href="/messages" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center">
               Mensajes
             </Link>
-            <Link href="/offer" className="px-4 py-2.5 text-gray-700 hover:text-green-600 font-medium">
+          </li>
+          <li>
+            <Link href="/offer" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center">
               Viajes a oferta
             </Link>
-            <Link
-              href="/publish"
-              className="px-4 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 shadow-sm"
-            >
-              Publicar viaje
+          </li>
+          <li>
+            <Link href="/my-rides/finalizados" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center">
+              Viajes finalizados
             </Link>
+          </li>
+          <li className="pt-3 mt-2 border-t border-gray-200">
             <button
-              onClick={() => supabase.auth.signOut().then(() => router.push('/'))}
-              className="px-4 py-2 text-gray-600 hover:text-green-600 font-medium"
+              type="button"
+              onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => router.push('/')); }}
+              className="w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-100 font-medium min-h-[44px] flex items-center"
             >
               Cerrar sesión
             </button>
+          </li>
+        </ul>
+      </AppDrawer>
+
+      <header className="bg-white border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40 shadow-sm">
+        <div className="flex items-center justify-between gap-2 py-2 min-h-[48px]">
+          <Link href="/my-rides" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
+          <div className="flex items-center gap-2">
+            <Link href="/publish" className="btn-primary text-sm py-2 px-3 shrink-0">
+              Publicar viaje
+            </Link>
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              className="p-2.5 min-w-[44px] min-h-[44px] rounded-xl text-gray-600 hover:bg-gray-100 flex items-center justify-center"
+              aria-label="Menú"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
           </div>
+        </div>
+        <div className="hidden lg:flex flex-wrap items-center gap-2 pb-2">
+          <span className="hidden lg:inline"><UserRoleBadge /></span>
+          <Link href="/driver/trip-requests" className="tab-segment text-sm">Solicitudes</Link>
+          <Link href="/messages" className="tab-segment text-sm">Mensajes</Link>
+          <Link href="/offer" className="tab-segment text-sm">Oferta</Link>
+          <button type="button" onClick={() => supabase.auth.signOut().then(() => router.push('/'))} className="btn-tertiary text-sm">
+            Cerrar sesión
+          </button>
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-8 max-w-3xl">
+      <div className="app-mobile-px py-6 max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Mis Viajes</h1>
           {rides.length > 0 && (
@@ -143,79 +273,31 @@ export default function MyRidesPage() {
         </div>
 
         {rides.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-gray-200 p-10 text-center">
+          <div className="bg-white rounded-2xl border border-gray-200 p-10 text-center shadow-sm">
             <div className="text-5xl mb-4 opacity-60">🚗</div>
             <h2 className="text-xl font-semibold text-gray-800 mb-2">Aún no publicaste ningún viaje</h2>
             <p className="text-gray-500 mb-6 max-w-sm mx-auto">
               Publicá tu ruta, elegí fecha y precio, y los pasajeros podrán reservar asientos.
             </p>
-            <Link
-              href="/publish"
-              className="inline-block px-6 py-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700"
-            >
+            <Link href="/publish" className="btn-primary">
               Publicar mi primer viaje
             </Link>
           </div>
         ) : (
-          <ul className="space-y-4">
-            {rides.map((r: any) => {
-              const status = statusConfig(r.status);
-              const totalSeats = Number(r.total_seats ?? r.available_seats ?? 15);
-              const reserved = reservedByRide[r.id] ?? 0;
-              const remaining = Math.max(0, totalSeats - reserved);
-              return (
-                <li key={r.id}>
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => router.push(`/rides/${r.id}`)}
-                    onKeyDown={(e) => e.key === 'Enter' && router.push(`/rides/${r.id}`)}
-                    className="block bg-white rounded-xl border border-gray-200 p-5 hover:border-green-300 hover:shadow-md transition cursor-pointer"
-                  >
-                    <div className="flex justify-between items-start gap-3 mb-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-gray-900 truncate" title={r.origin_label ?? ''}>
-                          {shortLabel(r.origin_label)}
-                        </p>
-                        <p className="text-sm text-gray-500 mt-0.5 truncate" title={r.destination_label ?? ''}>
-                          → {shortLabel(r.destination_label)}
-                        </p>
-                      </div>
-                      <span className={`flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-medium ${status.className}`}>
-                        {status.label}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-4 text-sm text-gray-600">
-                      <span title={r.departure_time ?? ''}>
-                        📅 {formatDate(r.departure_time)} · {formatTime(r.departure_time)}
-                      </span>
-                      <span>
-                        💺 {remaining} plazas{reserved > 0 ? ` (${reserved} reservados)` : ''}
-                      </span>
-                      {(expectedAmountByRide[r.id] ?? 0) > 0 && (
-                        <span className="font-medium text-green-700">
-                          A cobrar por reservas: {Number(expectedAmountByRide[r.id]).toLocaleString('es-PY')} PYG
-                        </span>
-                      )}
-                      {((expectedAmountByRide[r.id] ?? 0) === 0 && r.price_per_seat != null && Number(r.price_per_seat) > 0) && (
-                        <span>${Number(r.price_per_seat).toLocaleString('es-PY')} / asiento</span>
-                      )}
-                    </div>
-                    <div className="mt-3 flex gap-3 items-center">
-                      <span className="text-sm text-green-600 font-medium">Ver viaje →</span>
-                      <Link
-                        href={`/rides/${r.id}/edit`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-sm text-gray-600 hover:text-green-600 font-medium"
-                      >
-                        Editar
-                      </Link>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          <>
+            {upcomingRides.length > 0 ? (
+              <section>
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">
+                  Próximos ({upcomingRides.length})
+                </h2>
+                <ul className="space-y-4">{renderRideList(upcomingRides, false)}</ul>
+              </section>
+            ) : (
+              <p className="text-gray-500 text-center py-6">
+                No tenés viajes próximos. Los finalizados están en el menú → <Link href="/my-rides/finalizados" className="text-green-600 font-medium hover:underline">Viajes finalizados</Link>.
+              </p>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -1,8 +1,12 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
+import { Capacitor } from '@capacitor/core';
+import { Browser } from '@capacitor/browser';
+import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
+import { Geolocation } from '@capacitor/geolocation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { getPositionAlongPolyline } from '@/lib/geo';
@@ -43,6 +47,11 @@ export default function RideDetailPage() {
   const [skippedRateDriver, setSkippedRateDriver] = useState(false);
   const [locationSendFailed, setLocationSendFailed] = useState(false);
   const [connectionLost, setConnectionLost] = useState(false);
+  const [backgroundTracking, setBackgroundTracking] = useState(false);
+  const [sessionExpiredBanner, setSessionExpiredBanner] = useState(false);
+  const [permissionModalOpen, setPermissionModalOpen] = useState(false);
+  const [xiaomiModalOpen, setXiaomiModalOpen] = useState(false);
+  const [trackingToastVisible, setTrackingToastVisible] = useState(false);
 
   useEffect(() => {
     loadRide();
@@ -90,6 +99,8 @@ export default function RideDetailPage() {
   // Conductor: enviar ubicación cada 25 s (alineado con rate limit 15 s y carga en pasajeros)
   useEffect(() => {
     if (!rideId || !currentUser || ride?.driver_id !== currentUser.id || ride?.status !== 'en_route') return;
+    // En app nativa preferimos el tracking en segundo plano vía servicio; mantenemos este tracking
+    // como refuerzo en foreground (no se desactiva).
     const sendLocation = async () => {
       if (typeof navigator === 'undefined' || !navigator.geolocation) return;
       const { data: { session } } = await supabase.auth.getSession();
@@ -121,6 +132,75 @@ export default function RideDetailPage() {
     }, 25000);
     return () => clearInterval(interval);
   }, [rideId, currentUser?.id, ride?.driver_id, ride?.status]);
+
+  async function ensureLocationPermissions(): Promise<boolean> {
+    if (!Capacitor.isNativePlatform()) return true;
+    try {
+      const perms = await Geolocation.checkPermissions();
+      if (perms.location === 'granted') return true;
+      const req = await Geolocation.requestPermissions();
+      if (req.location === 'granted') return true;
+      setPermissionModalOpen(true);
+      return false;
+    } catch {
+      setPermissionModalOpen(true);
+      return false;
+    }
+  }
+
+  async function startBackgroundTracking() {
+    if (!Capacitor.isNativePlatform()) return;
+    if (!rideId || !currentUser || ride?.driver_id !== currentUser.id || ride?.status !== 'en_route') return;
+    const hasPerms = await ensureLocationPermissions();
+    if (!hasPerms) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    let accessToken = session?.access_token;
+    if (!accessToken) return;
+
+    const serverUrl =
+      typeof window !== 'undefined' && window.location.origin
+        ? window.location.origin
+        : 'https://xhare-ashy.vercel.app';
+
+    try {
+      await BackgroundLocation.startTracking({
+        serverUrl,
+        rideId: String(rideId),
+        token: accessToken,
+        intervalMs: 15000,
+      });
+      setBackgroundTracking(true);
+    } catch {
+      // Si falla, mantenemos solo el tracking foreground
+    }
+  }
+
+  async function stopBackgroundTracking() {
+    if (!Capacitor.isNativePlatform()) return;
+    try {
+      await BackgroundLocation.stopTracking();
+    } finally {
+      setBackgroundTracking(false);
+    }
+  }
+
+  // Auto-detener tracking en segundo plano cuando el viaje termina o cambia de estado relevante
+  useEffect(() => {
+    if (!backgroundTracking) return;
+    if (ride?.status !== 'en_route' || ride?.driver_id !== currentUser?.id) {
+      void stopBackgroundTracking();
+    }
+  }, [backgroundTracking, ride?.status, ride?.driver_id, currentUser?.id]);
+
+  // Listener nativo: sesión vencida (401) desde el servicio en segundo plano
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listenerPromise = BackgroundLocation.addListener('sessionExpired', () => {
+      setBackgroundTracking(false);
+      setSessionExpiredBanner(true);
+    });
+    return () => { void listenerPromise.then((h) => h.remove()); };
+  }, []);
 
   const basePolyline = useMemo(() => {
     if (!ride) return [];
@@ -230,24 +310,108 @@ export default function RideDetailPage() {
     return () => { cancelled = true; };
   }, [basePolyline, driverIntermediateStops, passengerPickups, passengerDropoffs]);
 
+  const stops = useMemo(() => {
+    if (!ride) return [];
+    return (ride.ride_stops && ride.ride_stops.length > 0)
+      ? ride.ride_stops
+          .map((s: any) => ({ lat: s.lat, lng: s.lng, label: s.label, stop_order: s.stop_order ?? 0 }))
+          .filter((s: any) => s.lat != null && s.lng != null)
+      : [
+          { lat: ride.origin_lat, lng: ride.origin_lng, label: ride.origin_label, stop_order: 0 },
+          { lat: ride.destination_lat, lng: ride.destination_lng, label: ride.destination_label, stop_order: 1 },
+        ].filter((s: any) => s.lat != null && s.lng != null);
+  }, [ride]);
+
+  const sortedStops = useMemo(() => [...stops].sort((a: any, b: any) => (a.stop_order ?? 0) - (b.stop_order ?? 0)), [stops]);
+  const currentStopIndex = useMemo(
+    () => (ride ? Math.min(ride.current_stop_index ?? 0, Math.max(0, sortedStops.length - 1)) : 0),
+    [ride, sortedStops]
+  );
+  const hasBoardingEvent = useCallback(
+    (bookingId: string, stopIdx: number, eventType: string) =>
+      boardingEvents.some((e) => e.booking_id === bookingId && e.stop_index === stopIdx && e.event_type === eventType),
+    [boardingEvents]
+  );
+  const passengersAtCurrentStop = useMemo(() => {
+    if (!ride || ride.status !== 'en_route' || basePolyline.length < 2) return [];
+    const list: Array<{ bookingId: string; passengerId: string; type: 'pickup' | 'dropoff'; label: string }> = [];
+    const stopPositions = sortedStops.map((s: any) => getPositionAlongPolyline({ lat: s.lat, lng: s.lng }, basePolyline));
+    const getStopIndex = (lat: number, lng: number) => {
+      const pos = getPositionAlongPolyline({ lat, lng }, basePolyline);
+      let best = 0;
+      let bestDist = Math.abs(stopPositions[0] - pos);
+      for (let i = 1; i < stopPositions.length; i++) {
+        const d = Math.abs(stopPositions[i] - pos);
+        if (d < bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      }
+      return best;
+    };
+    (bookings || []).forEach((b: any) => {
+      if (b.status === 'cancelled') return;
+      const hasPickup = b.pickup_lat != null && b.pickup_lng != null;
+      const hasDropoff = b.dropoff_lat != null && b.dropoff_lng != null;
+      if (hasPickup) {
+        const pickupIdx = getStopIndex(Number(b.pickup_lat), Number(b.pickup_lng));
+        if (pickupIdx === currentStopIndex && !hasBoardingEvent(b.id, currentStopIndex, 'boarded') && !hasBoardingEvent(b.id, currentStopIndex, 'no_show')) {
+          list.push({ bookingId: b.id, passengerId: b.passenger_id, type: 'pickup', label: b.pickup_label ? shortLabel(b.pickup_label, 30) : 'Recogida' });
+        }
+      }
+      if (hasDropoff) {
+        const dropoffIdx = getStopIndex(Number(b.dropoff_lat), Number(b.dropoff_lng));
+        if (dropoffIdx === currentStopIndex && !hasBoardingEvent(b.id, currentStopIndex, 'dropped_off')) {
+          list.push({ bookingId: b.id, passengerId: b.passenger_id, type: 'dropoff', label: b.dropoff_label ? shortLabel(b.dropoff_label, 30) : 'Bajada' });
+        }
+      }
+    });
+    return list;
+  }, [ride, bookings, basePolyline, sortedStops, currentStopIndex, hasBoardingEvent]);
+
+  const onboardCount = useMemo(() => {
+    const hasBoard = (bId: string) => boardingEvents.some((e) => e.booking_id === bId && e.event_type === 'boarded');
+    const hasDrop = (bId: string) => boardingEvents.some((e) => e.booking_id === bId && e.event_type === 'dropped_off');
+    return (bookings || []).filter((b: any) => b.status !== 'cancelled' && hasBoard(b.id) && !hasDrop(b.id)).length;
+  }, [bookings, boardingEvents]);
+
   async function loadRide() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       setCurrentUser(user ?? null);
-      const { data, error } = await supabase
+      let data: any = null;
+      const res = await supabase
         .from('rides')
         .select('*, driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count), ride_stops(*)')
         .eq('id', rideId)
         .maybeSingle();
-      if (error || !data) {
+      if (!res.error && res.data) {
+        data = {
+          ...res.data,
+          driver: Array.isArray(res.data.driver) ? res.data.driver[0] ?? null : res.data.driver ?? null,
+        };
+      }
+      if (!data && user) {
+        try {
+          const { data: rpcDataRaw } = await supabase.rpc('get_ride_detail_for_user', { p_ride_id: rideId });
+          const rpcData = Array.isArray(rpcDataRaw) && rpcDataRaw.length > 0 ? rpcDataRaw[0] : rpcDataRaw;
+          if (rpcData && typeof rpcData === 'object' && (rpcData as any).ride) {
+            const r = rpcData as { ride: Record<string, unknown>; ride_stops?: unknown[]; driver_profile?: Record<string, unknown> | null };
+            data = {
+              ...r.ride,
+              driver: r.driver_profile ?? null,
+              ride_stops: Array.isArray(r.ride_stops) ? r.ride_stops : [],
+            };
+          }
+        } catch (e) {
+          console.error('[loadRide] RPC get_ride_detail_for_user failed:', e);
+        }
+      }
+      if (!data) {
         router.push('/search');
         return;
       }
-      const rideNormalized = {
-        ...data,
-        driver: Array.isArray(data.driver) ? data.driver[0] ?? null : data.driver ?? null,
-      };
-      setRide(rideNormalized);
+      setRide(data);
       const bksSelectWithSeats = 'id, passenger_id, seats_count, price_paid, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label, selected_seat_ids';
       const bksSelectWithoutSeats = 'id, passenger_id, seats_count, price_paid, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, dropoff_label';
       const bksRes1 = await supabase
@@ -351,36 +515,79 @@ export default function RideDetailPage() {
     }
   }
 
+  async function openNavigation(lat: number, lng: number, label?: string, index?: number) {
+    const latVal = lat != null ? Number(lat) : NaN;
+    const lngVal = lng != null ? Number(lng) : NaN;
+    if (typeof window === 'undefined' || (!Number.isFinite(latVal) || !Number.isFinite(lngVal))) {
+      if (typeof window !== 'undefined') alert('Punto sin ubicación');
+      return;
+    }
+    console.log('NAV_OPEN', { lat: latVal, lng: lngVal, label, index });
+    const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${latVal},${lngVal}`)}`;
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await Browser.open({ url: `google.navigation:q=${latVal},${lngVal}` });
+      } catch {
+        window.open(fallbackUrl, '_blank');
+      }
+    } else {
+      window.open(fallbackUrl, '_blank');
+    }
+  }
+
   function openNavigationToFirstPoint() {
     if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
     const target = firstNavigationTarget;
     if (!target) return;
-    const { lat, lng } = target;
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '');
-    const destination = `${lat},${lng}`;
-    const url = isIOS
-      ? `http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&dirflg=d`
-      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
-    window.open(url, '_blank');
+    const lat = target.lat;
+    const lng = target.lng;
+    if (lat == null || lng == null) {
+      alert('Punto sin ubicación');
+      return;
+    }
+    openNavigation(lat, lng, 'Origen / primer punto', 0);
   }
 
   async function setRideStatus(newStatus: 'en_route' | 'completed') {
     if (!rideId || ride?.driver_id !== currentUser?.id || updatingStatus) return;
+    if (newStatus === 'completed') {
+      void stopBackgroundTracking();
+    }
     setUpdatingStatus(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const accessToken = session?.access_token;
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (accessToken) {
-        headers.Authorization = `Bearer ${accessToken}`;
+      const doFetch = async (token: string | undefined): Promise<Response> => {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers.Authorization = `Bearer ${token}`;
+        return fetch(`/api/rides/${rideId}/update-status`, {
+          method: 'POST',
+          headers,
+          credentials: 'include',
+          body: JSON.stringify({ status: newStatus }),
+        });
+      };
+      let { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        const { data: { session: refreshed } } = await supabase.auth.refreshSession();
+        session = refreshed ?? session;
       }
-      const res = await fetch(`/api/rides/${rideId}/update-status`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ status: newStatus }),
+      console.log('SESSION_CHECK', {
+        hasSession: !!session,
+        hasToken: !!session?.access_token,
+        expiresAt: session?.expires_at ?? null,
       });
+      let res = await doFetch(session?.access_token ?? undefined);
+      if (res.status === 401 && session?.refresh_token) {
+        const { data: { session: refreshed } } = await supabase.auth.refreshSession();
+        res = await doFetch(refreshed?.access_token ?? undefined);
+      }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (res.status === 401) {
+          alert('Sesión expirada o no válida. Cerrando sesión para que vuelvas a ingresar.');
+          await supabase.auth.signOut();
+          router.push('/login');
+          return;
+        }
         alert(data?.error || 'No se pudo actualizar el estado.');
         return;
       }
@@ -399,6 +606,22 @@ export default function RideDetailPage() {
       }
       if (newStatus === 'en_route') {
         openNavigationToFirstPoint();
+        if (Capacitor.isNativePlatform()) {
+          const granted = await ensureLocationPermissions();
+          if (!granted) return;
+          try {
+            const info = await BackgroundLocation.getDeviceInfo();
+            const m = (info?.manufacturer ?? '').toLowerCase();
+            if (m.includes('xiaomi') || m.includes('redmi') || m.includes('mi')) {
+              setXiaomiModalOpen(true);
+            }
+          } catch (_) {}
+          if (!backgroundTracking) {
+            await startBackgroundTracking();
+            setTrackingToastVisible(true);
+            setTimeout(() => setTrackingToastVisible(false), 4000);
+          }
+        }
       }
     } finally {
       setUpdatingStatus(false);
@@ -469,13 +692,13 @@ export default function RideDetailPage() {
 
   function openNavigationToNextStop() {
     if (typeof window === 'undefined' || !nextStop) return;
-    const { lat, lng } = nextStop;
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '');
-    const destination = `${lat},${lng}`;
-    const url = isIOS
-      ? `http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&dirflg=d`
-      : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
-    window.open(url, '_blank');
+    const lat = nextStop.lat;
+    const lng = nextStop.lng;
+    if (lat == null || lng == null) {
+      alert('Punto sin ubicación');
+      return;
+    }
+    openNavigation(lat, lng, nextStop.label, currentStopIndex + 1);
   }
 
   async function handleSubmitRateDriver() {
@@ -538,70 +761,14 @@ export default function RideDetailPage() {
   }
   if (!ride) return null;
 
-  const stops = (ride.ride_stops && ride.ride_stops.length > 0)
-    ? ride.ride_stops.map((s: any) => ({ lat: s.lat, lng: s.lng, label: s.label, stop_order: s.stop_order }))
-    : [
-        { lat: ride.origin_lat, lng: ride.origin_lng, label: ride.origin_label, stop_order: 0 },
-        { lat: ride.destination_lat, lng: ride.destination_lng, label: ride.destination_label, stop_order: 1 },
-      ].filter((s: any) => s.lat != null && s.lng != null);
-
-  const sortedStops = useMemo(() => [...stops].sort((a: any, b: any) => (a.stop_order ?? 0) - (b.stop_order ?? 0)), [stops]);
-  const currentStopIndex = Math.min(ride.current_stop_index ?? 0, Math.max(0, sortedStops.length - 1));
   const currentStop = sortedStops[currentStopIndex] ?? null;
   const nextStop = sortedStops[currentStopIndex + 1] ?? null;
-
-  const hasBoardingEvent = (bookingId: string, stopIdx: number, eventType: string) =>
-    boardingEvents.some((e) => e.booking_id === bookingId && e.stop_index === stopIdx && e.event_type === eventType);
-
-  const passengersAtCurrentStop = useMemo(() => {
-    if (!ride || ride.status !== 'en_route' || basePolyline.length < 2) return [];
-    const list: Array<{ bookingId: string; passengerId: string; type: 'pickup' | 'dropoff'; label: string }> = [];
-    const stopPositions = sortedStops.map((s: any) => getPositionAlongPolyline({ lat: s.lat, lng: s.lng }, basePolyline));
-    const getStopIndex = (lat: number, lng: number) => {
-      const pos = getPositionAlongPolyline({ lat, lng }, basePolyline);
-      let best = 0;
-      let bestDist = Math.abs(stopPositions[0] - pos);
-      for (let i = 1; i < stopPositions.length; i++) {
-        const d = Math.abs(stopPositions[i] - pos);
-        if (d < bestDist) {
-          bestDist = d;
-          best = i;
-        }
-      }
-      return best;
-    };
-    (bookings || []).forEach((b: any) => {
-      if (b.status === 'cancelled') return;
-      const hasPickup = b.pickup_lat != null && b.pickup_lng != null;
-      const hasDropoff = b.dropoff_lat != null && b.dropoff_lng != null;
-      if (hasPickup) {
-        const pickupIdx = getStopIndex(Number(b.pickup_lat), Number(b.pickup_lng));
-        if (pickupIdx === currentStopIndex && !hasBoardingEvent(b.id, currentStopIndex, 'boarded') && !hasBoardingEvent(b.id, currentStopIndex, 'no_show')) {
-          list.push({ bookingId: b.id, passengerId: b.passenger_id, type: 'pickup', label: b.pickup_label ? shortLabel(b.pickup_label, 30) : 'Recogida' });
-        }
-      }
-      if (hasDropoff) {
-        const dropoffIdx = getStopIndex(Number(b.dropoff_lat), Number(b.dropoff_lng));
-        if (dropoffIdx === currentStopIndex && !hasBoardingEvent(b.id, currentStopIndex, 'dropped_off')) {
-          list.push({ bookingId: b.id, passengerId: b.passenger_id, type: 'dropoff', label: b.dropoff_label ? shortLabel(b.dropoff_label, 30) : 'Bajada' });
-        }
-      }
-    });
-    return list;
-  }, [ride, bookings, basePolyline, sortedStops, currentStopIndex, boardingEvents]);
-
   const decisionKey = (bookingId: string, type: 'pickup' | 'dropoff') => `${bookingId}-${type}`;
   const allArriveDecisionsSet = passengersAtCurrentStop.length === 0 || passengersAtCurrentStop.every((p) => {
     const d = arriveDecisions[decisionKey(p.bookingId, p.type)];
     if (p.type === 'dropoff') return d === 'dropped_off';
     return d === 'boarded' || d === 'no_show';
   });
-
-  const onboardCount = useMemo(() => {
-    const hasBoard = (bId: string) => boardingEvents.some((e) => e.booking_id === bId && e.event_type === 'boarded');
-    const hasDrop = (bId: string) => boardingEvents.some((e) => e.booking_id === bId && e.event_type === 'dropped_off');
-    return (bookings || []).filter((b: any) => b.status !== 'cancelled' && hasBoard(b.id) && !hasDrop(b.id)).length;
-  }, [bookings, boardingEvents]);
 
   const driver = ride.driver;
   const polyline = effectivePolyline ?? basePolyline;
@@ -638,20 +805,20 @@ export default function RideDetailPage() {
   const estimatedDurationLabel = formatDuration(durationMinutes);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-4 py-4">
-        <div className="container mx-auto flex justify-between items-center">
-          <Link href="/search" className="text-2xl font-bold text-green-600">Xhare</Link>
+    <div className="min-h-screen bg-gray-50 app-mobile-shell">
+      <header className="bg-white border-b border-gray-200 app-mobile-px py-4">
+        <div className="flex justify-between items-center">
+          <Link href="/search" className="text-xl md:text-2xl font-bold text-green-600">Xhare</Link>
           <Link
             href="/search"
-            className="text-gray-600 hover:text-green-600 font-medium"
+            className="text-sm md:text-base text-gray-600 hover:text-green-600 font-medium"
           >
             ← Volver a búsqueda
           </Link>
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-6 max-w-2xl">
+      <div className="app-mobile-px py-4 md:py-6 max-w-2xl mx-auto">
         {/* Aviso visible al tope cuando el usuario ya tiene reserva */}
         {myBooking && (
           <div className="mb-4 p-4 rounded-xl bg-green-600 text-white shadow-sm">
@@ -689,17 +856,19 @@ export default function RideDetailPage() {
                 Ruta actualizada pasando por las paradas del conductor y por los puntos de recogida y descenso de los pasajeros.
               </p>
             )}
-            <RideRouteMap
-              stops={stops}
-              polyline={polyline.length >= 2 ? polyline : null}
-              passengerPickups={passengerPickups}
-              passengerDropoffs={passengerDropoffs}
-              myPickup={myBooking && myBooking.pickup_lat != null && myBooking.pickup_lng != null ? { lat: myBooking.pickup_lat, lng: myBooking.pickup_lng, label: myBooking.pickup_label } : null}
-              myDropoff={myBooking && myBooking.dropoff_lat != null && myBooking.dropoff_lng != null ? { lat: myBooking.dropoff_lat, lng: myBooking.dropoff_lng, label: myBooking.dropoff_label } : null}
-              driverLocation={ride.status === 'en_route' && ride.driver_lat != null && ride.driver_lng != null ? { lat: Number(ride.driver_lat), lng: Number(ride.driver_lng) } : null}
-              height="280px"
-              className="rounded-lg overflow-hidden border border-gray-200"
-            />
+            <div className="app-map-container w-full">
+              <RideRouteMap
+                stops={stops}
+                polyline={polyline.length >= 2 ? polyline : null}
+                passengerPickups={passengerPickups}
+                passengerDropoffs={passengerDropoffs}
+                myPickup={myBooking && myBooking.pickup_lat != null && myBooking.pickup_lng != null ? { lat: myBooking.pickup_lat, lng: myBooking.pickup_lng, label: myBooking.pickup_label } : null}
+                myDropoff={myBooking && myBooking.dropoff_lat != null && myBooking.dropoff_lng != null ? { lat: myBooking.dropoff_lat, lng: myBooking.dropoff_lng, label: myBooking.dropoff_label } : null}
+                driverLocation={ride.status === 'en_route' && ride.driver_lat != null && ride.driver_lng != null ? { lat: Number(ride.driver_lat), lng: Number(ride.driver_lng) } : null}
+                height="280px"
+                className="rounded-lg overflow-hidden border border-gray-200"
+              />
+            </div>
             {ride.status === 'en_route' && ride.driver_id === currentUser?.id && (
               <p className="text-xs text-blue-600 mt-2">
                 Tu ubicación se comparte con los pasajeros cada 25 s.
@@ -731,6 +900,15 @@ export default function RideDetailPage() {
             <p className="text-sm text-gray-500 mt-1" title={ride.destination_label ?? ''}>
               → {shortLabel(ride.destination_label)}
             </p>
+            {ride.origin_lat != null && ride.origin_lng != null && (
+              <button
+                type="button"
+                onClick={() => openNavigation(ride.origin_lat!, ride.origin_lng!, ride.origin_label ?? 'Origen', 0)}
+                className="mt-2 text-xs font-medium text-blue-600 hover:underline"
+              >
+                Abrir mapa para ir al origen
+              </button>
+            )}
           </div>
 
           {/* Paradas (si hay más de origen y destino) */}
@@ -739,9 +917,18 @@ export default function RideDetailPage() {
               <h3 className="text-sm font-semibold text-gray-700 mb-2">Paradas</h3>
               <ol className="space-y-1.5 text-sm text-gray-600">
                 {stops.map((s: any, i: number) => (
-                  <li key={i} className="flex gap-2">
+                  <li key={i} className="flex gap-2 items-center flex-wrap">
                     <span className="font-medium text-gray-400 w-5">{s.stop_order + 1}.</span>
                     <span>{s.label || `${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}`}</span>
+                    {s.lat != null && s.lng != null && (
+                      <button
+                        type="button"
+                        onClick={() => openNavigation(s.lat, s.lng, s.label, s.stop_order)}
+                        className="text-blue-600 hover:underline text-xs font-medium"
+                      >
+                        Abrir en mapa
+                      </button>
+                    )}
                   </li>
                 ))}
               </ol>
@@ -850,7 +1037,7 @@ export default function RideDetailPage() {
           )}
 
           {/* Acciones */}
-          <div className="p-5 flex flex-col sm:flex-row gap-3">
+          <div className="p-4 md:p-5 flex flex-col sm:flex-row gap-3 app-mobile-section">
             {ride.driver_id === currentUser?.id ? (
               <>
                 {(ride.status === 'published' || ride.status === 'booked') && (
@@ -877,6 +1064,15 @@ export default function RideDetailPage() {
                         Llegué
                       </button>
                     )}
+                    {!ride.awaiting_stop_confirmation && currentStop && currentStop.lat != null && currentStop.lng != null && (
+                      <button
+                        type="button"
+                        onClick={() => openNavigation(currentStop.lat!, currentStop.lng!, currentStop.label, currentStopIndex)}
+                        className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-gray-700 text-white font-semibold rounded-xl hover:bg-gray-800 transition"
+                      >
+                        Ir al punto actual
+                      </button>
+                    )}
                     {!ride.awaiting_stop_confirmation && nextStop && (
                       <button
                         type="button"
@@ -890,6 +1086,15 @@ export default function RideDetailPage() {
                       <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-green-100 text-green-800 text-sm font-medium">
                         A bordo: {onboardCount}
                       </span>
+                    )}
+                    {Capacitor.isNativePlatform() && (
+                      <button
+                        type="button"
+                        onClick={backgroundTracking ? () => void stopBackgroundTracking() : () => void startBackgroundTracking()}
+                        className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-gray-800 text-white font-semibold rounded-xl hover:bg-gray-900 transition"
+                      >
+                        {backgroundTracking ? 'Detener seguimiento en segundo plano' : 'Iniciar seguimiento en segundo plano'}
+                      </button>
                     )}
                     <button
                       type="button"
@@ -1096,6 +1301,76 @@ export default function RideDetailPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Modal: Ubicación en segundo plano requerida (solo nativo) */}
+      {permissionModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="permission-modal-title">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
+            <h2 id="permission-modal-title" className="text-lg font-semibold text-gray-900 mb-2">Ubicación en segundo plano requerida</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Para compartir tu ubicación durante el viaje, habilitá los permisos de ubicación &quot;Permitir siempre&quot; en Ajustes.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setPermissionModalOpen(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50"
+              >
+                Cerrar
+              </button>
+              <button
+                type="button"
+                onClick={() => { void BackgroundLocation.openAppSettings(); setPermissionModalOpen(false); }}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700"
+              >
+                Ir a ajustes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Xiaomi/Redmi - evitar que el teléfono corte el seguimiento */}
+      {xiaomiModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="xiaomi-modal-title">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
+            <h2 id="xiaomi-modal-title" className="text-lg font-semibold text-gray-900 mb-2">Evitar que el teléfono corte el seguimiento</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Poné Batería: Sin restricciones y activá Inicio automático para Xhare.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setXiaomiModalOpen(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50"
+              >
+                Continuar
+              </button>
+              <button
+                type="button"
+                onClick={() => { void BackgroundLocation.openBatterySettings(); setXiaomiModalOpen(false); }}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700"
+              >
+                Abrir ajustes de batería
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Banner: Sesión vencida (401 desde servicio en segundo plano) */}
+      {sessionExpiredBanner && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 px-4 py-3 bg-amber-700 text-white text-center text-sm font-medium shadow-lg">
+          Sesión vencida, volvé a abrir la app.
+        </div>
+      )}
+
+      {/* Toast: Seguimiento activo (tras Iniciar viaje en nativo) */}
+      {trackingToastVisible && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-full bg-gray-800 text-white text-sm font-medium shadow-lg">
+          Seguimiento activo
         </div>
       )}
     </div>

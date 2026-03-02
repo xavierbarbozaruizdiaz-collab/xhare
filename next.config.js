@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
+  // Desactivado en dev para reducir doble render y errores en WebView (Capacitor)
+  reactStrictMode: process.env.NODE_ENV === 'production',
   eslint: {
     ignoreDuringBuilds: true,
   },

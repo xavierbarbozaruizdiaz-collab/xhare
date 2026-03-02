@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useAdminAuth } from './AdminAuthContext';
 
 type DashboardData = {
   uberpool: {
@@ -32,14 +33,31 @@ type DashboardData = {
 };
 
 export default function AdminDashboardPage() {
+  const { accessToken, ready, refetch } = useAdminAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!ready) return;
+    if (!accessToken) {
+      setError('Sesión no disponible');
+      setLoading(false);
+      return;
+    }
     (async () => {
       try {
-        const res = await fetch('/api/admin/dashboard', { credentials: 'include' });
+        const doFetch = (token: string) =>
+          fetch('/api/admin/dashboard', {
+            headers: { Authorization: `Bearer ${token}` },
+            credentials: 'include',
+          });
+
+        let res = await doFetch(accessToken);
+        if (res.status === 401) {
+          const newToken = await refetch();
+          if (newToken) res = await doFetch(newToken);
+        }
         if (!res.ok) {
           setError(res.status === 401 ? 'No autorizado' : res.status === 403 ? 'Sin permisos' : 'Error al cargar');
           setLoading(false);
@@ -53,12 +71,12 @@ export default function AdminDashboardPage() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [ready, accessToken, refetch]);
 
   if (loading) {
     return (
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
+        <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
         <p className="text-gray-500">Cargando…</p>
       </div>
     );
@@ -67,8 +85,20 @@ export default function AdminDashboardPage() {
   if (error || !data) {
     return (
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
-        <p className="text-red-600">{error ?? 'Sin datos'}</p>
+        <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
+        <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-6 text-center">
+          <p className="text-gray-700">{error ?? 'Sin datos'}</p>
+          <p className="mt-1 text-sm text-gray-500">Tu usuario debe tener rol administrador en la base de datos.</p>
+          <p className="mt-1 text-xs text-gray-400">Si ya lo tiene, probá en el navegador (localhost:3000); en el emulador a veces falla el envío del token.</p>
+          <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Link href="/login?next=/admin" className="btn-primary text-sm">
+              Iniciar sesión
+            </Link>
+            <Link href="/admin" className="text-sm text-green-600 hover:text-green-700 font-medium">
+              Reintentar
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }
@@ -77,27 +107,27 @@ export default function AdminDashboardPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
+      <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
 
       {/* Perfiles / Accesos */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <Link
           href="/admin/drivers"
-          className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:border-green-300 hover:shadow transition"
+          className="app-mobile-card p-4 hover:border-green-300 hover:shadow transition block"
         >
           <p className="text-gray-500 text-sm">Solicitudes de conductores</p>
           <p className="text-2xl font-bold text-gray-900">{profiles.pendingDrivers}</p>
           <p className="text-xs text-green-600 mt-1">Aprobar o rechazar</p>
         </Link>
-        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+        <div className="app-mobile-card p-4">
           <p className="text-gray-500 text-sm">Conductores aprobados</p>
           <p className="text-2xl font-bold text-gray-900">{profiles.totalDrivers}</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+        <div className="app-mobile-card p-4">
           <p className="text-gray-500 text-sm">Pasajeros</p>
           <p className="text-2xl font-bold text-gray-900">{profiles.totalPassengersProfile}</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+        <div className="app-mobile-card p-4">
           <p className="text-gray-500 text-sm">Viajes (UberPool)</p>
           <p className="text-2xl font-bold text-gray-900">
             {uberpool.totalViajesPublicados + uberpool.viajesEnCurso + uberpool.viajesCompletados}
@@ -109,37 +139,37 @@ export default function AdminDashboardPage() {
       <section className="mb-8">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">UberPool (viajes publicados + reservas)</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Publicados</p>
             <p className="text-xl font-bold text-gray-900">{uberpool.totalViajesPublicados}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">En curso</p>
             <p className="text-xl font-bold text-blue-600">{uberpool.viajesEnCurso}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Completados</p>
             <p className="text-xl font-bold text-gray-700">{uberpool.viajesCompletados}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Reservas</p>
             <p className="text-xl font-bold text-gray-900">{uberpool.totalReservas}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Asientos ocupados</p>
             <p className="text-xl font-bold text-gray-900">{uberpool.asientosOcupados}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Tasa cancelación %</p>
             <p className="text-xl font-bold text-gray-900">{uberpool.tasaCancelacion}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">★ Conductor</p>
             <p className="text-xl font-bold text-gray-900">
               {uberpool.ratingPromedioConductor ?? '—'}
             </p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">★ Pasajero</p>
             <p className="text-xl font-bold text-gray-900">
               {uberpool.ratingPromedioPasajero ?? '—'}
@@ -147,7 +177,7 @@ export default function AdminDashboardPage() {
           </div>
         </div>
         {uberpool.activeRides.length > 0 && (
-          <div className="mt-4 bg-white rounded-xl border border-gray-200 p-4">
+          <div className="mt-4 app-mobile-card p-4">
             <p className="text-sm font-medium text-gray-700 mb-2">Viajes activos (publicado / en curso)</p>
             <ul className="text-sm text-gray-600 space-y-1">
               {uberpool.activeRides.slice(0, 10).map((r: any) => (
@@ -168,33 +198,33 @@ export default function AdminDashboardPage() {
       <section className="mb-8">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">InDriver (busco/tengo + ofertas)</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Solicitudes creadas</p>
             <p className="text-xl font-bold text-gray-900">{indriver.solicitudesCreadas}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Disponibilidades creadas</p>
             <p className="text-xl font-bold text-gray-900">{indriver.disponibilidadesCreadas}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Ofertas enviadas</p>
             <p className="text-xl font-bold text-gray-900">{indriver.ofertasEnviadas}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Ofertas aceptadas</p>
             <p className="text-xl font-bold text-green-700">{indriver.ofertasAceptadas}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Viajes desde oferta</p>
             <p className="text-xl font-bold text-gray-900">{indriver.viajesCreadosDesdeOferta}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Precio prom. oferta (conductor)</p>
             <p className="text-xl font-bold text-gray-900">
               {indriver.precioPromedioOfertadoDriver != null ? `${indriver.precioPromedioOfertadoDriver}` : '—'}
             </p>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+          <div className="app-mobile-card p-4">
             <p className="text-gray-500 text-xs">Precio prom. oferta (pasajero)</p>
             <p className="text-xl font-bold text-gray-900">
               {indriver.precioPromedioOfertadoPassenger != null ? `${indriver.precioPromedioOfertadoPassenger}` : '—'}
@@ -203,7 +233,7 @@ export default function AdminDashboardPage() {
         </div>
       </section>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
+      <div className="app-mobile-card p-6">
         <h2 className="font-semibold text-gray-900 mb-2">Accesos rápidos</h2>
         <ul className="space-y-2 text-sm">
           <li>

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase/client';
+import AppDrawer from '@/components/AppDrawer';
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: false });
 
@@ -25,6 +26,7 @@ export default function Home() {
   const [originMapPoint, setOriginMapPoint] = useState<MapPoint>(null);
   const [destinationMapPoint, setDestinationMapPoint] = useState<MapPoint>(null);
   const [mapActiveField, setMapActiveField] = useState<'pickup' | 'dropoff' | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Verificar sesión y rol: guest → landing; driver → my-rides; passenger → búsqueda
   useEffect(() => {
@@ -138,69 +140,60 @@ export default function Home() {
   // Loading inicial
   if (authState === 'loading' || authState === 'driver') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-600 to-emerald-600 flex items-center justify-center">
-        <div className="text-center text-white">
-          <div className="inline-block w-10 h-10 border-2 border-white border-t-transparent rounded-full animate-spin mb-4" />
+      <div className="min-h-screen bg-gray-50 app-mobile-shell flex items-center justify-center">
+        <div className="text-center text-gray-700">
+          <div className="inline-block w-10 h-10 border-2 border-green-600 border-t-transparent rounded-full animate-spin mb-4" />
           <p>{authState === 'driver' ? 'Redirigiendo a tus viajes...' : 'Cargando...'}</p>
         </div>
       </div>
     );
   }
 
-  // Landing: no logueado — solo CTA para iniciar sesión (sin mapa ni búsqueda)
+  // Landing: no logueado
   if (authState === 'guest') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-600 via-green-500 to-emerald-600">
-        <header className="bg-white/10 backdrop-blur-sm border-b border-white/20">
-          <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-            <Link href="/" className="text-2xl font-bold text-white">Xhare</Link>
-            <Link
-              href="/login"
-              className="px-4 py-2 bg-white text-green-600 rounded-lg hover:bg-gray-100 transition font-medium"
-            >
+      <div className="min-h-screen bg-gray-50 app-mobile-shell">
+        <header className="bg-white border-b border-gray-200 shadow-sm app-mobile-px app-mobile-header sticky top-0 z-40">
+          <div className="flex justify-between items-center py-2 min-h-[48px]">
+            <Link href="/" className="text-lg font-bold text-green-600">Xhare</Link>
+            <Link href="/login" className="btn-primary text-sm py-2 min-h-[44px]">
               Iniciar sesión
             </Link>
           </div>
         </header>
-        <div className="container mx-auto px-4 py-20 text-center max-w-2xl mx-auto">
-          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
+        <div className="app-mobile-px py-10 max-w-2xl mx-auto">
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-3 text-center">
             Viaja compartiendo
           </h1>
-          <p className="text-xl text-green-100 mb-6">
+          <p className="text-gray-600 mb-6 text-center">
             Conecta con conductores y pasajeros. Viajá más barato y de forma sostenible.
           </p>
-          <p className="text-lg text-white/90 mb-10">
+          <p className="text-gray-500 mb-8 text-center text-sm">
             Iniciá sesión para <strong>buscar viajes</strong> como pasajero o para <strong>publicar tu viaje</strong> como conductor.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              href="/login"
-              className="px-8 py-4 bg-white text-green-600 rounded-xl font-semibold text-lg hover:bg-gray-100 transition shadow-lg"
-            >
+          <div className="flex flex-col sm:flex-row gap-3 justify-center mb-12">
+            <Link href="/login" className="btn-primary">
               Iniciar sesión
             </Link>
-            <Link
-              href="/login?signup=1"
-              className="px-8 py-4 bg-white/20 text-white border-2 border-white rounded-xl font-semibold text-lg hover:bg-white/30 transition"
-            >
+            <Link href="/login?signup=1" className="btn-secondary">
               Crear cuenta
             </Link>
           </div>
-          <div className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-6 text-left">
-            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 text-white">
-              <div className="text-3xl mb-3">💰</div>
-              <h3 className="font-semibold mb-1">Precios justos</h3>
-              <p className="text-sm text-green-100">Compartí costos y ahorrá</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="app-mobile-card p-5 bg-white">
+              <div className="text-2xl mb-2">💰</div>
+              <h3 className="font-semibold text-gray-900 mb-1">Precios justos</h3>
+              <p className="text-sm text-gray-500">Compartí costos y ahorrá</p>
             </div>
-            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 text-white">
-              <div className="text-3xl mb-3">🌱</div>
-              <h3 className="font-semibold mb-1">Viaja sostenible</h3>
-              <p className="text-sm text-green-100">Menos huella de carbono</p>
+            <div className="app-mobile-card p-5 bg-white">
+              <div className="text-2xl mb-2">🌱</div>
+              <h3 className="font-semibold text-gray-900 mb-1">Viaja sostenible</h3>
+              <p className="text-sm text-gray-500">Menos huella de carbono</p>
             </div>
-            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 text-white">
-              <div className="text-3xl mb-3">🤝</div>
-              <h3 className="font-semibold mb-1">Conecta personas</h3>
-              <p className="text-sm text-green-100">Conocé gente en el camino</p>
+            <div className="app-mobile-card p-5 bg-white">
+              <div className="text-2xl mb-2">🤝</div>
+              <h3 className="font-semibold text-gray-900 mb-1">Conecta personas</h3>
+              <p className="text-sm text-gray-500">Conocé gente en el camino</p>
             </div>
           </div>
         </div>
@@ -208,201 +201,226 @@ export default function Home() {
     );
   }
 
-  // Pasajero logueado: mapa + búsqueda
+  // Pasajero logueado: mapa + búsqueda (temática unificada)
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-600 via-green-500 to-emerald-600">
-      <header className="bg-white/10 backdrop-blur-sm border-b border-white/20">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <Link href="/" className="text-2xl font-bold text-white">Xhare</Link>
-          <div className="flex gap-3">
-            <Link
-              href="/my-bookings"
-              className="px-4 py-2 text-white hover:bg-white/20 rounded-lg transition"
-            >
+    <div className="min-h-screen bg-gray-50 app-mobile-shell">
+      <AppDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
+        <ul className="space-y-1">
+          <li>
+            <Link href="/my-bookings" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
               Mis reservas
             </Link>
-            <Link
-              href="/my-trip-requests"
-              className="px-4 py-2 text-white hover:bg-white/20 rounded-lg transition"
-            >
+          </li>
+          <li>
+            <Link href="/my-trip-requests" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
               Mis solicitudes
             </Link>
-            <Link
-              href="/messages"
-              className="px-4 py-2 text-white hover:bg-white/20 rounded-lg transition"
-            >
+          </li>
+          <li>
+            <Link href="/messages" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
               Mensajes
             </Link>
-            <Link
-              href="/offer"
-              className="px-4 py-2 text-white hover:bg-white/20 rounded-lg transition"
-            >
+          </li>
+          <li>
+            <Link href="/offer" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
               Viajes a oferta
             </Link>
+          </li>
+          <li className="pt-3 mt-2 border-t border-gray-200">
             <button
               type="button"
-              onClick={() => supabase.auth.signOut().then(() => router.push('/'))}
-              className="px-4 py-2 bg-white text-green-600 rounded-lg hover:bg-gray-100 transition font-medium"
+              onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => router.push('/')); }}
+              className="w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-100 font-medium"
             >
               Cerrar sesión
             </button>
+          </li>
+        </ul>
+      </AppDrawer>
+
+      <header className="bg-white shadow-sm app-mobile-px app-mobile-header sticky top-0 z-40">
+        <div className="flex justify-between items-center py-2 min-h-[48px]">
+          <Link href="/" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              className="lg:hidden p-2.5 min-w-[44px] min-h-[44px] rounded-xl text-gray-600 hover:bg-gray-100 transition flex items-center justify-center"
+              aria-label="Abrir menú"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <div className="hidden lg:flex items-center gap-3">
+              <Link href="/my-bookings" className="btn-tertiary">Mis reservas</Link>
+              <Link href="/my-trip-requests" className="btn-tertiary">Mis solicitudes</Link>
+              <Link href="/messages" className="btn-tertiary">Mensajes</Link>
+              <Link href="/offer" className="btn-tertiary">Viajes a oferta</Link>
+              <button type="button" onClick={() => supabase.auth.signOut().then(() => router.push('/'))} className="btn-secondary text-green-700 border-gray-300 hover:border-green-500">
+                Cerrar sesión
+              </button>
+            </div>
           </div>
+        </div>
+        <div className="lg:hidden flex flex-wrap items-center gap-2 pb-3 border-b border-gray-100">
+          <Link href="/offer" onClick={() => setDrawerOpen(false)} className="btn-secondary text-sm py-2 px-3 min-h-[44px]">
+            Viajes a oferta
+          </Link>
+          <Link href="/messages" onClick={() => setDrawerOpen(false)} className="btn-tertiary text-sm min-h-[44px]">
+            Mensajes
+          </Link>
+          <button type="button" onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => router.push('/')); }} className="btn-tertiary text-sm text-gray-500 min-h-[44px]">
+            Cerrar sesión
+          </button>
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-16">
-        <div className="max-w-4xl mx-auto text-center mb-12">
-          <h1 className="text-5xl md:text-6xl font-bold text-white mb-4">
-            Buscar viajes
-          </h1>
-          <p className="text-xl text-green-100 mb-4">
+      <div className="app-mobile-px py-6 max-w-4xl mx-auto app-mobile-section">
+        <div className="mb-6">
+          <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-1">Buscar viajes</h1>
+          <p className="text-gray-600 text-sm md:text-base">
             Elegí origen y destino, fecha y pasajeros. Los conductores publican sus rutas y vos reservás.
           </p>
-          <p className="mb-6">
-            <Link
-              href={`/search?date=${new Date().toISOString().split('T')[0]}&seats=1`}
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-white/20 hover:bg-white/30 text-white font-medium rounded-xl border border-white/40 transition"
+          <Link
+            href={`/search?date=${new Date().toISOString().split('T')[0]}&seats=1`}
+            className="inline-block mt-3 btn-primary"
+          >
+            Ver viajes disponibles
+          </Link>
+        </div>
+
+        <div className="app-mobile-card overflow-hidden bg-white mb-6">
+          <div className="px-4 py-3 border-b border-gray-200">
+            <h2 className="text-base font-semibold text-gray-800">Elige origen y destino en el mapa</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Recogida / Destino en el mapa o «Mi ubicación».</p>
+          </div>
+          <div className="flex gap-2 p-2 border-b border-gray-100">
+            <button
+              type="button"
+              onClick={() => setMapActiveField('pickup')}
+              className={`flex-1 min-h-[44px] rounded-lg font-medium transition ${mapActiveField === 'pickup' ? 'tab-segment-active' : 'tab-segment'}`}
             >
-              Ver viajes disponibles
-            </Link>
-          </p>
-
-          <div className="bg-white rounded-2xl shadow-2xl overflow-hidden mb-6">
-            <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-wrap gap-2">
-              <h2 className="text-base font-semibold text-gray-800">
-                Elige origen y destino en el mapa
-              </h2>
-              <p className="text-sm text-gray-500">
-                Recogida / Destino en el mapa o «Mi ubicación».
-              </p>
-            </div>
-            <div className="h-[320px] w-full relative bg-gray-100">
-              {inlineMapReady ? (
-                <MapComponent
-                  pickup={originMapPoint}
-                  dropoff={destinationMapPoint}
-                  onPickupSelect={handleMapSelectOrigin}
-                  onDropoffSelect={handleMapSelectDestination}
-                  activeMode={mapActiveField}
-                />
+              Recogida
+            </button>
+            <button
+              type="button"
+              onClick={() => setMapActiveField('dropoff')}
+              className={`flex-1 min-h-[44px] rounded-lg font-medium transition ${mapActiveField === 'dropoff' ? 'tab-segment-active' : 'tab-segment'}`}
+            >
+              Destino
+            </button>
+          </div>
+          <div className="h-[280px] w-full relative bg-gray-100">
+            {inlineMapReady ? (
+              <MapComponent
+                pickup={originMapPoint}
+                dropoff={destinationMapPoint}
+                onPickupSelect={handleMapSelectOrigin}
+                onDropoffSelect={handleMapSelectDestination}
+                activeMode={mapActiveField}
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center text-gray-500">
+                <span className="inline-block w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin mr-2" />
+                Cargando mapa...
+              </div>
+            )}
+          </div>
+          <div className="p-3 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={() => handleUseMyLocation(mapActiveField === 'dropoff' ? 'destination' : 'origin')}
+              disabled={locatingFor !== null}
+              className="btn-secondary text-sm py-2 min-h-[44px] w-full"
+            >
+              {locatingFor ? (
+                <span className="inline-flex items-center gap-2">
+                  <span className="inline-block w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+                  Obteniendo ubicación...
+                </span>
               ) : (
-                <div className="absolute inset-0 flex items-center justify-center text-gray-500">
-                  <span className="inline-block w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin mr-2" />
-                  Cargando mapa...
-                </div>
+                <>📍 Mi ubicación</>
               )}
-            </div>
+            </button>
           </div>
+        </div>
 
-          <div className="bg-white rounded-2xl shadow-2xl p-6 md:p-8">
-            <form onSubmit={handleSearch} className="space-y-4">
-              <div className="grid md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Origen</label>
-                  <input
-                    type="text"
-                    value={origin}
-                    onChange={(e) => setOrigin(e.target.value)}
-                    onFocus={() => setMapActiveField('pickup')}
-                    onBlur={() => setMapActiveField(null)}
-                    placeholder="¿De dónde sales?"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    required
-                  />
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => handleUseMyLocation('origin')}
-                      disabled={locatingFor !== null}
-                      className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 bg-white hover:bg-gray-50 hover:border-green-400 hover:text-green-600 transition disabled:opacity-50"
-                    >
-                      {locatingFor === 'origin' ? (
-                        <span className="inline-block w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <span aria-hidden>📍</span>
-                      )}
-                      Mi ubicación
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Destino</label>
-                  <input
-                    type="text"
-                    value={destination}
-                    onChange={(e) => setDestination(e.target.value)}
-                    onFocus={() => setMapActiveField('dropoff')}
-                    onBlur={() => setMapActiveField(null)}
-                    placeholder="¿A dónde vas?"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    required
-                  />
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => handleUseMyLocation('destination')}
-                      disabled={locatingFor !== null}
-                      className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 bg-white hover:bg-gray-50 hover:border-green-400 hover:text-green-600 transition disabled:opacity-50"
-                    >
-                      {locatingFor === 'destination' ? (
-                        <span className="inline-block w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <span aria-hidden>📍</span>
-                      )}
-                      Mi ubicación
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Fecha</label>
-                  <input
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    min={new Date().toISOString().split('T')[0]}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    required
-                  />
-                </div>
+        <div className="app-mobile-card bg-white p-4 md:p-6">
+          <form onSubmit={handleSearch} className="space-y-4">
+            <div className="grid md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Origen</label>
+                <input
+                  type="text"
+                  value={origin}
+                  onChange={(e) => setOrigin(e.target.value)}
+                  onFocus={() => setMapActiveField('pickup')}
+                  onBlur={() => setMapActiveField(null)}
+                  placeholder="¿De dónde sales?"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  required
+                />
               </div>
-              <div className="flex items-center gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Pasajeros</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="8"
-                    value={seats}
-                    onChange={(e) => setSeats(parseInt(e.target.value))}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="px-8 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-semibold text-lg mt-6"
-                >
-                  Buscar viajes
-                </button>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Destino</label>
+                <input
+                  type="text"
+                  value={destination}
+                  onChange={(e) => setDestination(e.target.value)}
+                  onFocus={() => setMapActiveField('dropoff')}
+                  onBlur={() => setMapActiveField(null)}
+                  placeholder="¿A dónde vas?"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  required
+                />
               </div>
-            </form>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Fecha</label>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  required
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="w-24">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Pasajeros</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="8"
+                  value={seats}
+                  onChange={(e) => setSeats(parseInt(e.target.value))}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+              <button type="submit" className="btn-primary">
+                Buscar viajes
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-4 mt-8">
+          <div className="app-mobile-card p-5 bg-white">
+            <div className="text-2xl mb-2">💰</div>
+            <h3 className="font-semibold text-gray-900 mb-1">Precios justos</h3>
+            <p className="text-sm text-gray-500">Comparte los costos del viaje y ahorra dinero</p>
           </div>
-
-          <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto mt-16">
-            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 text-white">
-              <div className="text-4xl mb-4">💰</div>
-              <h3 className="text-xl font-semibold mb-2">Precios justos</h3>
-              <p className="text-green-100">Comparte los costos del viaje y ahorra dinero</p>
-            </div>
-            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 text-white">
-              <div className="text-4xl mb-4">🌱</div>
-              <h3 className="text-xl font-semibold mb-2">Viaja sostenible</h3>
-              <p className="text-green-100">Reduce tu huella de carbono compartiendo viajes</p>
-            </div>
-            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 text-white">
-              <div className="text-4xl mb-4">🤝</div>
-              <h3 className="text-xl font-semibold mb-2">Conecta personas</h3>
-              <p className="text-green-100">Conoce gente nueva en tus viajes</p>
-            </div>
+          <div className="app-mobile-card p-5 bg-white">
+            <div className="text-2xl mb-2">🌱</div>
+            <h3 className="font-semibold text-gray-900 mb-1">Viaja sostenible</h3>
+            <p className="text-sm text-gray-500">Reduce tu huella de carbono compartiendo viajes</p>
+          </div>
+          <div className="app-mobile-card p-5 bg-white">
+            <div className="text-2xl mb-2">🤝</div>
+            <h3 className="font-semibold text-gray-900 mb-1">Conecta personas</h3>
+            <p className="text-sm text-gray-500">Conoce gente nueva en tus viajes</p>
           </div>
         </div>
       </div>

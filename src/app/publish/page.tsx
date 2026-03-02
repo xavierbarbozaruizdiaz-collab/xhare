@@ -46,6 +46,7 @@ export default function PublishRidePage() {
   const tripRequestIdParam = searchParams.get('trip_request_id');
   const tripRequestIds = tripRequestIdParam ? tripRequestIdParam.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const tripRequestId = tripRequestIds[0] ?? null;
+  const fromRideId = searchParams.get('from_ride_id');
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -111,6 +112,35 @@ export default function PublishRidePage() {
       })));
     })();
   }, [tripRequestIds.join(','), user?.id]);
+
+  // Pre-rellenar desde un viaje finalizado (Volver a agendar)
+  useEffect(() => {
+    if (!fromRideId || !user?.id) return;
+    (async () => {
+      const { data: ride, error } = await supabase
+        .from('rides')
+        .select('origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, departure_time')
+        .eq('id', fromRideId)
+        .eq('driver_id', user.id)
+        .maybeSingle();
+      if (error || !ride) return;
+      if (ride.origin_lat != null && ride.origin_lng != null) {
+        setOrigin({ lat: Number(ride.origin_lat), lng: Number(ride.origin_lng), label: ride.origin_label ?? undefined });
+        setOriginInput(ride.origin_label ?? '');
+      }
+      if (ride.destination_lat != null && ride.destination_lng != null) {
+        setDestination({ lat: Number(ride.destination_lat), lng: Number(ride.destination_lng), label: ride.destination_label ?? undefined });
+        setDestinationInput(ride.destination_label ?? '');
+      }
+      if (ride.departure_time) {
+        const d = new Date(ride.departure_time);
+        setDepartureDate(d.toISOString().slice(0, 10));
+        const h = d.getHours();
+        const m = d.getMinutes();
+        setDepartureTime(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+      }
+    })();
+  }, [fromRideId, user?.id]);
 
   // Refrescar perfil al volver a la pestaña (p. ej. después de actualizar vehículo en /driver/setup)
   useEffect(() => {

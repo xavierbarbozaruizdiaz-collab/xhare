@@ -52,7 +52,9 @@ export default function RideRouteMap({
   const markersRef = useRef<L.Marker[]>([]);
   const polylineRef = useRef<L.Polyline | null>(null);
 
-  const sortedStops = [...stops].sort((a, b) => a.stop_order - b.stop_order);
+  const sortedStops = [...stops]
+    .filter((s) => s.lat != null && s.lng != null && Number.isFinite(s.lat) && Number.isFinite(s.lng))
+    .sort((a, b) => (a.stop_order ?? 0) - (b.stop_order ?? 0));
 
   useEffect(() => {
     if (!containerRef.current || sortedStops.length === 0) return;

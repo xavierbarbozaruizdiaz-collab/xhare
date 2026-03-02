@@ -6,6 +6,8 @@
   --foreground-rgb: 0, 0, 0;
   --background-start-rgb: 214, 219, 220;
   --background-end-rgb: 255, 255, 255;
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,3 +28,66 @@ body {
     rgb(var(--background-start-rgb));
 }
 
+/* Mobile app shell: safe area + max width + consistent padding */
+.app-mobile-shell {
+  padding-top: var(--safe-area-inset-top);
+  padding-bottom: var(--safe-area-inset-bottom);
+  min-height: 100vh;
+}
+@media (min-width: 481px) {
+  .app-mobile-shell {
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
+    box-shadow: 0 0 0 1px rgb(229 231 235);
+  }
+}
+
+.app-mobile-px {
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+}
+.app-mobile-header {
+  padding-top: max(0.75rem, var(--safe-area-inset-top));
+}
+.app-mobile-section {
+  padding-top: 0.75rem;
+  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom));
+}
+.app-mobile-card {
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+}
+.app-map-container {
+  height: 280px;
+  min-height: 280px;
+  max-height: 320px;
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+/* Mobile-first: touch targets mínimos 44px */
+.btn-primary {
+  @apply inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2.5 rounded-xl font-medium text-white bg-green-600 hover:bg-green-700 active:bg-green-800 shadow-sm transition;
+}
+.btn-secondary {
+  @apply inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2.5 rounded-xl font-medium text-green-700 bg-white border-2 border-green-600 hover:bg-green-50 active:bg-green-100 transition;
+}
+.btn-tertiary {
+  @apply inline-flex items-center justify-center gap-2 min-h-[44px] px-4 py-2 text-gray-700 hover:text-green-600 font-medium transition;
+}
+.chip {
+  @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium;
+}
+.chip-success { @apply chip bg-green-100 text-green-800; }
+.chip-neutral { @apply chip bg-gray-100 text-gray-700; }
+.chip-warning { @apply chip bg-amber-100 text-amber-800; }
+.chip-info { @apply chip bg-blue-100 text-blue-800; }
+.chip-error { @apply chip bg-red-100 text-red-800; }
+.tab-segment {
+  @apply inline-flex items-center min-h-[44px] px-4 py-2.5 rounded-lg font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition;
+}
+.tab-segment-active {
+  @apply tab-segment bg-green-100 text-green-800;
+}

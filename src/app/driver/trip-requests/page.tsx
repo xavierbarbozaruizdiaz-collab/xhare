@@ -218,7 +218,7 @@ export default function DriverTripRequestsPage() {
             </div>
             <Link
               href={`/publish?trip_request_id=${encodeURIComponent(req.id)}`}
-              className="flex-shrink-0 px-4 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 text-sm"
+              className="flex-shrink-0 btn-primary text-sm py-2 px-3"
             >
               Crear viaje para esta
             </Link>
@@ -231,41 +231,36 @@ export default function DriverTripRequestsPage() {
   if (loading) return <PageLoading />;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-4 py-4">
-        <div className="container mx-auto flex justify-between items-center">
-          <Link href="/my-rides" className="text-2xl font-bold text-green-600">Xhare</Link>
-          <div className="flex items-center gap-3">
-            <UserRoleBadge />
-            <Link
-              href="/publish"
-              className="px-4 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700"
-            >
+    <div className="min-h-screen bg-gray-50 app-mobile-shell">
+      <header className="bg-white border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 py-2 min-h-[48px]">
+          <Link href="/my-rides" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
+          <div className="flex items-center gap-2">
+            <Link href="/publish" className="btn-primary text-sm py-2 px-3 shrink-0">
               Publicar viaje
             </Link>
-            <Link
-              href="/my-rides"
-              className="px-4 py-2 text-gray-600 hover:text-green-600 font-medium"
-            >
-              Mis viajes
-            </Link>
+            <Link href="/my-rides" className="btn-tertiary text-sm">Mis viajes</Link>
             <button
+              type="button"
               onClick={() => supabase.auth.signOut().then(() => router.push('/'))}
-              className="px-4 py-2 text-gray-600 hover:text-green-600 font-medium"
+              className="btn-tertiary text-sm"
             >
               Cerrar sesión
             </button>
           </div>
         </div>
+        <div className="hidden lg:flex flex-wrap items-center gap-2 pb-2">
+          <UserRoleBadge />
+        </div>
       </header>
 
-      <div className="container mx-auto px-4 py-8 max-w-2xl">
-        <div className="flex items-center justify-between mb-6">
+      <div className="app-mobile-px py-6 max-w-2xl mx-auto">
+        <div className="flex items-center justify-between mb-4">
           <h1 className="text-2xl font-bold text-gray-900">Solicitudes de trayecto</h1>
-          <Link href="/my-rides" className="text-sm text-green-600 hover:underline">← Mis viajes</Link>
+          <Link href="/my-rides" className="text-sm font-medium text-green-600 hover:text-green-700">← Mis viajes</Link>
         </div>
-        <p className="text-gray-600 mb-6">
-          Pasajeros que no encontraron viajes y guardaron su trayecto. Se muestran solo solicitudes con fecha de hoy en adelante. Podés crear un viaje para una solicitud o seleccionar varias de la misma fecha y crear un solo viaje para todas.
+        <p className="text-gray-600 mb-6 text-sm">
+          Pasajeros que no encontraron viajes y guardaron su trayecto. Se muestran solo solicitudes de hoy en adelante. Podés crear un viaje para una solicitud o seleccionar varias de la misma fecha y crear un solo viaje para todas.
         </p>
 
         {requests.length > 0 && (
@@ -275,28 +270,28 @@ export default function DriverTripRequestsPage() {
               <button
                 type="button"
                 onClick={() => setGroupBy('date')}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${groupBy === 'date' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                className={groupBy === 'date' ? 'tab-segment-active text-sm' : 'tab-segment text-sm'}
               >
                 Fecha
               </button>
               <button
                 type="button"
                 onClick={() => setGroupBy('date_and_destination')}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${groupBy === 'date_and_destination' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                className={groupBy === 'date_and_destination' ? 'tab-segment-active text-sm' : 'tab-segment text-sm'}
               >
-                Fecha y destino similar
+                Fecha y destino
               </button>
               <button
                 type="button"
                 onClick={() => setGroupBy('date_and_time')}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${groupBy === 'date_and_time' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                className={groupBy === 'date_and_time' ? 'tab-segment-active text-sm' : 'tab-segment text-sm'}
               >
                 Fecha y hora
               </button>
               <button
                 type="button"
                 onClick={() => setGroupBy('none')}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${groupBy === 'none' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                className={groupBy === 'none' ? 'tab-segment-active text-sm' : 'tab-segment text-sm'}
               >
                 Lista plana
               </button>
@@ -305,9 +300,9 @@ export default function DriverTripRequestsPage() {
         )}
 
         {requests.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
-            <p className="text-gray-500">No hay solicitudes pendientes.</p>
-            <Link href="/publish" className="mt-4 inline-block text-green-600 font-medium hover:underline">
+          <div className="bg-white rounded-xl border border-gray-200 p-10 text-center shadow-sm">
+            <p className="text-gray-500 mb-4">No hay solicitudes pendientes.</p>
+            <Link href="/publish" className="btn-primary">
               Publicar un viaje
             </Link>
           </div>
@@ -320,14 +315,14 @@ export default function DriverTripRequestsPage() {
                 </span>
                 <Link
                   href={`/publish?trip_request_id=${encodeURIComponent(Array.from(selectedIds).join(','))}`}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 text-sm"
+                  className="btn-primary text-sm py-2 px-3"
                 >
                   Crear viaje para las {selectedIds.size} seleccionadas
                 </Link>
                 <button
                   type="button"
                   onClick={() => setSelectedIds(new Set())}
-                  className="text-sm text-gray-600 hover:text-green-600"
+                  className="btn-tertiary text-sm py-0"
                 >
                   Desmarcar
                 </button>

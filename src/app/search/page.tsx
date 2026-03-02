@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import UserRoleBadge from '@/components/UserRoleBadge';
+import AppDrawer from '@/components/AppDrawer';
 import { rideProximityCheck } from '@/lib/search-proximity';
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), {
@@ -67,6 +68,7 @@ export default function SearchPage() {
   const [acceptedRequestRideId, setAcceptedRequestRideId] = useState<string | null>(null);
   const [requestTime, setRequestTime] = useState('08:00');
   const [visibleCount, setVisibleCount] = useState(20);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const SEARCH_PAGE_SIZE = 20;
 
   useEffect(() => {
@@ -377,63 +379,137 @@ export default function SearchPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <Link href="/" className="text-2xl font-bold text-green-600">
-            Xhare
-          </Link>
-          <div className="flex items-center gap-4">
-            {user && <UserRoleBadge />}
-            {userRole === 'driver' && (
-              <Link
-                href="/publish"
-                className="px-4 py-2 text-gray-700 hover:text-green-600 transition font-medium"
-              >
+    <div className="min-h-screen bg-gray-50 app-mobile-shell">
+      <AppDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
+        <ul className="space-y-0.5">
+          {user && (
+            <li className="flex items-center gap-2 py-3 pb-2">
+              <UserRoleBadge />
+            </li>
+          )}
+          {userRole === 'driver' && (
+            <li>
+              <Link href="/publish" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
                 Publicar viaje
               </Link>
-            )}
-            {user && userRole !== 'driver' && (
-              <>
-                <Link href="/my-bookings" className="px-4 py-2 text-gray-700 hover:text-green-600 transition font-medium">
+            </li>
+          )}
+          {user && userRole !== 'driver' && (
+            <>
+              <li>
+                <Link href="/my-bookings" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
                   Mis reservas
                 </Link>
-                <Link href="/my-trip-requests" className="px-4 py-2 text-gray-700 hover:text-green-600 transition font-medium">
+              </li>
+              <li>
+                <Link href="/my-trip-requests" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
                   Mis solicitudes
                 </Link>
-              </>
-            )}
-            {user && (
-              <Link href="/messages" className="px-4 py-2 text-gray-700 hover:text-green-600 transition font-medium">
+              </li>
+            </>
+          )}
+          {user && (
+            <li>
+              <Link href="/messages" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
                 Mensajes
               </Link>
-            )}
-            {user && (
-              <Link href="/offer" className="px-4 py-2 text-gray-700 hover:text-green-600 transition font-medium">
+            </li>
+          )}
+          {user && (
+            <li>
+              <Link href="/offer" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
                 Viajes a oferta
               </Link>
-            )}
-            {user ? (
+            </li>
+          )}
+          {user ? (
+            <li className="pt-3 mt-2 border-t border-gray-200">
               <button
-                onClick={() => supabase.auth.signOut().then(() => router.push('/'))}
-                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
+                type="button"
+                onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => router.push('/')); }}
+                className="w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-100 font-medium"
               >
                 Cerrar sesión
               </button>
-            ) : (
-              <Link
-                href="/login"
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
-              >
+            </li>
+          ) : (
+            <li className="pt-3 mt-2 border-t border-gray-200">
+              <Link href="/login" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl btn-primary text-center">
                 Iniciar sesión
               </Link>
-            )}
+            </li>
+          )}
+        </ul>
+      </AppDrawer>
+
+      {/* Header — mobile-first */}
+      <header className="bg-white shadow-sm app-mobile-px app-mobile-header sticky top-0 z-40">
+        <div className="flex justify-between items-center py-2 min-h-[48px]">
+          <Link href="/" className="text-lg font-bold text-green-600 shrink-0">
+            Xhare
+          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              className="lg:hidden p-2.5 min-w-[44px] min-h-[44px] rounded-xl text-gray-600 hover:bg-gray-100 transition flex items-center justify-center"
+              aria-label="Abrir menú"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <div className="hidden lg:flex items-center gap-3">
+              {user && <UserRoleBadge />}
+              {userRole === 'driver' && (
+                <Link href="/publish" className="btn-primary">
+                  Publicar viaje
+                </Link>
+              )}
+              {user && userRole !== 'driver' && (
+                <>
+                  <Link href="/my-bookings" className="btn-tertiary">Mis reservas</Link>
+                  <Link href="/my-trip-requests" className="btn-tertiary">Mis solicitudes</Link>
+                </>
+              )}
+              {user && <Link href="/messages" className="btn-tertiary">Mensajes</Link>}
+              {user && <Link href="/offer" className="btn-tertiary">Viajes a oferta</Link>}
+              {user ? (
+                <button type="button" onClick={() => supabase.auth.signOut().then(() => router.push('/'))} className="btn-secondary text-green-700 border-gray-300 hover:border-green-500">
+                  Cerrar sesión
+                </button>
+              ) : (
+                <Link href="/login" className="btn-primary">Iniciar sesión</Link>
+              )}
+            </div>
           </div>
         </div>
+        {/* Barra de acciones visible en móvil — touch 44px */}
+        {user && (
+          <div className="lg:hidden flex flex-wrap items-center gap-2 pb-3 border-b border-gray-100">
+            {userRole === 'driver' && (
+              <Link href="/publish" onClick={() => setDrawerOpen(false)} className="btn-primary text-sm py-2 px-3 min-h-[44px]">
+                Publicar viaje
+              </Link>
+            )}
+            <Link href="/offer" onClick={() => setDrawerOpen(false)} className="btn-secondary text-sm py-2 px-3 border-gray-300 min-h-[44px]">
+              Viajes a oferta
+            </Link>
+            <Link href="/messages" onClick={() => setDrawerOpen(false)} className="btn-tertiary text-sm min-h-[44px]">
+              Mensajes
+            </Link>
+            <button
+              type="button"
+              onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => router.push('/')); }}
+              className="btn-tertiary text-sm text-gray-500 min-h-[44px]"
+            >
+              Cerrar sesión
+            </button>
+          </div>
+        )}
       </header>
 
-      <div className="container mx-auto px-4 py-6">
+      <div className="app-mobile-px py-4 lg:py-6 max-w-6xl mx-auto">
         {acceptedRequestRideId && (
           <div className="mb-4 p-4 bg-green-100 border border-green-300 rounded-xl">
             <p className="font-medium text-green-800">
@@ -447,11 +523,11 @@ export default function SearchPage() {
             </Link>
           </div>
         )}
-        <div className="grid lg:grid-cols-4 gap-6">
-          {/* Filters Sidebar */}
+        <div className="grid lg:grid-cols-4 gap-4 lg:gap-6">
+          {/* Filters Sidebar / Card Buscar viajes */}
           <div className="lg:col-span-1">
-            <div className="bg-white rounded-lg shadow p-6 sticky top-4">
-              <h2 className="text-lg font-semibold mb-4">Filtros</h2>
+            <div className="bg-white app-mobile-card rounded-xl shadow-sm border border-gray-100 p-4 md:p-6 lg:sticky lg:top-4">
+              <h2 className="text-base md:text-lg font-semibold text-gray-900 mb-4">Buscar viajes</h2>
               
               <div className="space-y-4">
                 <div>
@@ -510,8 +586,9 @@ export default function SearchPage() {
                 </div>
                 
                 <button
+                  type="button"
                   onClick={applyFilters}
-                  className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                  className="w-full px-4 py-3 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 transition"
                 >
                   Aplicar filtros
                 </button>
@@ -527,7 +604,7 @@ export default function SearchPage() {
                 <p className="mt-4 text-gray-600">Buscando viajes...</p>
               </div>
             ) : rides.length === 0 ? (
-              <div className="bg-white rounded-lg shadow p-12 text-center">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 md:p-12 text-center">
                 <p className="text-xl text-gray-600 mb-4">No se encontraron viajes</p>
                 <p className="text-gray-500 mb-2">
                   Con origen y destino buscamos viajes que pasen a hasta 2 km de tu recogida y de tu bajada. Sin origen ni destino mostramos viajes en los próximos 30 días.
@@ -599,7 +676,7 @@ export default function SearchPage() {
             ) : (
               <div className="space-y-4">
                 <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
-                  <h2 className="text-2xl font-bold">
+                  <h2 className="text-xl md:text-2xl font-bold text-gray-900">
                     {rides.length} viaje{rides.length !== 1 ? 's' : ''} encontrado{rides.length !== 1 ? 's' : ''}
                   </h2>
                   <div className="flex items-center gap-2">
@@ -627,7 +704,7 @@ export default function SearchPage() {
                   <Link
                     key={ride.id}
                     href={`/rides/${ride.id}`}
-                    className="block bg-white rounded-lg shadow hover:shadow-lg transition p-6"
+                    className="block bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition p-4 md:p-6 mb-4 last:mb-0"
                   >
                     <div className="flex gap-6">
                       {/* Driver Info */}

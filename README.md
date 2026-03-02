@@ -111,12 +111,67 @@ Ajusta las coordenadas según tu ubicación (ejemplo usa Buenos Aires).
 
 ## Ejecutar el proyecto
 
-```bash
-# Desarrollo
-npm run dev
+Se suele usar **varias terminales** a la vez:
 
-# El servidor estará en http://localhost:3000
+### Terminal 1 — Servidor Next.js (obligatorio)
+
+```bash
+cd move-transporte   # o la ruta de tu proyecto
+npm run dev
 ```
+
+El servidor queda en **http://localhost:3000**. Dejalo abierto mientras trabajás.
+
+### Terminal 2 — Emulador Android con live reload (opcional)
+
+Solo si querés probar la app en el emulador. **Primero** tené el servidor corriendo en la Terminal 1.
+
+```bash
+cd move-transporte
+npx cap run android --live-reload
+```
+
+- En **emulador**: la app carga desde `http://10.0.2.2:3000` (configurado en `capacitor.config.ts`).
+- En **dispositivo físico**: cambiá en `capacitor.config.ts` la URL del `server` por la IP de tu PC, por ejemplo `http://192.168.x.x:3000`.
+
+### Resumen
+
+| Terminal | Comando | Cuándo |
+|----------|---------|--------|
+| 1 | `npm run dev` | Siempre; deja corriendo |
+| 2 | `npx cap run android --live-reload` | Cuando quieras probar en Android |
+
+Para solo abrir la web: con la Terminal 1 alcanza; entrá a http://localhost:3000 en el navegador.
+
+### Reinicio rápido (Windows PowerShell)
+
+Si el servidor y el emulador se cerraron y querés volver a dejar todo andando:
+
+1. **Terminal 1 — Servidor**
+   ```powershell
+   cd c:\Users\PCera\transporte
+   npm run dev
+   ```
+   Esperar a ver `Local: http://localhost:3000` y `Ready`.
+
+2. **Terminal 2 — Emulador (si no está corriendo)**
+   ```powershell
+   & "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd Medium_Phone_API_36.0
+   ```
+   Esperar a que aparezca en `adb devices` como `emulator-5554	device`.
+
+3. **Terminal 3 — Sync + run con live reload**
+   ```powershell
+   cd c:\Users\PCera\transporte
+   npx cap sync android
+   npx cap run android --live-reload --target emulator-5554
+   ```
+   `--target emulator-5554` evita el prompt de selección de dispositivo. Si tenés otro dispositivo, usá su id (ej. `adb devices`).
+
+- **Si `adb` no está en el PATH:** usar la ruta completa:
+  `& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" devices`
+- **Si el puerto 3000 está ocupado:** `netstat -ano | findstr :3000` y luego `taskkill /PID <PID> /F`.
+- **Gradle con Java 21:** en `android/gradle.properties` debe estar `org.gradle.java.home=C:\\Program Files\\Android\\Android Studio\\jbr`. Si hubo problemas, `cd android` y `.\gradlew.bat --stop` antes de `cap run`.
 
 ## Estructura del Proyecto
 
