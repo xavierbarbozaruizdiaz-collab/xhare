@@ -518,34 +518,46 @@ export default function RideDetailPage() {
   async function openNavigation(lat: number, lng: number, label?: string, index?: number) {
     const latVal = lat != null ? Number(lat) : NaN;
     const lngVal = lng != null ? Number(lng) : NaN;
-    if (typeof window === 'undefined' || (!Number.isFinite(latVal) || !Number.isFinite(lngVal))) {
+    if (typeof window === 'undefined' || !Number.isFinite(latVal) || !Number.isFinite(lngVal)) {
       if (typeof window !== 'undefined') alert('Punto sin ubicación');
       return;
     }
-    console.log('NAV_OPEN', { lat: latVal, lng: lngVal, label, index });
-    const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${latVal},${lngVal}`)}`;
+    const dest = `${latVal},${lngVal}`;
+    const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+    if (process.env.NODE_ENV === 'development') {
+      console.log('NAV_OPEN', { lat: latVal, lng: lngVal, label, index });
+    }
     if (Capacitor.isNativePlatform()) {
+      // 1) geo: abre la app de mapas por defecto (Maps, Waze, etc.)
+      // 2) Si falla, google.navigation: abre Google Maps si está instalada
+      // 3) Si falla, abrir Google Maps en el navegador del sistema (Browser.open, no window.open)
       try {
-        await Browser.open({ url: `google.navigation:q=${latVal},${lngVal}` });
+        await Browser.open({ url: `geo:${latVal},${lngVal}?q=${latVal},${lngVal}` });
       } catch {
-        window.open(fallbackUrl, '_blank');
+        try {
+          await Browser.open({ url: `google.navigation:q=${latVal},${lngVal}` });
+        } catch {
+          await Browser.open({ url: fallbackUrl });
+        }
       }
     } else {
       window.open(fallbackUrl, '_blank');
     }
   }
 
-  function openNavigationToFirstPoint() {
+  async function openNavigationToFirstPoint(): Promise<void> {
     if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
     const target = firstNavigationTarget;
-    if (!target) return;
-    const lat = target.lat;
-    const lng = target.lng;
-    if (lat == null || lng == null) {
-      alert('Punto sin ubicación');
+    if (!target) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('NAV_FIRST_POINT: no target (origen/paradas sin ubicación)');
+      }
       return;
     }
-    openNavigation(lat, lng, 'Origen / primer punto', 0);
+    const lat = target.lat;
+    const lng = target.lng;
+    if (lat == null || lng == null) return;
+    await openNavigation(lat, lng, 'Origen / primer punto', 0);
   }
 
   async function setRideStatus(newStatus: 'en_route' | 'completed') {
@@ -555,21 +567,43 @@ export default function RideDetailPage() {
     }
     setUpdatingStatus(true);
     try {
-      const { data, error } = await supabase.functions.invoke('ride-update-status', {
-        body: {
-          ride_id: rideId,
-          status: newStatus,
-        },
-      });
-      if (process.env.NODE_ENV === 'development') {
-        console.log('RIDE_UPDATE_STATUS_FN', { data, error });
+      let { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        const { data: { session: refreshed } } = await supabase.auth.refreshSession();
+        session = refreshed ?? session;
       }
-      if (error || !data?.ok) {
+      const token = session?.access_token;
+      if (!token) {
+        alert('Tu sesión no está lista. Volvé a iniciar sesión.');
+        return;
+      }
+      const fnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/ride-update-status`;
+      const res = await fetch(fnUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`, // JWT de Supabase Auth; la Edge Function valida con supabase.auth.getUser()
+        },
+        body: JSON.stringify({ ride_id: rideId, status: newStatus }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (process.env.NODE_ENV === 'development') {
+        console.log('RIDE_UPDATE_STATUS_FN', { status: res.status, data });
+      }
+      if (!res.ok) {
+        console.error('ride-update-status FAILED', {
+          status: res.status,
+          statusText: res.statusText,
+          body: data,
+        });
+      }
+      if (!res.ok || !data?.ok) {
         alert(newStatus === 'en_route'
           ? 'No se pudo iniciar el viaje. Volvé a intentar.'
           : 'No se pudo actualizar el estado del viaje. Volvé a intentar.');
         return;
       }
+      // Estado guardado localmente desde Supabase; el viaje ya inició en la DB.
       await loadRide();
       if (newStatus === 'en_route' && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
         try {
@@ -584,7 +618,10 @@ export default function RideDetailPage() {
         Notification.requestPermission().catch(() => {});
       }
       if (newStatus === 'en_route') {
-        openNavigationToFirstPoint();
+        // Navegación en segundo plano: si falla no bloquea el estado del viaje (ya iniciado en DB).
+        void openNavigationToFirstPoint().catch((err) => {
+          if (process.env.NODE_ENV === 'development') console.warn('NAV_FIRST_POINT_IGNORED', err);
+        });
         if (Capacitor.isNativePlatform()) {
           const granted = await ensureLocationPermissions();
           if (!granted) return;
