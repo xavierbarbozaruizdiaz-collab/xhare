@@ -555,54 +555,19 @@ export default function RideDetailPage() {
     }
     setUpdatingStatus(true);
     try {
-      const doFetch = async (token: string | undefined): Promise<Response> => {
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (token) headers.Authorization = `Bearer ${token}`;
-        return fetch(`/api/rides/${rideId}/update-status`, {
-          method: 'POST',
-          headers,
-          credentials: 'include',
-          body: JSON.stringify({ status: newStatus }),
-        });
-      };
-      let { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        const { data: { session: refreshed } } = await supabase.auth.refreshSession();
-        session = refreshed ?? session;
-      }
-      const token = session?.access_token ?? undefined;
-      if (!token) {
-        alert('Tu sesión no está lista, volvé a iniciar sesión');
-        return;
-      }
+      const { data, error } = await supabase.functions.invoke('ride-update-status', {
+        body: {
+          ride_id: rideId,
+          status: newStatus,
+        },
+      });
       if (process.env.NODE_ENV === 'development') {
-        console.log('SESSION_CHECK', {
-          hasSession: !!session,
-          hasToken: !!token,
-          expiresAt: session?.expires_at ?? null,
-        });
+        console.log('RIDE_UPDATE_STATUS_FN', { data, error });
       }
-      let res = await doFetch(token);
-      if (res.status === 401 && session?.refresh_token) {
-        const { data: { session: refreshed } } = await supabase.auth.refreshSession();
-        const refreshedToken = refreshed?.access_token ?? undefined;
-        if (!refreshedToken) {
-          alert('Sesión expirada o no válida. Cerrando sesión para que vuelvas a ingresar.');
-          await supabase.auth.signOut();
-          router.push('/login');
-          return;
-        }
-        res = await doFetch(refreshedToken);
-      }
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (res.status === 401) {
-          alert('Sesión expirada o no válida. Cerrando sesión para que vuelvas a ingresar.');
-          await supabase.auth.signOut();
-          router.push('/login');
-          return;
-        }
-        alert(data?.error || 'No se pudo actualizar el estado.');
+      if (error || !data?.ok) {
+        alert(newStatus === 'en_route'
+          ? 'No se pudo iniciar el viaje. Volvé a intentar.'
+          : 'No se pudo actualizar el estado del viaje. Volvé a intentar.');
         return;
       }
       await loadRide();
