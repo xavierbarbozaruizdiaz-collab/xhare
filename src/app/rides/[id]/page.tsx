@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import { Capacitor } from '@capacitor/core';
+import { App } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
 import { Geolocation } from '@capacitor/geolocation';
@@ -528,17 +529,31 @@ export default function RideDetailPage() {
       console.log('NAV_OPEN', { lat: latVal, lng: lngVal, label, index });
     }
     if (Capacitor.isNativePlatform()) {
-      // 1) geo: abre la app de mapas por defecto (Maps, Waze, etc.)
-      // 2) Si falla, google.navigation: abre Google Maps si está instalada
-      // 3) Si falla, abrir Google Maps en el navegador del sistema (Browser.open, no window.open)
+      const geoLabel = label ? encodeURIComponent(label) : dest;
+      const geoUrl = `geo:${latVal},${lngVal}?q=${geoLabel}`;
+      const gmapsNavUrl = `google.navigation:q=${latVal},${lngVal}`;
       try {
-        await Browser.open({ url: `geo:${latVal},${lngVal}?q=${latVal},${lngVal}` });
-      } catch {
-        try {
-          await Browser.open({ url: `google.navigation:q=${latVal},${lngVal}` });
-        } catch {
-          await Browser.open({ url: fallbackUrl });
+        await App.openUrl({ url: geoUrl });
+        return;
+      } catch (e) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('NAV_APP_GEO_FAILED', e);
         }
+      }
+      try {
+        await App.openUrl({ url: gmapsNavUrl });
+        return;
+      } catch (e) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('NAV_APP_GMAPS_FAILED', e);
+        }
+      }
+      try {
+        await Browser.open({ url: fallbackUrl });
+        return;
+      } catch {
+        // último recurso: tratar de abrir en el navegador integrado
+        window.open(fallbackUrl, '_blank');
       }
     } else {
       window.open(fallbackUrl, '_blank');
@@ -1143,7 +1158,7 @@ export default function RideDetailPage() {
                         A bordo: {onboardCount}
                       </span>
                     )}
-                    {Capacitor.isNativePlatform() && (
+                    {process.env.NODE_ENV === 'development' && Capacitor.isNativePlatform() && (
                       <button
                         type="button"
                         onClick={backgroundTracking ? () => void stopBackgroundTracking() : () => void startBackgroundTracking()}
