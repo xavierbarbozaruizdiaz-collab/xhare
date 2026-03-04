@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import { Capacitor } from '@capacitor/core';
 import { Browser } from '@capacitor/browser';
+import { AppLauncher } from '@capacitor/app-launcher';
 import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
 import { Geolocation } from '@capacitor/geolocation';
 import Link from 'next/link';
@@ -528,8 +529,20 @@ export default function RideDetailPage() {
       console.log('NAV_OPEN', { lat: latVal, lng: lngVal, label, index });
     }
     if (Capacitor.isNativePlatform()) {
-      // En app nativa abrimos siempre Google Maps en el navegador del sistema.
-      // Es estable y no depende de esquemas específicos por dispositivo.
+      const geoLabel = label ? encodeURIComponent(label) : dest;
+      const geoUrl = `geo:${latVal},${lngVal}?q=${geoLabel}`;
+      try {
+        const { value } = await AppLauncher.canOpenUrl({ url: geoUrl });
+        if (value) {
+          await AppLauncher.openUrl({ url: geoUrl });
+          return;
+        }
+      } catch (e) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('NAV_GEO_APP_LAUNCHER_FAILED', e);
+        }
+      }
+      // Fallback: Google Maps en navegador del sistema
       try {
         await Browser.open({ url: fallbackUrl });
         return;

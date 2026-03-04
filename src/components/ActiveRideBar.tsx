@@ -42,8 +42,8 @@ export default function ActiveRideBar() {
 
   return (
     <>
-      <div className="fixed top-0 left-0 right-0 z-50 bg-blue-600 text-white shadow-md safe-area-inset-top">
-        <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+      <div className="fixed top-0 left-0 right-0 z-50 bg-blue-600 text-white shadow-md pt-4 pb-2">
+        <div className="flex items-center justify-between gap-3 px-4">
           <div className="min-w-0 flex-1 flex items-center gap-2">
             <span className="flex-shrink-0 w-2 h-2 rounded-full bg-white animate-pulse" aria-hidden />
             <span className="text-sm font-medium truncate">
@@ -58,8 +58,8 @@ export default function ActiveRideBar() {
           </Link>
         </div>
       </div>
-      {/* Espaciador para que el contenido no quede debajo de la barra fija */}
-      <div className="h-12" aria-hidden />
+      {/* Espaciador más alto para que el contenido no quede debajo de la barra fija ni de la barra de estado del teléfono */}
+      <div className="h-16" aria-hidden />
     </>
   );
 }
