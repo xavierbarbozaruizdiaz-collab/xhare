@@ -21,10 +21,13 @@ export async function POST(
     const supabase = createServerClient(request);
     const rideId = params.id;
 
+    const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
+    const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim();
+
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = token ? await supabase.auth.getUser(token) : { data: { user: null }, error: { message: 'missing token' } as any };
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
