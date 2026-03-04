@@ -126,9 +126,8 @@ serve(async (req) => {
     const updatePayload: Record<string, unknown> = { status };
     const now = new Date().toISOString();
     if (status === 'en_route') {
+      // Solo seteamos started_at; el esquema actual de rides no tiene completed_at.
       updatePayload.started_at = now;
-    } else if (status === 'completed') {
-      updatePayload.completed_at = now;
     }
 
     const { error: updateError } = await supabase
