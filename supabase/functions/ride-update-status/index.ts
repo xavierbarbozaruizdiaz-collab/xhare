@@ -33,12 +33,20 @@ serve(async (req) => {
 
   try {
     const authHeader = req.headers.get('authorization') ?? req.headers.get('Authorization') ?? '';
+    const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim();
 
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
       return new Response(JSON.stringify({ error: 'server_misconfigured' }), {
         status: 500,
         headers: jsonHeaders,
       });
+    }
+
+    if (!token) {
+      return new Response(
+        JSON.stringify({ error: 'unauthorized', details: 'Missing or invalid Authorization header (expected Bearer <jwt>)' }),
+        { status: 401, headers: jsonHeaders }
+      );
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -49,16 +57,20 @@ serve(async (req) => {
       },
     });
 
+    // Validar JWT explícitamente (recomendado en Edge Functions para evitar fallos por contexto)
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await supabase.auth.getUser(token);
 
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'unauthorized' }), {
-        status: 401,
-        headers: jsonHeaders,
-      });
+      return new Response(
+        JSON.stringify({
+          error: 'unauthorized',
+          details: authError?.message ?? 'Invalid or expired JWT',
+        }),
+        { status: 401, headers: jsonHeaders }
+      );
     }
 
     let payload: unknown;
@@ -98,17 +110,17 @@ serve(async (req) => {
       .single();
 
     if (rideError || !ride) {
-      return new Response(JSON.stringify({ error: 'ride_not_found' }), {
-        status: 404,
-        headers: jsonHeaders,
-      });
+      return new Response(
+        JSON.stringify({ error: 'ride_not_found', details: rideError?.message }),
+        { status: 404, headers: jsonHeaders }
+      );
     }
 
     if (ride.driver_id !== user.id) {
-      return new Response(JSON.stringify({ error: 'forbidden' }), {
-        status: 403,
-        headers: jsonHeaders,
-      });
+      return new Response(
+        JSON.stringify({ error: 'forbidden', details: 'Only the driver of this ride can update its status' }),
+        { status: 403, headers: jsonHeaders }
+      );
     }
 
     const updatePayload: Record<string, unknown> = { status };
@@ -125,10 +137,14 @@ serve(async (req) => {
       .eq('id', ride_id);
 
     if (updateError) {
-      return new Response(JSON.stringify({ error: 'update_failed', details: updateError.message }), {
-        status: 400,
-        headers: jsonHeaders,
-      });
+      return new Response(
+        JSON.stringify({
+          error: 'update_failed',
+          details: updateError.message,
+          hint: 'If message mentions RLS or policy, the driver may not match auth.uid() for this ride',
+        }),
+        { status: 400, headers: jsonHeaders }
+      );
     }
 
     return new Response(

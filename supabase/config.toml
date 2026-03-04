@@ -1,0 +1,5 @@
+# Per-function configuration for Supabase Edge Functions
+
+[functions.ride-update-status]
+verify_jwt = false
+
