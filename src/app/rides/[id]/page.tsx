@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import { Capacitor } from '@capacitor/core';
-import { App } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
 import { Geolocation } from '@capacitor/geolocation';
@@ -529,35 +528,18 @@ export default function RideDetailPage() {
       console.log('NAV_OPEN', { lat: latVal, lng: lngVal, label, index });
     }
     if (Capacitor.isNativePlatform()) {
-      const geoLabel = label ? encodeURIComponent(label) : dest;
-      const geoUrl = `geo:${latVal},${lngVal}?q=${geoLabel}`;
-      const gmapsNavUrl = `google.navigation:q=${latVal},${lngVal}`;
-      try {
-        await App.openUrl({ url: geoUrl });
-        return;
-      } catch (e) {
-        if (process.env.NODE_ENV === 'development') {
-          console.warn('NAV_APP_GEO_FAILED', e);
-        }
-      }
-      try {
-        await App.openUrl({ url: gmapsNavUrl });
-        return;
-      } catch (e) {
-        if (process.env.NODE_ENV === 'development') {
-          console.warn('NAV_APP_GMAPS_FAILED', e);
-        }
-      }
+      // En app nativa abrimos siempre Google Maps en el navegador del sistema.
+      // Es estable y no depende de esquemas específicos por dispositivo.
       try {
         await Browser.open({ url: fallbackUrl });
         return;
       } catch {
-        // último recurso: tratar de abrir en el navegador integrado
         window.open(fallbackUrl, '_blank');
+        return;
       }
-    } else {
-      window.open(fallbackUrl, '_blank');
     }
+
+    window.open(fallbackUrl, '_blank');
   }
 
   async function openNavigationToFirstPoint(): Promise<void> {
