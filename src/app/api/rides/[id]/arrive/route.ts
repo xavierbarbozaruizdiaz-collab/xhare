@@ -11,6 +11,7 @@ const passengerActionSchema = z.object({
 const bodySchema = z.object({
   stopOrder: z.number().int().min(0),
   passengers: z.array(passengerActionSchema),
+  access_token: z.string().optional(),
 });
 
 const ARRIVE_WINDOW_MS = 60_000;
@@ -24,13 +25,23 @@ export async function POST(
     const supabase = createServerClient(request);
     const rideId = params.id;
 
+    const body = await request.json().catch(() => ({}));
+    const parsed = bodySchema.safeParse(body);
+    const tokenFromBody = parsed.success ? parsed.data.access_token : undefined;
     const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
-    const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim();
+    const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim() || tokenFromBody || '';
+
+    if (!token) {
+      return NextResponse.json(
+        { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
+        { status: 401 }
+      );
+    }
 
     const {
       data: { user },
       error: authError,
-    } = token ? await supabase.auth.getUser(token) : { data: { user: null }, error: { message: 'missing token' } as any };
+    } = await supabase.auth.getUser(token);
 
     if (authError || !user) {
       return NextResponse.json(
@@ -64,8 +75,10 @@ export async function POST(
       );
     }
 
-    const body = await request.json();
-    const { stopOrder, passengers } = bodySchema.parse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Body inválido: stopOrder y passengers requeridos' }, { status: 400 });
+    }
+    const { stopOrder, passengers } = parsed.data;
 
     // Validar que la parada existe en este viaje
     const { data: stopRow } = await supabase

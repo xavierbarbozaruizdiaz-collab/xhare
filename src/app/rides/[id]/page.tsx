@@ -656,12 +656,9 @@ export default function RideDetailPage() {
 
   async function handleLlegue() {
     if (!rideId || ride?.driver_id !== currentUser?.id || ride?.status !== 'en_route' || ride?.awaiting_stop_confirmation) return;
-    let { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      const { data: { session: refreshed } } = await supabase.auth.refreshSession();
-      session = refreshed ?? session;
-    }
-    const token = session?.access_token;
+    // Siempre refrescar sesión antes de acciones del viaje para no usar un token ya vencido en medio del viaje
+    const { data: { session: refreshed } } = await supabase.auth.refreshSession();
+    const token = refreshed?.access_token ?? (await supabase.auth.getSession()).data.session?.access_token;
     if (!token) {
       alert('Tu sesión no está lista. Volvé a iniciar sesión.');
       return;
@@ -670,11 +667,22 @@ export default function RideDetailPage() {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     };
-    const res = await fetch(`/api/rides/${rideId}/set-awaiting-confirmation`, {
+    let res = await fetch(`/api/rides/${rideId}/set-awaiting-confirmation`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ awaiting: true }),
+      body: JSON.stringify({ awaiting: true, access_token: token }),
     });
+    if (res.status === 401) {
+      const { data: { session: retrySession } } = await supabase.auth.refreshSession();
+      const retryToken = retrySession?.access_token;
+      if (retryToken) {
+        res = await fetch(`/api/rides/${rideId}/set-awaiting-confirmation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${retryToken}` },
+          body: JSON.stringify({ awaiting: true, access_token: retryToken }),
+        });
+      }
+    }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       alert(data?.error || 'No se pudo marcar llegada.');
@@ -696,12 +704,9 @@ export default function RideDetailPage() {
       const droppedPassengerIds = passengersAtCurrentStop
         .filter((p) => p.type === 'dropoff')
         .map((p) => p.passengerId);
-      let { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        const { data: { session: refreshed } } = await supabase.auth.refreshSession();
-        session = refreshed ?? session;
-      }
-      const token = session?.access_token;
+      // Siempre refrescar sesión para no fallar en medio del viaje por token vencido
+      const { data: { session: refreshed } } = await supabase.auth.refreshSession();
+      const token = refreshed?.access_token ?? (await supabase.auth.getSession()).data.session?.access_token;
       if (!token) {
         alert('Tu sesión no está lista. Volvé a iniciar sesión.');
         return;
@@ -710,11 +715,23 @@ export default function RideDetailPage() {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       };
-      const res = await fetch(`/api/rides/${rideId}/arrive`, {
+      const bodyPayload = { stopOrder: currentStop?.stop_order ?? currentStopIndex, passengers, access_token: token };
+      let res = await fetch(`/api/rides/${rideId}/arrive`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ stopOrder: currentStop?.stop_order ?? currentStopIndex, passengers }),
+        body: JSON.stringify(bodyPayload),
       });
+      if (res.status === 401) {
+        const { data: { session: retrySession } } = await supabase.auth.refreshSession();
+        const retryToken = retrySession?.access_token;
+        if (retryToken) {
+          res = await fetch(`/api/rides/${rideId}/arrive`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${retryToken}` },
+            body: JSON.stringify({ ...bodyPayload, access_token: retryToken }),
+          });
+        }
+      }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         alert(data?.error || 'No se pudo confirmar.');

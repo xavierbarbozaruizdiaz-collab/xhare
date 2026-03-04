@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 const bodySchema = z.object({
   awaiting: z.boolean(),
+  access_token: z.string().optional(),
 });
 
 export async function POST(
@@ -14,13 +15,25 @@ export async function POST(
     const supabase = createServerClient(request);
     const rideId = params.id;
 
-    const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
-    const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim();
+    const body = await request.json().catch(() => ({}));
+    const parsed = bodySchema.safeParse(body);
+    const awaiting = parsed.success ? parsed.data.awaiting : undefined;
+    const tokenFromBody = parsed.success ? parsed.data.access_token : undefined;
+
+    let authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
+    const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim() || tokenFromBody || '';
+
+    if (!token) {
+      return NextResponse.json(
+        { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
+        { status: 401 }
+      );
+    }
 
     const {
       data: { user },
       error: authError,
-    } = token ? await supabase.auth.getUser(token) : { data: { user: null }, error: { message: 'missing token' } as any };
+    } = await supabase.auth.getUser(token);
 
     if (authError || !user) {
       return NextResponse.json(
@@ -46,8 +59,9 @@ export async function POST(
       );
     }
 
-    const body = await request.json();
-    const { awaiting } = bodySchema.parse(body);
+    if (typeof awaiting !== 'boolean') {
+      return NextResponse.json({ error: 'Body debe incluir awaiting (boolean)' }, { status: 400 });
+    }
 
     const { error: updateError } = await supabase
       .from('rides')
