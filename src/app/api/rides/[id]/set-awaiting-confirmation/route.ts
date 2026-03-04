@@ -23,7 +23,10 @@ export async function POST(
     } = token ? await supabase.auth.getUser(token) : { data: { user: null }, error: { message: 'missing token' } as any };
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
+        { status: 401 }
+      );
     }
 
     const { data: ride } = await supabase

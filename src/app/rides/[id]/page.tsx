@@ -656,14 +656,15 @@ export default function RideDetailPage() {
 
   async function handleLlegue() {
     if (!rideId || ride?.driver_id !== currentUser?.id || ride?.status !== 'en_route' || ride?.awaiting_stop_confirmation) return;
-    const { data: { session } } = await supabase.auth.getSession();
+    let { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      const { data: { session: refreshed } } = await supabase.auth.refreshSession();
+      session = refreshed ?? session;
+    }
     const token = session?.access_token;
     if (!token) {
-      alert('Tu sesión no está lista, volvé a iniciar sesión');
+      alert('Tu sesión no está lista. Volvé a iniciar sesión.');
       return;
-    }
-    if (process.env.NODE_ENV === 'development') {
-      console.log('SESSION_CHECK', { hasToken: !!token });
     }
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -695,14 +696,15 @@ export default function RideDetailPage() {
       const droppedPassengerIds = passengersAtCurrentStop
         .filter((p) => p.type === 'dropoff')
         .map((p) => p.passengerId);
-      const { data: { session } } = await supabase.auth.getSession();
+      let { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        const { data: { session: refreshed } } = await supabase.auth.refreshSession();
+        session = refreshed ?? session;
+      }
       const token = session?.access_token;
       if (!token) {
-        alert('Tu sesión no está lista, volvé a iniciar sesión');
+        alert('Tu sesión no está lista. Volvé a iniciar sesión.');
         return;
-      }
-      if (process.env.NODE_ENV === 'development') {
-        console.log('SESSION_CHECK', { hasToken: !!token });
       }
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
