@@ -5,13 +5,11 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import type { MapPoint } from '@/components/PickupDropoffMap';
-import type { ExtraStopPoint } from '@/components/PassengerExtraStopsMap';
+import type { MapPoint, ExtraStopPoint } from '@/components/PickupDropoffMap';
 import { baseFareFromDistanceKm, totalFareFromBaseAndSeats, MIN_FARE_PYG } from '@/lib/pricing/segment-fare';
 import { getPositionAlongPolyline } from '@/lib/geo';
 
 const PickupDropoffMap = dynamic(() => import('@/components/PickupDropoffMap'), { ssr: false });
-const PassengerExtraStopsMap = dynamic(() => import('@/components/PassengerExtraStopsMap'), { ssr: false });
 
 export default function ReservarPage() {
   const params = useParams();
@@ -551,25 +549,13 @@ export default function ReservarPage() {
                     dropoff={dropoff}
                     onPickupChange={setPickup}
                     onDropoffChange={setDropoff}
+                    extraStops={extraStops}
+                    onExtraStopsChange={setExtraStops}
                     height="320px"
                   />
                   <p className="mt-2 text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
                     Si la ruta se aleja mucho de donde querés ir y no te deja marcar un punto, probá elegir primero tu punto de descenso (B) y después el de recogida (A).
                   </p>
-                  <div className="mt-5">
-                    <h3 className="text-sm font-semibold text-gray-700 mb-1">Paradas extra (opcional)</h3>
-                    <p className="text-xs text-gray-500 mb-2">
-                      Podés agregar hasta 3 paradas adicionales dentro de la ruta del viaje (por ejemplo “pasame a buscar antes por este lugar” o “bajame antes aquí”).
-                    </p>
-                    <PassengerExtraStopsMap
-                      baseRoute={displayRoute}
-                      pickup={pickup && pickup.lat != null && pickup.lng != null ? { lat: pickup.lat, lng: pickup.lng, label: pickup.label } : null}
-                      dropoff={dropoff && dropoff.lat != null && dropoff.lng != null ? { lat: dropoff.lat, lng: dropoff.lng, label: dropoff.label } : null}
-                      stops={extraStops}
-                      maxDeviationKm={maxDeviationKm}
-                      onStopsChange={setExtraStops}
-                    />
-                  </div>
                 </div>
               ) : (
                 <p className="text-amber-700 text-sm bg-amber-50 p-3 rounded-lg">
