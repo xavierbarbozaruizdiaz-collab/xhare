@@ -150,7 +150,7 @@ export async function POST(
 
     // Insertar eventos de subida/bajada (id = booking_id)
     for (const p of passengers) {
-      const { error: insertErr } = await supabase.from('ride_boarding_events').insert({
+      const { error: insertErr } = await service.from('ride_boarding_events').insert({
         ride_id: rideId,
         booking_id: p.id,
         stop_index: stopOrder,
