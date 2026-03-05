@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/server';
 import { z } from 'zod';
+import { jwtDecode } from 'jwt-decode';
 
 const bodySchema = z.object({
   awaiting: z.boolean(),
   access_token: z.string().optional(),
 });
 
+type JwtPayload = { sub?: string; user_id?: string };
+
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = createServerClient(request);
+    const service = createServiceClient();
     const rideId = params.id;
 
     const body = await request.json().catch(() => ({}));
@@ -20,7 +23,7 @@ export async function POST(
     const awaiting = parsed.success ? parsed.data.awaiting : undefined;
     const tokenFromBody = parsed.success ? parsed.data.access_token : undefined;
 
-    let authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
+    const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim() || tokenFromBody || '';
 
     if (!token) {
@@ -30,25 +33,31 @@ export async function POST(
       );
     }
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser(token);
-
-    if (authError || !user) {
+    let userId: string | null = null;
+    try {
+      const payload = jwtDecode<JwtPayload>(token);
+      userId = payload.sub ?? payload.user_id ?? null;
+    } catch {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
 
-    const { data: ride } = await supabase
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
+        { status: 401 }
+      );
+    }
+
+    const { data: ride } = await service
       .from('rides')
       .select('id, driver_id, status')
       .eq('id', rideId)
       .single();
 
-    if (!ride || ride.driver_id !== user.id) {
+    if (!ride || ride.driver_id !== userId) {
       return NextResponse.json({ error: 'Ride not found or not yours' }, { status: 404 });
     }
 
@@ -63,7 +72,7 @@ export async function POST(
       return NextResponse.json({ error: 'Body debe incluir awaiting (boolean)' }, { status: 400 });
     }
 
-    const { error: updateError } = await supabase
+    const { error: updateError } = await service
       .from('rides')
       .update({ awaiting_stop_confirmation: awaiting })
       .eq('id', rideId);
