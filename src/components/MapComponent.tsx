@@ -307,8 +307,8 @@ export default function MapComponent({
 
   return (
     <div className="relative h-full w-full">
-      {/* Panel arriba a la izquierda; el zoom está en top-right para no encimarse */}
-      <div className="absolute top-2 left-2 z-[1000] flex flex-col gap-2 min-w-0">
+      {/* Panel arriba a la izquierda; z-10 para no tapar menú hamburguesa ni modales de la app */}
+      <div className="absolute top-2 left-2 z-10 flex flex-col gap-2 min-w-0">
         <div className="flex gap-1.5 flex-wrap">
           <button
             type="button"
@@ -336,17 +336,17 @@ export default function MapComponent({
       </div>
       {/* Instrucción: solo hace falta clicar en el mapa; el orden es origen → destino */}
       {!pickup && (
-        <div className="absolute bottom-2 left-2 right-2 z-[999] px-3 py-2 bg-green-600 text-white text-sm rounded shadow text-center">
+        <div className="absolute bottom-2 left-2 right-2 z-10 px-3 py-2 bg-green-600 text-white text-sm rounded shadow text-center">
           Haz clic en el mapa para elegir el origen (primer clic)
         </div>
       )}
       {pickup && !dropoff && (
-        <div className="absolute bottom-2 left-2 right-2 z-[999] px-3 py-2 bg-green-600 text-white text-sm rounded shadow text-center">
+        <div className="absolute bottom-2 left-2 right-2 z-10 px-3 py-2 bg-green-600 text-white text-sm rounded shadow text-center">
           Haz clic en el mapa para elegir el destino (segundo clic)
         </div>
       )}
       {pickup && dropoff && (
-        <div className="absolute bottom-2 left-2 right-2 z-[999] px-3 py-2 bg-gray-700 text-white text-sm rounded shadow text-center">
+        <div className="absolute bottom-2 left-2 right-2 z-10 px-3 py-2 bg-gray-700 text-white text-sm rounded shadow text-center">
           {effectiveMode === 'pickup'
             ? 'Haz clic en el mapa para cambiar el origen (o haz foco en el campo Origen abajo).'
             : effectiveMode === 'dropoff'
