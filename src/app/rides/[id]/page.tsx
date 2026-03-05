@@ -26,6 +26,7 @@ export default function RideDetailPage() {
   const rideId = params.id as string;
   const [ride, setRide] = useState<any>(null);
   const [bookings, setBookings] = useState<any[]>([]);
+  const [extraPassengerStops, setExtraPassengerStops] = useState<Array<{ lat: number; lng: number; label?: string | null }>>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [effectivePolyline, setEffectivePolyline] = useState<Array<{ lat: number; lng: number }> | null>(null);
@@ -227,6 +228,11 @@ export default function RideDetailPage() {
       .map((b: any) => ({ lat: b.dropoff_lat, lng: b.dropoff_lng, label: b.dropoff_label }));
   }, [publicInfo, bookings]);
 
+  const extraStopsForMap = useMemo(
+    () => extraPassengerStops.filter((p) => p.lat != null && p.lng != null),
+    [extraPassengerStops]
+  );
+
   // Paradas intermedias que marcó el conductor (origen y destino ya están en basePolyline)
   const driverIntermediateStops = useMemo(() => {
     if (!ride?.ride_stops || ride.ride_stops.length <= 2) return [];
@@ -245,6 +251,9 @@ export default function RideDetailPage() {
     passengerPickups.forEach((p: { lat: number; lng: number }) => {
       points.push({ point: p, pos: getPositionAlongPolyline(p, basePolyline) });
     });
+    extraStopsForMap.forEach((p) => {
+      points.push({ point: p, pos: getPositionAlongPolyline(p, basePolyline) });
+    });
 
     if (points.length === 0) {
       return origin;
@@ -252,7 +261,7 @@ export default function RideDetailPage() {
 
     points.sort((a, b) => a.pos - b.pos);
     return points[0].point;
-  }, [ride, basePolyline, driverIntermediateStops, passengerPickups]);
+  }, [ride, basePolyline, driverIntermediateStops, passengerPickups, extraStopsForMap]);
 
   useEffect(() => {
     if (basePolyline.length < 2) {
@@ -270,6 +279,9 @@ export default function RideDetailPage() {
       allPoints.push({ point: p, pos: getPositionAlongPolyline(p, basePolyline) });
     });
     passengerDropoffs.forEach((p: { lat: number; lng: number }) => {
+      allPoints.push({ point: p, pos: getPositionAlongPolyline(p, basePolyline) });
+    });
+    extraStopsForMap.forEach((p) => {
       allPoints.push({ point: p, pos: getPositionAlongPolyline(p, basePolyline) });
     });
     allPoints.sort((a, b) => a.pos - b.pos);
@@ -309,7 +321,7 @@ export default function RideDetailPage() {
         if (!cancelled) setEffectivePolyline(basePolyline);
       });
     return () => { cancelled = true; };
-  }, [basePolyline, driverIntermediateStops, passengerPickups, passengerDropoffs]);
+  }, [basePolyline, driverIntermediateStops, passengerPickups, passengerDropoffs, extraStopsForMap]);
 
   const stops = useMemo(() => {
     if (!ride) return [];
@@ -397,12 +409,24 @@ export default function RideDetailPage() {
           const { data: rpcDataRaw } = await supabase.rpc('get_ride_detail_for_user', { p_ride_id: rideId });
           const rpcData = Array.isArray(rpcDataRaw) && rpcDataRaw.length > 0 ? rpcDataRaw[0] : rpcDataRaw;
           if (rpcData && typeof rpcData === 'object' && (rpcData as any).ride) {
-            const r = rpcData as { ride: Record<string, unknown>; ride_stops?: unknown[]; driver_profile?: Record<string, unknown> | null };
+            const r = rpcData as {
+              ride: Record<string, unknown>;
+              ride_stops?: unknown[];
+              driver_profile?: Record<string, unknown> | null;
+              passenger_extra_stops?: Array<{ lat: number; lng: number; label?: string | null }>;
+            };
             data = {
               ...r.ride,
               driver: r.driver_profile ?? null,
               ride_stops: Array.isArray(r.ride_stops) ? r.ride_stops : [],
             };
+            if (Array.isArray(r.passenger_extra_stops)) {
+              setExtraPassengerStops(
+                r.passenger_extra_stops
+                  .filter((p) => p.lat != null && p.lng != null)
+                  .map((p) => ({ lat: Number(p.lat), lng: Number(p.lng), label: p.label ?? null }))
+              );
+            }
           }
         } catch (e) {
           console.error('[loadRide] RPC get_ride_detail_for_user failed:', e);
@@ -432,6 +456,16 @@ export default function RideDetailPage() {
         bksRows = bksRes1.data ?? [];
       }
       setBookings(bksRows);
+
+      const { data: extraRows } = await supabase
+        .from('passenger_extra_stops')
+        .select('lat, lng, label')
+        .eq('ride_id', rideId);
+      setExtraPassengerStops(
+        (extraRows ?? [])
+          .filter((p: any) => p.lat != null && p.lng != null)
+          .map((p: any) => ({ lat: Number(p.lat), lng: Number(p.lng), label: p.label ?? null }))
+      );
 
       const { data: events } = await supabase
         .from('ride_boarding_events')
@@ -947,6 +981,7 @@ export default function RideDetailPage() {
                 polyline={polyline.length >= 2 ? polyline : null}
                 passengerPickups={passengerPickups}
                 passengerDropoffs={passengerDropoffs}
+                extraPassengerStops={extraStopsForMap}
                 myPickup={myBooking && myBooking.pickup_lat != null && myBooking.pickup_lng != null ? { lat: myBooking.pickup_lat, lng: myBooking.pickup_lng, label: myBooking.pickup_label } : null}
                 myDropoff={myBooking && myBooking.dropoff_lat != null && myBooking.dropoff_lng != null ? { lat: myBooking.dropoff_lat, lng: myBooking.dropoff_lng, label: myBooking.dropoff_label } : null}
                 driverLocation={ride.status === 'en_route' && ride.driver_lat != null && ride.driver_lng != null ? { lat: Number(ride.driver_lat), lng: Number(ride.driver_lng) } : null}

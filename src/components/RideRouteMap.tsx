@@ -26,6 +26,8 @@ interface RideRouteMapProps {
   passengerPickups?: PassengerPoint[];
   /** Puntos de descenso de pasajeros (bajadas) para mostrar ruta actualizada */
   passengerDropoffs?: PassengerPoint[];
+  /** Paradas extra solicitadas por pasajeros (waypoints intermedios opcionales) */
+  extraPassengerStops?: PassengerPoint[];
   /** Recogida del usuario actual (se muestra en verde; el resto de subidas en gris) */
   myPickup?: { lat: number; lng: number; label?: string | null } | null;
   /** Bajada del usuario actual (se muestra en naranja; el resto de bajadas en otro color) */
@@ -41,6 +43,7 @@ export default function RideRouteMap({
   polyline,
   passengerPickups = [],
   passengerDropoffs = [],
+  extraPassengerStops = [],
   myPickup = null,
   myDropoff = null,
   driverLocation = null,
@@ -123,6 +126,17 @@ export default function RideRouteMap({
       if (p.label || isMine) marker.bindTooltip(tooltip, { permanent: false });
       markersRef.current.push(marker);
     });
+    extraPassengerStops.forEach((p) => {
+      const icon = L.divIcon({
+        className: 'border-0 bg-transparent',
+        html: `<div style="background:#7c3aed;width:12px;height:12px;border-radius:50%;border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>`,
+      });
+      const marker = L.marker([p.lat, p.lng], { icon }).addTo(mapRef.current!);
+      if (p.label) {
+        marker.bindTooltip(`Parada extra pasajero: ${String(p.label || '').slice(0, 50)}`, { permanent: false });
+      }
+      markersRef.current.push(marker);
+    });
     if (driverLocation?.lat != null && driverLocation?.lng != null) {
       const icon = L.divIcon({
         className: 'border-0 bg-transparent',
@@ -132,7 +146,7 @@ export default function RideRouteMap({
       marker.bindTooltip('Conductor en camino', { permanent: false });
       markersRef.current.push(marker);
     }
-  }, [sortedStops, passengerPickups, passengerDropoffs, myPickup, myDropoff, driverLocation]);
+  }, [sortedStops, passengerPickups, passengerDropoffs, extraPassengerStops, myPickup, myDropoff, driverLocation]);
 
   useEffect(() => {
     if (!mapRef.current) return;
