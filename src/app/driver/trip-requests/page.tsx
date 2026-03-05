@@ -242,7 +242,7 @@ export default function DriverTripRequestsPage() {
             <Link href="/my-rides" className="btn-tertiary text-sm">Mis viajes</Link>
             <button
               type="button"
-              onClick={() => supabase.auth.signOut().then(() => router.push('/'))}
+              onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })}
               className="btn-tertiary text-sm"
             >
               Cerrar sesión

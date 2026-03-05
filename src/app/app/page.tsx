@@ -45,7 +45,7 @@ export default function PassengerApp() {
         <div className="flex items-center gap-4">
           <UserRoleBadge />
           <button
-            onClick={() => supabase.auth.signOut().then(() => router.push('/'))}
+            onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })}
             className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
           >
             Cerrar Sesión

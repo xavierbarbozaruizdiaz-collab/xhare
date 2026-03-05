@@ -103,7 +103,7 @@ export default function MyTripRequestsPage() {
           <Link href="/my-bookings" className="px-4 py-2 text-gray-700 hover:text-green-600 font-medium">
             Mis reservas
           </Link>
-          <button onClick={() => supabase.auth.signOut().then(() => router.push('/'))} className="px-4 py-2 text-gray-700 hover:text-green-600">
+          <button onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })} className="px-4 py-2 text-gray-700 hover:text-green-600">
             Cerrar sesión
           </button>
         </div>

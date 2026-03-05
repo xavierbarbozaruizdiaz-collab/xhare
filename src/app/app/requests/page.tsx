@@ -45,7 +45,7 @@ export default function RequestsPage() {
             Nueva Solicitud
           </button>
           <UserRoleBadge />
-          <button onClick={() => supabase.auth.signOut().then(() => router.push('/'))} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
+          <button onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
             Cerrar Sesión
           </button>
         </div>

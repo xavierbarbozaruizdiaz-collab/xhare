@@ -527,7 +527,7 @@ export default function PublishRidePage() {
           <div className="flex items-center gap-4">
             <UserRoleBadge />
             <button
-              onClick={() => supabase.auth.signOut().then(() => router.push('/'))}
+              onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })}
               className="px-4 py-2 text-gray-700 hover:text-green-600 transition"
             >
               Cerrar sesión

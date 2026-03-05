@@ -225,7 +225,7 @@ export default function MyRidesPage() {
           <li className="pt-3 mt-2 border-t border-gray-200">
             <button
               type="button"
-              onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => router.push('/')); }}
+              onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => { window.location.href = '/'; }); }}
               className="w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-100 font-medium min-h-[44px] flex items-center"
             >
               Cerrar sesión
@@ -258,7 +258,7 @@ export default function MyRidesPage() {
           <Link href="/driver/trip-requests" className="tab-segment text-sm">Solicitudes</Link>
           <Link href="/messages" className="tab-segment text-sm">Mensajes</Link>
           <Link href="/offer" className="tab-segment text-sm">Oferta</Link>
-          <button type="button" onClick={() => supabase.auth.signOut().then(() => router.push('/'))} className="btn-tertiary text-sm">
+          <button type="button" onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })} className="btn-tertiary text-sm">
             Cerrar sesión
           </button>
         </div>

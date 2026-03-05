@@ -426,7 +426,7 @@ export default function SearchPage() {
             <li className="pt-3 mt-2 border-t border-gray-200">
               <button
                 type="button"
-                onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => router.push('/')); }}
+                onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => { window.location.href = '/'; }); }}
                 className="w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-100 font-medium"
               >
                 Cerrar sesión
@@ -475,7 +475,7 @@ export default function SearchPage() {
               {user && <Link href="/messages" className="btn-tertiary">Mensajes</Link>}
               {user && <Link href="/offer" className="btn-tertiary">Viajes a oferta</Link>}
               {user ? (
-                <button type="button" onClick={() => supabase.auth.signOut().then(() => router.push('/'))} className="btn-secondary text-green-700 border-gray-300 hover:border-green-500">
+                <button type="button" onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })} className="btn-secondary text-green-700 border-gray-300 hover:border-green-500">
                   Cerrar sesión
                 </button>
               ) : (
@@ -500,7 +500,7 @@ export default function SearchPage() {
             </Link>
             <button
               type="button"
-              onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => router.push('/')); }}
+              onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => { window.location.href = '/'; }); }}
               className="btn-tertiary text-sm text-gray-500 min-h-[44px]"
             >
               Cerrar sesión

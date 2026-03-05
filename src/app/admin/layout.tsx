@@ -39,7 +39,7 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
               <Link href="/" className="text-sm text-gray-500 hover:text-green-600 whitespace-nowrap">Ver app</Link>
               <button
                 type="button"
-                onClick={() => supabase.auth.signOut().then(() => router.push('/'))}
+                onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })}
                 className="btn-secondary text-sm py-2"
               >
                 Cerrar sesión

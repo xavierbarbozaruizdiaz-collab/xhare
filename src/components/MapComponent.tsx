@@ -44,11 +44,14 @@ export default function MapComponent({
   const [mode, setMode] = useState<'pickup' | 'dropoff'>('pickup');
   const [locating, setLocating] = useState(false);
   const clickHandlerRef = useRef<L.LeafletMouseEventHandlerFn | null>(null);
+  /** Ref para que el handler del mapa siempre use el modo actual (evita clic que marca destino cuando Recogida está verde) */
+  const effectiveModeRef = useRef<'pickup' | 'dropoff'>('pickup');
 
   // Modo efectivo: si el padre indica activeMode (ej. foco en Origen/Destino), usarlo; si no, el interno
   const effectiveMode = activeModeProp ?? mode;
+  effectiveModeRef.current = effectiveMode;
 
-  // Sincronizar modo interno cuando no está controlado desde fuera
+  // Sincronizar modo interno cuando no está controlado desde fuera (solo si falta origen o destino; no pisar si el usuario eligió Recogida)
   useEffect(() => {
     if (activeModeProp != null) return;
     if (!pickup) setMode('pickup');
@@ -97,19 +100,20 @@ export default function MapComponent({
       } catch {
         point = { ...point, label: `${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}` };
       }
-      // Primer clic = origen, segundo clic = destino; si ya hay ambos, usa el modo efectivo (mapa o foco en campo)
+      // Primer clic = origen, segundo clic = destino; si ya hay ambos, usa el modo efectivo (leer ref para evitar clausura obsoleta)
+      const currentMode = effectiveModeRef.current;
       if (!pickup) {
         onPickupSelect(point);
       } else if (!dropoff) {
         onDropoffSelect(point);
       } else {
-        if (effectiveMode === 'pickup') onPickupSelect(point);
+        if (currentMode === 'pickup') onPickupSelect(point);
         else onDropoffSelect(point);
       }
     };
     mapRef.current.on('click', handleMapClick);
     clickHandlerRef.current = handleMapClick;
-  }, [effectiveMode, pickup, dropoff, onPickupSelect, onDropoffSelect]);
+  }, [pickup, dropoff, onPickupSelect, onDropoffSelect]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -290,7 +294,7 @@ export default function MapComponent({
             point = { ...point, label: data.display_name || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}` };
           }
         } catch (_) {}
-        if (effectiveMode === 'pickup') onPickupSelect(point);
+        if (effectiveModeRef.current === 'pickup') onPickupSelect(point);
         else onDropoffSelect(point);
         setLocating(false);
       },
