@@ -277,6 +277,12 @@ export default function ReservarPage() {
     existingDropoffs.forEach((p) => {
       allPoints.push({ point: { lat: p.lat, lng: p.lng }, pos: getPositionAlongPolyline(p, basePolyline) });
     });
+    extraStops.forEach((s) => {
+      allPoints.push({
+        point: { lat: s.lat, lng: s.lng },
+        pos: getPositionAlongPolyline({ lat: s.lat, lng: s.lng }, basePolyline),
+      });
+    });
     if (pickup?.lat != null && pickup?.lng != null) {
       allPoints.push({ point: { lat: pickup.lat, lng: pickup.lng }, pos: getPositionAlongPolyline(pickup, basePolyline) });
     }
@@ -306,7 +312,7 @@ export default function ReservarPage() {
         if (!cancelled) setEffectiveRoute(basePolyline);
       });
     return () => { cancelled = true; };
-  }, [basePolyline, driverIntermediateStops, existingPickups, existingDropoffs, pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng]);
+  }, [basePolyline, driverIntermediateStops, existingPickups, existingDropoffs, extraStops, pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng]);
 
   async function saveExtraStops(rideId: string, stops: ExtraStopPoint[]): Promise<void> {
     try {
