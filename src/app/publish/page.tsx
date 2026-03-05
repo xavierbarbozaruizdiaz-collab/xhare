@@ -677,30 +677,32 @@ export default function PublishRidePage() {
               : 'Paradas intermedias para marcar el recorrido. La ruta se actualizará también cuando aceptes pasajeros (máx. 1 km de desvío).'}
           </p>
           <div className="h-96 border rounded-lg mb-2 relative">
-            <MapComponent
-              pickup={origin}
-              dropoff={destination}
-              waypoints={waypoints}
-              passengerPickups={tripRequestIds.length > 0 ? tripRequestsData.map((r) => ({ lat: r.origin_lat, lng: r.origin_lng, label: r.origin_label })) : undefined}
-              passengerDropoffs={tripRequestIds.length > 0 ? tripRequestsData.map((r) => ({ lat: r.destination_lat, lng: r.destination_lng, label: r.destination_label })) : undefined}
-              onPickupSelect={(point) => {
-                if (addingWaypoint) addWaypointFromMap(point.lat, point.lng, point.label);
-                else setOrigin(point);
-              }}
-              onDropoffSelect={(point) => {
-                if (addingWaypoint) addWaypointFromMap(point.lat, point.lng, point.label);
-                else setDestination(point);
-              }}
-              onRouteStatsChange={(stats) => {
-                if (stats) {
-                  setRouteDistanceKm(stats.distanceMeters / 1000);
-                  setRouteDurationMinutes(stats.durationSeconds / 60);
-                } else {
-                  setRouteDistanceKm(null);
-                  setRouteDurationMinutes(null);
-                }
-              }}
-            />
+            {!publishedRideId && (
+              <MapComponent
+                pickup={origin}
+                dropoff={destination}
+                waypoints={waypoints}
+                passengerPickups={tripRequestIds.length > 0 ? tripRequestsData.map((r) => ({ lat: r.origin_lat, lng: r.origin_lng, label: r.origin_label })) : undefined}
+                passengerDropoffs={tripRequestIds.length > 0 ? tripRequestsData.map((r) => ({ lat: r.destination_lat, lng: r.destination_lng, label: r.destination_label })) : undefined}
+                onPickupSelect={(point) => {
+                  if (addingWaypoint) addWaypointFromMap(point.lat, point.lng, point.label);
+                  else setOrigin(point);
+                }}
+                onDropoffSelect={(point) => {
+                  if (addingWaypoint) addWaypointFromMap(point.lat, point.lng, point.label);
+                  else setDestination(point);
+                }}
+                onRouteStatsChange={(stats) => {
+                  if (stats) {
+                    setRouteDistanceKm(stats.distanceMeters / 1000);
+                    setRouteDurationMinutes(stats.durationSeconds / 60);
+                  } else {
+                    setRouteDistanceKm(null);
+                    setRouteDurationMinutes(null);
+                  }
+                }}
+              />
+            )}
           </div>
           <button
             type="button"
