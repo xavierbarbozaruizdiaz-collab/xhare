@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
+import { jwtDecode } from 'jwt-decode';
 
 const passengerActionSchema = z.object({
   id: z.string().uuid(),
@@ -14,6 +15,8 @@ const bodySchema = z.object({
   access_token: z.string().optional(),
 });
 
+type JwtPayload = { sub?: string; user_id?: string };
+
 const ARRIVE_WINDOW_MS = 60_000;
 const ARRIVE_MAX_PER_WINDOW = 20;
 
@@ -22,12 +25,16 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = createServerClient(request);
+    const service = createServiceClient();
     const rideId = params.id;
 
     const body = await request.json().catch(() => ({}));
     const parsed = bodySchema.safeParse(body);
-    const tokenFromBody = parsed.success ? parsed.data.access_token : undefined;
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Body inválido: stopOrder y passengers requeridos' }, { status: 400 });
+    }
+    const { stopOrder, passengers, access_token: tokenFromBody } = parsed.data;
+
     const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim() || tokenFromBody || '';
 
@@ -38,19 +45,25 @@ export async function POST(
       );
     }
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser(token);
-
-    if (authError || !user) {
+    let userId: string | null = null;
+    try {
+      const payload = jwtDecode<JwtPayload>(token);
+      userId = payload.sub ?? payload.user_id ?? null;
+    } catch {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
 
-    const clientId = getClientId(request, user.id);
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
+        { status: 401 }
+      );
+    }
+
+    const clientId = getClientId(request, userId);
     if (!checkRateLimit(`arrive:${clientId}`, ARRIVE_WINDOW_MS, ARRIVE_MAX_PER_WINDOW)) {
       return NextResponse.json(
         { error: 'Demasiadas solicitudes. Esperá un momento.' },
@@ -58,13 +71,13 @@ export async function POST(
       );
     }
 
-    const { data: ride } = await supabase
+    const { data: ride } = await service
       .from('rides')
       .select('id, driver_id, status, current_stop_index')
       .eq('id', rideId)
       .single();
 
-    if (!ride || ride.driver_id !== user.id) {
+    if (!ride || ride.driver_id !== userId) {
       return NextResponse.json({ error: 'Ride not found or not yours' }, { status: 404 });
     }
 
@@ -75,13 +88,8 @@ export async function POST(
       );
     }
 
-    if (!parsed.success) {
-      return NextResponse.json({ error: 'Body inválido: stopOrder y passengers requeridos' }, { status: 400 });
-    }
-    const { stopOrder, passengers } = parsed.data;
-
     // Validar que la parada existe en este viaje
-    const { data: stopRow } = await supabase
+    const { data: stopRow } = await service
       .from('ride_stops')
       .select('id')
       .eq('ride_id', rideId)
@@ -96,7 +104,7 @@ export async function POST(
     }
 
     // Validar que cada pasajero (booking_id) pertenece a este viaje y no está cancelado
-    const { data: rideBookings } = await supabase
+    const { data: rideBookings } = await service
       .from('bookings')
       .select('id')
       .eq('ride_id', rideId)
@@ -114,7 +122,7 @@ export async function POST(
 
     // Evitar evento duplicado o contradictorio: mismo (ride, booking, stop) ya tiene un evento
     if (passengers.length > 0) {
-      const { data: existingEvents } = await supabase
+      const { data: existingEvents } = await service
         .from('ride_boarding_events')
         .select('booking_id')
         .eq('ride_id', rideId)
@@ -130,7 +138,7 @@ export async function POST(
     }
 
     // Marcar arrived_at en ride_stops para esta parada
-    const { error: stopError } = await supabase
+    const { error: stopError } = await service
       .from('ride_stops')
       .update({ arrived_at: new Date().toISOString() })
       .eq('ride_id', rideId)
@@ -156,7 +164,7 @@ export async function POST(
       }
     }
 
-    const { data: stops } = await supabase
+    const { data: stops } = await service
       .from('ride_stops')
       .select('id, stop_order, lat, lng, label')
       .eq('ride_id', rideId)
@@ -167,7 +175,7 @@ export async function POST(
     const nextStopIndex = currentIdx >= 0 ? currentIdx + 1 : (ride.current_stop_index ?? 0) + 1;
     const nextStop = sortedStops[nextStopIndex] ?? null;
 
-    const { error: rideUpdateErr } = await supabase
+    const { error: rideUpdateErr } = await service
       .from('rides')
       .update({
         awaiting_stop_confirmation: false,
