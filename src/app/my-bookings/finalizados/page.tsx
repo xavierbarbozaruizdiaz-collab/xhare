@@ -24,7 +24,6 @@ function bookingStatusConfig(status: string): { label: string; className: string
   return map[status] ?? { label: status, className: 'bg-gray-100 text-gray-600' };
 }
 
-/** Reserva considerada finalizada: completada, cancelada o viaje ya pasado. */
 function isBookingFinished(b: any): boolean {
   if (b.status === 'completed' || b.status === 'cancelled') return true;
   const dep = b.ride?.departure_time;
@@ -42,11 +41,17 @@ function formatTime(iso: string | null | undefined): string {
   return new Date(iso).toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function MyBookingsPage() {
+/** Fecha por defecto para "Volver a agendar": mañana en YYYY-MM-DD */
+function defaultSearchDate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+export default function MyBookingsFinalizadosPage() {
   const router = useRouter();
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
@@ -101,7 +106,8 @@ export default function MyBookingsPage() {
             }
           : null,
       }));
-      setBookings(normalized);
+      const finished = normalized.filter((b: any) => isBookingFinished(b));
+      setBookings(finished);
     } catch {
       router.push('/login');
     } finally {
@@ -109,26 +115,9 @@ export default function MyBookingsPage() {
     }
   }
 
-  async function handleCancel(bookingId: string) {
-    setCancellingId(bookingId);
-    try {
-      const { error } = await supabase
-        .from('bookings')
-        .update({ status: 'cancelled' })
-        .eq('id', bookingId)
-        .eq('passenger_id', (await supabase.auth.getUser()).data.user?.id);
-      if (error) throw error;
-      setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'cancelled' } : b));
-    } catch {
-      // Podrías mostrar un toast
-    } finally {
-      setCancellingId(null);
-    }
-  }
-
   if (loading) return <PageLoading />;
 
-  const activeBookings = bookings.filter((b) => !isBookingFinished(b));
+  const searchDate = defaultSearchDate();
 
   return (
     <div className="min-h-screen bg-gray-50 app-mobile-shell">
@@ -164,10 +153,9 @@ export default function MyBookingsPage() {
         </ul>
       </AppDrawer>
 
-      <header className="bg-white shadow-sm border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40 p-4 flex justify-between items-center">
-        <Link href="/my-bookings" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
-        <div className="flex items-center gap-2">
-          <UserRoleBadge />
+      <header className="bg-white border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40 shadow-sm">
+        <div className="flex items-center justify-between gap-2 py-2 min-h-[48px]">
+          <Link href="/my-bookings" className="text-sm font-medium text-green-600 hover:text-green-700">← Mis reservas</Link>
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}
@@ -180,31 +168,36 @@ export default function MyBookingsPage() {
           </button>
         </div>
       </header>
-      <div className="container mx-auto p-4 max-w-2xl">
-        <h1 className="text-2xl font-bold mb-4">Mis Reservas</h1>
-        {activeBookings.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
-            <p className="text-gray-500 mb-4">
-              {bookings.length > 0 ? 'No tenés reservas activas. Los viajes finalizados están en el menú → Viajes finalizados.' : 'No tenés reservas.'}
+
+      <div className="app-mobile-px py-6 max-w-2xl mx-auto">
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Viajes finalizados</h1>
+        <p className="text-sm text-gray-500 mb-6">
+          Reservas completadas, canceladas o cuya fecha ya pasó. Podés buscar un viaje similar con &quot;Volver a agendar&quot;.
+        </p>
+
+        {bookings.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-10 text-center shadow-sm">
+            <p className="text-gray-500">
+              Aún no tenés viajes finalizados. Cuando completes una reserva o pase la fecha del viaje, aparecerán acá.
             </p>
-            <div className="flex flex-wrap justify-center gap-3">
-              {bookings.length > 0 && (
-                <Link href="/my-bookings/finalizados" className="inline-flex items-center px-5 py-3 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50">
-                  Ver viajes finalizados
-                </Link>
-              )}
-              <Link href="/search" className="inline-flex items-center px-5 py-3 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700">
-                Buscar viajes
-              </Link>
-            </div>
+            <Link href="/my-bookings" className="mt-4 inline-block px-5 py-3 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700">
+              Volver a Mis reservas
+            </Link>
           </div>
         ) : (
           <div className="space-y-4">
-            {activeBookings.map((b: any) => {
+            {bookings.map((b: any) => {
               const ride = b.ride;
               const driver = ride?.driver;
               const sc = bookingStatusConfig(b.status);
-              const canCancelOrEdit = b.status === 'pending' || b.status === 'confirmed';
+              const origin = (ride?.origin_label ?? '').trim();
+              const destination = (ride?.destination_label ?? '').trim();
+              const searchParams = new URLSearchParams();
+              if (origin) searchParams.set('origin', origin);
+              if (destination) searchParams.set('destination', destination);
+              searchParams.set('date', searchDate);
+              const searchHref = `/search?${searchParams.toString()}`;
+
               return (
                 <div key={b.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                   <div className="p-4">
@@ -249,11 +242,6 @@ export default function MyBookingsPage() {
                         {b.dropoff_label && <p><span className="text-amber-600">Bajada:</span> {shortLabel(b.dropoff_label, 55)}</p>}
                       </div>
                     )}
-                    {Array.isArray(b.selected_seat_ids) && b.selected_seat_ids.length > 0 && (
-                      <p className="text-sm text-gray-600 mb-3">
-                        <span className="font-medium text-gray-700">Asientos:</span> {b.selected_seat_ids.join(', ')}
-                      </p>
-                    )}
                     <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-100">
                       <Link
                         href={`/rides/${b.ride_id}`}
@@ -261,24 +249,12 @@ export default function MyBookingsPage() {
                       >
                         Ver viaje
                       </Link>
-                      {canCancelOrEdit && (
-                        <>
-                          <Link
-                            href={`/rides/${b.ride_id}/reservar?edit=1`}
-                            className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50"
-                          >
-                            Editar
-                          </Link>
-                          <button
-                            type="button"
-                            onClick={() => handleCancel(b.id)}
-                            disabled={cancellingId === b.id}
-                            className="inline-flex items-center px-4 py-2 border border-red-200 text-red-700 text-sm font-medium rounded-lg hover:bg-red-50 disabled:opacity-50"
-                          >
-                            {cancellingId === b.id ? 'Cancelando...' : 'Cancelar reserva'}
-                          </button>
-                        </>
-                      )}
+                      <Link
+                        href={searchHref}
+                        className="inline-flex items-center px-4 py-2 border border-green-600 text-green-700 text-sm font-medium rounded-lg hover:bg-green-50"
+                      >
+                        Volver a agendar
+                      </Link>
                     </div>
                   </div>
                 </div>
