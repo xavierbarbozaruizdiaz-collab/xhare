@@ -39,21 +39,25 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!ready) return;
-    if (!accessToken) {
-      setError('Sesión no disponible');
-      setLoading(false);
-      return;
-    }
+    if (!ready || !isAdmin) return;
     (async () => {
       try {
-        const doFetch = (token: string) =>
+        let token = accessToken;
+        if (!token) {
+          token = await refetch();
+        }
+        if (!token) {
+          setError('Sesión no disponible');
+          setLoading(false);
+          return;
+        }
+        const doFetch = (t: string) =>
           fetch('/api/admin/dashboard', {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: `Bearer ${t}` },
             credentials: 'include',
           });
 
-        let res = await doFetch(accessToken);
+        let res = await doFetch(token);
         if (res.status === 401) {
           const newToken = await refetch();
           if (newToken) res = await doFetch(newToken);
@@ -71,7 +75,7 @@ export default function AdminDashboardPage() {
         setLoading(false);
       }
     })();
-  }, [ready, accessToken, refetch]);
+  }, [ready, isAdmin, accessToken, refetch]);
 
   if (loading) {
     return (

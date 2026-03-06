@@ -1,46 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createServerClient } from '@/lib/supabase/server';
+import { createServerClient, createServiceClient } from '@/lib/supabase/server';
 
 const assignDriverSchema = z.object({
   driver_id: z.string().uuid(),
 });
+
+function getJwtFromRequest(request: NextRequest): string | null {
+  const raw =
+    request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
+  return raw.startsWith('Bearer ') ? raw.slice(7).trim() : null;
+}
 
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = createServerClient(request);
-    const rideId = params.id;
-    const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization');
-    const jwt = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    const jwt = getJwtFromRequest(request);
+    if (!jwt) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
+    const supabaseAuth = createServerClient(request);
     const {
       data: { user },
       error: authError,
-    } = jwt ? await supabase.auth.getUser(jwt) : await supabase.auth.getUser();
+    } = await supabaseAuth.auth.getUser(jwt);
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if user is admin
-    const { data: profile } = await supabase
+    const service = createServiceClient();
+    const { data: profile } = await service
       .from('profiles')
       .select('role')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (!profile || profile.role !== 'admin') {
+    if (profile?.role !== 'admin') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    const rideId = params.id;
     const body = await request.json();
     const validated = assignDriverSchema.parse(body);
 
-    // Verify driver exists and is a driver
-    const { data: driverProfile } = await supabase
+    const { data: driverProfile } = await service
       .from('profiles')
       .select('*')
       .eq('id', validated.driver_id)
@@ -54,8 +61,7 @@ export async function POST(
       );
     }
 
-    // Ride must exist and be in assignable state (published only)
-    const { data: ride, error: rideError } = await supabase
+    const { data: ride, error: rideError } = await service
       .from('rides')
       .select('id, status')
       .eq('id', rideId)
@@ -80,8 +86,7 @@ export async function POST(
       );
     }
 
-    // Update ride: set driver_id, keep status published (driver asignado = published + driver_id)
-    const { data: updated, error: updateError } = await supabase
+    const { data: updated, error: updateError } = await service
       .from('rides')
       .update({ driver_id: validated.driver_id })
       .eq('id', rideId)
@@ -103,8 +108,7 @@ export async function POST(
       );
     }
 
-    // Log audit event
-    await supabase.from('audit_events').insert({
+    await service.from('audit_events').insert({
       actor_id: user.id,
       entity_type: 'ride',
       entity_id: rideId,

@@ -1,36 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createServerClient, createServiceClient } from '@/lib/supabase/server';
 
 /**
- * Dashboard admin con métricas separadas:
- * - UberPool: rides, bookings, ride_boarding_events, driver_ratings, passenger_ratings
- * - InDriver: passenger_ride_requests, driver_ride_availability, driver_offers, passenger_offers
- * No usa ride_requests ni ride_passengers para métricas principales.
+ * Dashboard admin con métricas separadas.
+ * Auth: JWT del header Authorization; rol admin verificado con service role (evita problemas de RLS/cookies).
  */
+function getJwtFromRequest(request: NextRequest): string | null {
+  const raw =
+    request.headers.get('authorization') ??
+    request.headers.get('Authorization') ??
+    '';
+  return raw.startsWith('Bearer ') ? raw.slice(7).trim() : null;
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createServerClient(request);
-    const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization');
-    const jwt = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    const jwt = getJwtFromRequest(request);
+    if (!jwt) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
+    const supabaseAuth = createServerClient(request);
     const {
       data: { user },
       error: authError,
-    } = jwt
-      ? await supabase.auth.getUser(jwt)
-      : await supabase.auth.getUser();
+    } = await supabaseAuth.auth.getUser(jwt);
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data: profile } = await supabase
+    const service = createServiceClient();
+    const { data: profile } = await service
       .from('profiles')
       .select('role')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (!profile || profile.role !== 'admin') {
+    if (profile?.role !== 'admin') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -44,13 +51,13 @@ export async function GET(request: NextRequest) {
       driverRatingsRes,
       passengerRatingsRes,
     ] = await Promise.all([
-      supabase.from('rides').select('id', { count: 'exact', head: true }).eq('status', 'published'),
-      supabase.from('rides').select('id', { count: 'exact', head: true }).eq('status', 'en_route'),
-      supabase.from('rides').select('id', { count: 'exact', head: true }).eq('status', 'completed'),
-      supabase.from('rides').select('id, status'),
-      supabase.from('bookings').select('id, status, seats_count'),
-      supabase.from('driver_ratings').select('stars'),
-      supabase.from('passenger_ratings').select('stars'),
+      service.from('rides').select('id', { count: 'exact', head: true }).eq('status', 'published'),
+      service.from('rides').select('id', { count: 'exact', head: true }).eq('status', 'en_route'),
+      service.from('rides').select('id', { count: 'exact', head: true }).eq('status', 'completed'),
+      service.from('rides').select('id, status'),
+      service.from('bookings').select('id, status, seats_count'),
+      service.from('driver_ratings').select('stars'),
+      service.from('passenger_ratings').select('stars'),
     ]);
 
     const bookings = bookingsRes.data ?? [];
@@ -80,7 +87,7 @@ export async function GET(request: NextRequest) {
 
     let activeRidesWithDriver: any[] = [];
     if (activeRideIds.length > 0) {
-      const { data: withDriver } = await supabase
+      const { data: withDriver } = await service
         .from('rides')
         .select('*, driver:profiles!rides_driver_id_fkey(id, full_name)')
         .in('id', activeRideIds)
@@ -107,10 +114,10 @@ export async function GET(request: NextRequest) {
       driverOffersRes,
       passengerOffersRes,
     ] = await Promise.all([
-      supabase.from('passenger_ride_requests').select('id, status'),
-      supabase.from('driver_ride_availability').select('id, status'),
-      supabase.from('driver_offers').select('id, status, ride_id, proposed_price_per_seat'),
-      supabase.from('passenger_offers').select('id, status, ride_id, offered_price_per_seat'),
+      service.from('passenger_ride_requests').select('id, status'),
+      service.from('driver_ride_availability').select('id, status'),
+      service.from('driver_offers').select('id, status, ride_id, proposed_price_per_seat'),
+      service.from('passenger_offers').select('id, status, ride_id, offered_price_per_seat'),
     ]);
 
     const driverOffers = driverOffersRes.data ?? [];
@@ -148,7 +155,7 @@ export async function GET(request: NextRequest) {
     };
 
     // Perfiles (común)
-    const { data: profilesByRole } = await supabase.from('profiles').select('role');
+    const { data: profilesByRole } = await service.from('profiles').select('role');
     const pendingDrivers = profilesByRole?.filter((p) => p.role === 'driver_pending').length ?? 0;
     const totalDrivers = profilesByRole?.filter((p) => p.role === 'driver').length ?? 0;
     const totalPassengersProfile = profilesByRole?.filter((p) => p.role === 'passenger').length ?? 0;
