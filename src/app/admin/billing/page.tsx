@@ -34,7 +34,7 @@ export default function AdminBillingPage() {
       .order('created_at', { ascending: false })
       .limit(500);
     setCharges(rows ?? []);
-    const driverIds = [...new Set((rows ?? []).map((r) => r.driver_id))];
+    const driverIds = Array.from(new Set((rows ?? []).map((r) => r.driver_id)));
     if (driverIds.length > 0) {
       const { data: profs } = await supabase
         .from('profiles')
