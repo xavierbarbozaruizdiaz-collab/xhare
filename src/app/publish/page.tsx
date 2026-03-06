@@ -73,6 +73,7 @@ export default function PublishRidePage() {
   const [routeDurationMinutes, setRouteDurationMinutes] = useState<number | null>(null);
   const [publishedRideId, setPublishedRideId] = useState<string | null>(null);
   const [publishRouteWarning, setPublishRouteWarning] = useState<string | null>(null);
+  const [driverSuspended, setDriverSuspended] = useState(false);
   /** Todas las solicitudes cargadas cuando se llega desde trip_request_id(s) (paradas de pasajeros en el mapa) */
   const [tripRequestsData, setTripRequestsData] = useState<Array<{
     origin_lat: number; origin_lng: number; origin_label: string | null;
@@ -206,6 +207,12 @@ export default function PublishRidePage() {
         router.push('/');
         return;
       }
+      const { data: account } = await supabase
+        .from('driver_accounts')
+        .select('account_status')
+        .eq('driver_id', user.id)
+        .maybeSingle();
+      setDriverSuspended(account?.account_status === 'suspended');
       if (profile?.vehicle_seat_count == null) {
         router.push('/driver/setup');
         return;
@@ -295,6 +302,10 @@ export default function PublishRidePage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (driverSuspended) {
+      alert('Tu cuenta está suspendida por deuda pendiente. No podés publicar viajes hasta regularizar. Contactá a soporte.');
+      return;
+    }
     if (!origin || !origin.lat || !origin.lng || !destination || !destination.lat || !destination.lng) {
       alert('Por favor selecciona el origen y destino en el mapa o elige una sugerencia del autocompletado');
       return;
@@ -713,6 +724,12 @@ export default function PublishRidePage() {
           </button>
         </div>
 
+        {driverSuspended && (
+          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800">
+            <p className="font-medium">Cuenta suspendida</p>
+            <p className="text-sm mt-1">Tu cuenta está suspendida por deuda pendiente. No podés publicar ni iniciar viajes hasta regularizar. Contactá a soporte o administración.</p>
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="mt-8 space-y-6">
           <div className="grid md:grid-cols-2 gap-4">
             <div>
@@ -788,10 +805,10 @@ export default function PublishRidePage() {
             </Link>
             <button
               type="submit"
-              disabled={submitting || !origin || !destination}
+              disabled={submitting || driverSuspended || !origin || !destination}
               className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:bg-gray-400 font-semibold"
             >
-              {submitting ? 'Publicando...' : 'Publicar viaje'}
+              {submitting ? 'Publicando...' : driverSuspended ? 'Cuenta suspendida' : 'Publicar viaje'}
             </button>
           </div>
         </form>

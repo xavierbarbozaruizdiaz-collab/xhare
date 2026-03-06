@@ -22,7 +22,9 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
 
   const nav = [
     { href: '/admin', label: 'Inicio' },
+    { href: '/admin/pricing', label: 'Pricing' },
     { href: '/admin/drivers', label: 'Conductores' },
+    { href: '/admin/billing', label: 'Billing' },
     { href: '/admin/passengers', label: 'Pasajeros' },
     { href: '/admin/rides', label: 'Viajes' },
     { href: '/admin/users', label: 'Usuarios' },

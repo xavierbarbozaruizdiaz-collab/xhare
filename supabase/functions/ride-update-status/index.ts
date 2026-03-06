@@ -123,6 +123,21 @@ serve(async (req) => {
       );
     }
 
+    const { data: account } = await supabase
+      .from('driver_accounts')
+      .select('account_status')
+      .eq('driver_id', user.id)
+      .maybeSingle();
+    if (account?.account_status === 'suspended') {
+      return new Response(
+        JSON.stringify({
+          error: 'account_suspended',
+          details: 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.',
+        }),
+        { status: 403, headers: jsonHeaders }
+      );
+    }
+
     const updatePayload: Record<string, unknown> = { status };
     const now = new Date().toISOString();
     if (status === 'en_route') {

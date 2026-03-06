@@ -54,6 +54,7 @@ export default function RideDetailPage() {
   const [permissionModalOpen, setPermissionModalOpen] = useState(false);
   const [xiaomiModalOpen, setXiaomiModalOpen] = useState(false);
   const [trackingToastVisible, setTrackingToastVisible] = useState(false);
+  const [driverSuspended, setDriverSuspended] = useState(false);
 
   useEffect(() => {
     loadRide();
@@ -485,6 +486,17 @@ export default function RideDetailPage() {
         setHasRatedDriver(false);
       }
 
+      if (user && data.driver_id === user.id) {
+        const { data: account } = await supabase
+          .from('driver_accounts')
+          .select('account_status')
+          .eq('driver_id', user.id)
+          .maybeSingle();
+        setDriverSuspended(account?.account_status === 'suspended');
+      } else {
+        setDriverSuspended(false);
+      }
+
       if (user && data.driver_id === user.id && bksRows.length > 0) {
         const pids = Array.from(new Set((bksRows as any[]).map((b: any) => b.passenger_id).filter(Boolean)));
         const { data: pr } = await supabase
@@ -642,9 +654,11 @@ export default function RideDetailPage() {
         });
       }
       if (!res.ok || !data?.ok) {
-        alert(newStatus === 'en_route'
-          ? 'No se pudo iniciar el viaje. Volvé a intentar.'
-          : 'No se pudo actualizar el estado del viaje. Volvé a intentar.');
+        const msg = data?.error === 'account_suspended'
+          ? (data?.details ?? 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.')
+          : (newStatus === 'en_route' ? 'No se pudo iniciar el viaje. Volvé a intentar.' : 'No se pudo actualizar el estado del viaje. Volvé a intentar.');
+        alert(msg);
+        if (data?.error === 'account_suspended') await loadRide();
         return;
       }
       // Estado guardado localmente desde Supabase; el viaje ya inició en la DB.
@@ -1160,14 +1174,20 @@ export default function RideDetailPage() {
           <div className="p-4 md:p-5 flex flex-col sm:flex-row gap-3 app-mobile-section">
             {ride.driver_id === currentUser?.id ? (
               <>
+                {driverSuspended && (
+                  <div className="w-full mb-2 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800">
+                    <p className="font-medium">Cuenta suspendida</p>
+                    <p className="text-sm mt-1">Tu cuenta está suspendida por deuda pendiente. No podés iniciar ni finalizar viajes hasta regularizar. Contactá a soporte.</p>
+                  </div>
+                )}
                 {(ride.status === 'published' || ride.status === 'booked') && (
                   <button
                     type="button"
                     onClick={() => setRideStatus('en_route')}
-                    disabled={updatingStatus}
+                    disabled={updatingStatus || driverSuspended}
                     className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition disabled:opacity-50"
                   >
-                    {updatingStatus ? '...' : 'Iniciar viaje'}
+                    {updatingStatus ? '...' : driverSuspended ? 'Cuenta suspendida' : 'Iniciar viaje'}
                   </button>
                 )}
                 {ride.status === 'en_route' && (
@@ -1219,10 +1239,10 @@ export default function RideDetailPage() {
                     <button
                       type="button"
                       onClick={() => setRideStatus('completed')}
-                      disabled={updatingStatus}
+                      disabled={updatingStatus || driverSuspended}
                       className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition disabled:opacity-50"
                     >
-                      {updatingStatus ? '...' : 'Finalizar viaje'}
+                      {updatingStatus ? '...' : driverSuspended ? 'Cuenta suspendida' : 'Finalizar viaje'}
                     </button>
                   </>
                 )}

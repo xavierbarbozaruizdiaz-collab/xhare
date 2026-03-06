@@ -6,8 +6,24 @@ import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import type { MapPoint, ExtraStopPoint } from '@/components/PickupDropoffMap';
-import { baseFareFromDistanceKm, totalFareFromBaseAndSeats, MIN_FARE_PYG } from '@/lib/pricing/segment-fare';
+import {
+  baseFareFromDistanceKm,
+  baseFareFromDistanceKmWithPricing,
+  totalFareFromBaseAndSeats,
+  totalFareFromBaseAndSeatsWithPricing,
+  MIN_FARE_PYG,
+} from '@/lib/pricing/segment-fare';
+import { loadActivePricingSettings, computeEffectivePricing, type EffectivePricing } from '@/lib/pricing/runtime-pricing';
 import { getPositionAlongPolyline } from '@/lib/geo';
+
+const FALLBACK_PRICING: EffectivePricing = {
+  minFarePyg: MIN_FARE_PYG,
+  pygPerKm: 2780,
+  roundTo: 100,
+  blockSize: 4,
+  blockMultiplier: 1.5,
+  pricingSettingsId: null,
+};
 
 const PickupDropoffMap = dynamic(() => import('@/components/PickupDropoffMap'), { ssr: false });
 
@@ -38,6 +54,23 @@ export default function ReservarPage() {
   const [effectiveRoute, setEffectiveRoute] = useState<Array<{ lat: number; lng: number }> | null>(null);
   /** Paradas extra del pasajero actual (hasta 3 por viaje) */
   const [extraStops, setExtraStops] = useState<ExtraStopPoint[]>([]);
+  /** Pricing efectivo (DB activo o fallback). Inicial fallback para no bloquear. */
+  const [effectivePricing, setEffectivePricing] = useState<EffectivePricing>(FALLBACK_PRICING);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadActivePricingSettings().then((settings) => {
+      if (cancelled) return;
+      setEffectivePricing(settings ? computeEffectivePricing(settings) : FALLBACK_PRICING);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (segmentDistanceKm == null) return;
+    const base = baseFareFromDistanceKmWithPricing(segmentDistanceKm, effectivePricing);
+    setSegmentBaseFare(base);
+  }, [segmentDistanceKm, effectivePricing]);
 
   useEffect(() => {
     if (!rideId) {
@@ -199,7 +232,6 @@ export default function ReservarPage() {
         const km = data.distanceKm != null ? Number(data.distanceKm) : null;
         if (km != null) {
           setSegmentDistanceKm(km);
-          setSegmentBaseFare(baseFareFromDistanceKm(km));
         } else {
           setSegmentDistanceKm(null);
           setSegmentBaseFare(null);
@@ -359,8 +391,22 @@ export default function ReservarPage() {
     setSubmitting(true);
     setError(null);
     const seatsToBook = Math.min(maxSeats, Math.max(1, seats));
-    const baseFare = segmentBaseFare ?? MIN_FARE_PYG;
-    const pricePaid = totalFareFromBaseAndSeats(baseFare, seatsToBook);
+    const baseFare = segmentBaseFare ?? effectivePricing.minFarePyg;
+    const pricePaid = totalFareFromBaseAndSeatsWithPricing(baseFare, seatsToBook, effectivePricing);
+    const pricingSnapshot = {
+      effective: {
+        minFarePyg: effectivePricing.minFarePyg,
+        pygPerKm: effectivePricing.pygPerKm,
+        roundTo: effectivePricing.roundTo,
+        blockSize: effectivePricing.blockSize,
+        blockMultiplier: effectivePricing.blockMultiplier,
+      },
+      pricing_settings_id: effectivePricing.pricingSettingsId,
+      segment_distance_km: segmentDistanceKm ?? undefined,
+      base_fare: baseFare,
+      seats: seatsToBook,
+      total: pricePaid,
+    };
     const payload: Record<string, unknown> = {
       seats_count: seatsToBook,
       price_paid: pricePaid,
@@ -371,6 +417,10 @@ export default function ReservarPage() {
       dropoff_lng: dropoff?.lng ?? null,
       dropoff_label: dropoff?.label ?? null,
       selected_seat_ids: null,
+      pricing_snapshot: pricingSnapshot,
+      pricing_settings_id: effectivePricing.pricingSettingsId ?? null,
+      segment_distance_km: segmentDistanceKm ?? null,
+      base_fare: baseFare,
     };
     if (existingBookingId) {
       const { error: err } = await supabase
@@ -395,7 +445,16 @@ export default function ReservarPage() {
       price_paid: payload.price_paid,
       status: 'pending',
       payment_status: 'pending',
-      ...payload,
+      pricing_snapshot: payload.pricing_snapshot,
+      pricing_settings_id: payload.pricing_settings_id,
+      segment_distance_km: payload.segment_distance_km,
+      base_fare: payload.base_fare,
+      pickup_lat: payload.pickup_lat,
+      pickup_lng: payload.pickup_lng,
+      pickup_label: payload.pickup_label,
+      dropoff_lat: payload.dropoff_lat,
+      dropoff_lng: payload.dropoff_lng,
+      dropoff_label: payload.dropoff_label,
       selected_seat_ids: null,
     });
     if (err) {
@@ -593,10 +652,10 @@ export default function ReservarPage() {
                     <p className="text-sm text-gray-600">Tu tramo: <strong>{segmentDistanceKm.toFixed(1)} km</strong></p>
                   )}
                   <p className="text-sm text-gray-600">
-                    Base (1 asiento): <strong>{(segmentBaseFare ?? MIN_FARE_PYG).toLocaleString('es-PY')} PYG</strong>
+                    Base (1 asiento): <strong>{(segmentBaseFare ?? effectivePricing.minFarePyg).toLocaleString('es-PY')} PYG</strong>
                   </p>
                   <p className="text-base font-semibold text-gray-900">
-                    Total: {totalFareFromBaseAndSeats(segmentBaseFare ?? MIN_FARE_PYG, seats).toLocaleString('es-PY')} PYG
+                    Total: {totalFareFromBaseAndSeatsWithPricing(segmentBaseFare ?? effectivePricing.minFarePyg, seats, effectivePricing).toLocaleString('es-PY')} PYG
                   </p>
                 </div>
               )}
