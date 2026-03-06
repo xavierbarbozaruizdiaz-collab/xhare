@@ -21,6 +21,8 @@ interface MapComponentProps {
   onRouteStatsChange?: (stats: { distanceMeters: number; durationSeconds: number } | null) => void;
   /** Si lo indica el padre (ej. foco en campo Origen/Destino), el mapa usa este modo para el próximo clic */
   activeMode?: 'pickup' | 'dropoff' | null;
+  /** Llamado cuando el usuario elige Recogida o Destino en los botones del mapa; sincroniza con el padre para que no quede en modo Destino al volver a Recogida */
+  onModeChange?: (mode: 'pickup' | 'dropoff') => void;
 }
 
 export default function MapComponent({
@@ -33,6 +35,7 @@ export default function MapComponent({
   onDropoffSelect,
   onRouteStatsChange,
   activeMode: activeModeProp = null,
+  onModeChange,
 }: MapComponentProps) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -312,14 +315,22 @@ export default function MapComponent({
         <div className="flex gap-1.5 flex-wrap">
           <button
             type="button"
-            onClick={() => setMode('pickup')}
+            onClick={() => {
+              setMode('pickup');
+              effectiveModeRef.current = 'pickup';
+              onModeChange?.('pickup');
+            }}
             className={`px-3 py-1.5 rounded text-sm whitespace-nowrap ${effectiveMode === 'pickup' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'}`}
           >
             Recogida
           </button>
           <button
             type="button"
-            onClick={() => setMode('dropoff')}
+            onClick={() => {
+              setMode('dropoff');
+              effectiveModeRef.current = 'dropoff';
+              onModeChange?.('dropoff');
+            }}
             className={`px-3 py-1.5 rounded text-sm whitespace-nowrap ${effectiveMode === 'dropoff' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'}`}
           >
             Destino
