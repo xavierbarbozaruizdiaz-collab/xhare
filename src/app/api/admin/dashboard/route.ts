@@ -3,28 +3,36 @@ import { createServerClient, createServiceClient } from '@/lib/supabase/server';
 
 /**
  * Dashboard admin con métricas separadas.
- * Auth: JWT del header Authorization; rol admin verificado con service role (evita problemas de RLS/cookies).
+ * Auth: JWT en header Authorization o sesión en cookies; rol admin con service role.
  */
 function getJwtFromRequest(request: NextRequest): string | null {
-  const raw =
+  const auth =
     request.headers.get('authorization') ??
     request.headers.get('Authorization') ??
     '';
-  return raw.startsWith('Bearer ') ? raw.slice(7).trim() : null;
+  if (auth.startsWith('Bearer ')) return auth.slice(7).trim();
+  const custom = request.headers.get('x-admin-token');
+  return custom?.trim() ?? null;
 }
 
 export async function GET(request: NextRequest) {
   try {
     const jwt = getJwtFromRequest(request);
-    if (!jwt) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const supabaseAuth = createServerClient(request);
-    const {
-      data: { user },
-      error: authError,
-    } = await supabaseAuth.auth.getUser(jwt);
+
+    let user: { id: string } | null = null;
+    let authError: Error | null = null;
+
+    if (jwt) {
+      const res = await supabaseAuth.auth.getUser(jwt);
+      user = res.data.user ?? null;
+      authError = res.error ?? null;
+    }
+    if (!user) {
+      const res = await supabaseAuth.auth.getUser();
+      user = res.data.user ?? null;
+      authError = res.error ?? null;
+    }
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

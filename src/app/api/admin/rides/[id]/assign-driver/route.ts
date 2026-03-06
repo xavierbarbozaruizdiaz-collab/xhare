@@ -7,9 +7,9 @@ const assignDriverSchema = z.object({
 });
 
 function getJwtFromRequest(request: NextRequest): string | null {
-  const raw =
-    request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
-  return raw.startsWith('Bearer ') ? raw.slice(7).trim() : null;
+  const auth = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
+  if (auth.startsWith('Bearer ')) return auth.slice(7).trim();
+  return request.headers.get('x-admin-token')?.trim() ?? null;
 }
 
 export async function POST(
@@ -18,15 +18,20 @@ export async function POST(
 ) {
   try {
     const jwt = getJwtFromRequest(request);
-    if (!jwt) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const supabaseAuth = createServerClient(request);
-    const {
-      data: { user },
-      error: authError,
-    } = await supabaseAuth.auth.getUser(jwt);
+
+    let user: { id: string } | null = null;
+    let authError: Error | null = null;
+    if (jwt) {
+      const res = await supabaseAuth.auth.getUser(jwt);
+      user = res.data.user ?? null;
+      authError = res.error ?? null;
+    }
+    if (!user) {
+      const res = await supabaseAuth.auth.getUser();
+      user = res.data.user ?? null;
+      authError = res.error ?? null;
+    }
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

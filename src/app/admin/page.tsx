@@ -53,7 +53,10 @@ export default function AdminDashboardPage() {
         }
         const doFetch = (t: string) =>
           fetch('/api/admin/dashboard', {
-            headers: { Authorization: `Bearer ${t}` },
+            headers: {
+              Authorization: `Bearer ${t}`,
+              'x-admin-token': t,
+            },
             credentials: 'include',
           });
 
@@ -86,42 +89,89 @@ export default function AdminDashboardPage() {
     );
   }
 
-  if (error || !data) {
+  if (!isAdmin && (error || !data)) {
     return (
       <div>
         <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
         <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-6 text-center">
           <p className="text-gray-700">{error ?? 'Sin datos'}</p>
-          {!isAdmin ? (
-            <>
-              <p className="mt-1 text-sm text-gray-500">Tu usuario debe tener rol administrador en la base de datos.</p>
-              <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
-                <Link href="/login?next=/admin" className="btn-primary text-sm">
-                  Iniciar sesión
-                </Link>
-                <Link href="/admin" className="text-sm text-green-600 hover:text-green-700 font-medium">
-                  Reintentar
-                </Link>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="mt-1 text-sm text-gray-500">No se pudo cargar el panel. Probá recargar la página o cerrar sesión y volver a entrar.</p>
-              <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
-                <button type="button" onClick={() => window.location.reload()} className="btn-primary text-sm">
-                  Recargar
-                </button>
-                <Link href="/admin" className="text-sm text-green-600 hover:text-green-700 font-medium">
-                  Reintentar
-                </Link>
-              </div>
-            </>
-          )}
+          <p className="mt-1 text-sm text-gray-500">Tu usuario debe tener rol administrador en la base de datos.</p>
+          <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Link href="/login?next=/admin" className="btn-primary text-sm">
+              Iniciar sesión
+            </Link>
+            <Link href="/admin" className="text-sm text-green-600 hover:text-green-700 font-medium">
+              Reintentar
+            </Link>
+          </div>
         </div>
       </div>
     );
   }
 
+  if (isAdmin && (error || !data)) {
+    return (
+      <div>
+        <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
+        <p className="text-sm text-gray-500 mb-4">No se pudieron cargar las métricas del inicio. Usá el menú para ir a Conductores, Billing, etc.</p>
+        <button
+          type="button"
+          onClick={async () => {
+            setError(null);
+            setLoading(true);
+            const t = await refetch();
+            if (!t) { setLoading(false); return; }
+            try {
+              const r = await fetch('/api/admin/dashboard', { headers: { Authorization: `Bearer ${t}`, 'x-admin-token': t }, credentials: 'include' });
+              if (r.ok) { const json = await r.json(); setData(json); } else setError('Error al cargar');
+            } catch { setError('Error de conexión'); }
+            setLoading(false);
+          }}
+          className="btn-secondary text-sm"
+        >
+          Reintentar métricas
+        </button>
+        <div className="app-mobile-card p-6 mt-6">
+          <h2 className="font-semibold text-gray-900 mb-2">Accesos rápidos</h2>
+          <ul className="space-y-2 text-sm">
+            <li>
+              <Link href="/admin/drivers" className="text-green-600 hover:underline">
+                Conductores
+              </Link>
+              — Aprobar o rechazar
+            </li>
+            <li>
+              <Link href="/admin/passengers" className="text-green-600 hover:underline">
+                Pasajeros
+              </Link>
+            </li>
+            <li>
+              <Link href="/admin/rides" className="text-green-600 hover:underline">
+                Viajes
+              </Link>
+            </li>
+            <li>
+              <Link href="/admin/users" className="text-green-600 hover:underline">
+                Usuarios
+              </Link>
+            </li>
+            <li>
+              <Link href="/admin/billing" className="text-green-600 hover:underline">
+                Billing
+              </Link>
+            </li>
+            <li>
+              <Link href="/admin/pricing" className="text-green-600 hover:underline">
+                Pricing
+              </Link>
+            </li>
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
   const { uberpool, indriver, profiles } = data;
 
   return (

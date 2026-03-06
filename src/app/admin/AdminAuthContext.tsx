@@ -42,7 +42,11 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       router.push('/');
       return null;
     }
-    const { data: { session } } = await supabase.auth.refreshSession();
+    let { data: { session } } = await supabase.auth.refreshSession();
+    if (!session?.access_token) {
+      const fallback = await supabase.auth.getSession();
+      session = fallback.data.session ?? null;
+    }
     const token = session?.access_token ?? null;
     if (token) {
       setAccessToken(token);
@@ -65,7 +69,11 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         setReady(true);
         return;
       }
-      const { data: { session } } = await supabase.auth.refreshSession();
+      let { data: { session } } = await supabase.auth.refreshSession();
+      if (!session?.access_token) {
+        const fallback = await supabase.auth.getSession();
+        session = fallback.data.session ?? null;
+      }
       const token = session?.access_token ?? null;
       setAccessToken(token);
       setIsAdmin(true);
