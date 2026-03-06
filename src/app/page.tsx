@@ -6,6 +6,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase/client';
 import AppDrawer from '@/components/AppDrawer';
+import UserRoleBadge from '@/components/UserRoleBadge';
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: false });
 
@@ -205,24 +206,32 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-50 app-mobile-shell">
       <AppDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
-        <ul className="space-y-1">
+        <ul className="space-y-0.5">
+          <li className="flex items-center gap-2 py-3 pb-2">
+            <UserRoleBadge />
+          </li>
           <li>
-            <Link href="/my-bookings" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
+            <Link href="/" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center">
+              Buscar viajes
+            </Link>
+          </li>
+          <li>
+            <Link href="/my-bookings" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center">
               Mis reservas
             </Link>
           </li>
           <li>
-            <Link href="/my-trip-requests" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
+            <Link href="/my-trip-requests" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center">
               Mis solicitudes
             </Link>
           </li>
           <li>
-            <Link href="/messages" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
+            <Link href="/messages" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center">
               Mensajes
             </Link>
           </li>
           <li>
-            <Link href="/offer" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium">
+            <Link href="/offer" onClick={() => setDrawerOpen(false)} className="block px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center">
               Viajes a oferta
             </Link>
           </li>
@@ -230,7 +239,7 @@ export default function Home() {
             <button
               type="button"
               onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => { window.location.href = '/'; }); }}
-              className="w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-100 font-medium"
+              className="w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-gray-100 font-medium min-h-[44px] flex items-center"
             >
               Cerrar sesión
             </button>
@@ -238,40 +247,19 @@ export default function Home() {
         </ul>
       </AppDrawer>
 
-      <header className="bg-white shadow-sm app-mobile-px app-mobile-header sticky top-0 z-40">
-        <div className="flex justify-between items-center py-2 min-h-[48px]">
-          <Link href="/" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setDrawerOpen(true)}
-              className="lg:hidden p-2.5 min-w-[44px] min-h-[44px] rounded-xl text-gray-600 hover:bg-gray-100 transition flex items-center justify-center"
-              aria-label="Abrir menú"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-            <div className="hidden lg:flex items-center gap-3">
-              <Link href="/my-bookings" className="btn-tertiary">Mis reservas</Link>
-              <Link href="/my-trip-requests" className="btn-tertiary">Mis solicitudes</Link>
-              <Link href="/messages" className="btn-tertiary">Mensajes</Link>
-              <Link href="/offer" className="btn-tertiary">Viajes a oferta</Link>
-              <button type="button" onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })} className="btn-secondary text-green-700 border-gray-300 hover:border-green-500">
-                Cerrar sesión
-              </button>
-            </div>
-          </div>
-        </div>
-        <div className="lg:hidden flex flex-wrap items-center gap-2 pb-3 border-b border-gray-100">
-          <Link href="/offer" onClick={() => setDrawerOpen(false)} className="btn-secondary text-sm py-2 px-3 min-h-[44px]">
-            Viajes a oferta
-          </Link>
-          <Link href="/messages" onClick={() => setDrawerOpen(false)} className="btn-tertiary text-sm min-h-[44px]">
-            Mensajes
-          </Link>
-          <button type="button" onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => { window.location.href = '/'; }); }} className="btn-tertiary text-sm text-gray-500 min-h-[44px]">
-            Cerrar sesión
+      <header className="bg-white shadow-sm border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40 p-4 flex justify-between items-center">
+        <Link href="/" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
+        <div className="flex items-center gap-2">
+          <UserRoleBadge />
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="p-2.5 min-w-[44px] min-h-[44px] rounded-xl text-gray-600 hover:bg-gray-100 flex items-center justify-center"
+            aria-label="Abrir menú"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
           </button>
         </div>
       </header>

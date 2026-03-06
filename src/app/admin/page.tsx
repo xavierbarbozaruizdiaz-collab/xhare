@@ -33,7 +33,7 @@ type DashboardData = {
 };
 
 export default function AdminDashboardPage() {
-  const { accessToken, ready, refetch } = useAdminAuth();
+  const { accessToken, ready, refetch, isAdmin } = useAdminAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,16 +88,31 @@ export default function AdminDashboardPage() {
         <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
         <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-6 text-center">
           <p className="text-gray-700">{error ?? 'Sin datos'}</p>
-          <p className="mt-1 text-sm text-gray-500">Tu usuario debe tener rol administrador en la base de datos.</p>
-          <p className="mt-1 text-xs text-gray-400">Si ya lo tiene, probá en el navegador (localhost:3000); en el emulador a veces falla el envío del token.</p>
-          <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Link href="/login?next=/admin" className="btn-primary text-sm">
-              Iniciar sesión
-            </Link>
-            <Link href="/admin" className="text-sm text-green-600 hover:text-green-700 font-medium">
-              Reintentar
-            </Link>
-          </div>
+          {!isAdmin ? (
+            <>
+              <p className="mt-1 text-sm text-gray-500">Tu usuario debe tener rol administrador en la base de datos.</p>
+              <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <Link href="/login?next=/admin" className="btn-primary text-sm">
+                  Iniciar sesión
+                </Link>
+                <Link href="/admin" className="text-sm text-green-600 hover:text-green-700 font-medium">
+                  Reintentar
+                </Link>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-sm text-gray-500">No se pudo cargar el panel. Probá recargar la página o cerrar sesión y volver a entrar.</p>
+              <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button type="button" onClick={() => window.location.reload()} className="btn-primary text-sm">
+                  Recargar
+                </button>
+                <Link href="/admin" className="text-sm text-green-600 hover:text-green-700 font-medium">
+                  Reintentar
+                </Link>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );

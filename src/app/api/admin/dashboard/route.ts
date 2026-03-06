@@ -10,11 +10,15 @@ import { createServerClient } from '@/lib/supabase/server';
 export async function GET(request: NextRequest) {
   try {
     const supabase = createServerClient(request);
+    const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization');
+    const jwt = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = jwt
+      ? await supabase.auth.getUser(jwt)
+      : await supabase.auth.getUser();
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
