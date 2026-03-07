@@ -1,5 +1,7 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
-
+/**
+ * Plugin de ubicación en segundo plano. Capacitor se carga solo en cliente
+ * para no romper el build de Next.js (Vercel).
+ */
 export type BackgroundLocationPlugin = {
   startTracking(options: {
     serverUrl: string;
@@ -30,10 +32,17 @@ function isPluginNotImplemented(e: unknown): boolean {
   return /not implemented|plugin.*not found/i.test(msg);
 }
 
-function createSafePlugin(): BackgroundLocationPlugin {
-  if (!Capacitor.isNativePlatform()) return noopImpl;
-  const native = registerPlugin<BackgroundLocationPlugin>('BackgroundLocation');
-  return {
+let cachedPlugin: BackgroundLocationPlugin | null = null;
+
+async function getPlugin(): Promise<BackgroundLocationPlugin> {
+  if (cachedPlugin) return cachedPlugin;
+  if (typeof window === 'undefined') return noopImpl;
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    if (!Capacitor.isNativePlatform()) return noopImpl;
+    const { registerPlugin } = await import('@capacitor/core');
+    const native = registerPlugin<BackgroundLocationPlugin>('BackgroundLocation');
+    cachedPlugin = {
     startTracking: async (opts) => {
       try {
         return await native.startTracking(opts);
@@ -82,8 +91,19 @@ function createSafePlugin(): BackgroundLocationPlugin {
         throw e;
       }
     },
-  };
+    };
+    return cachedPlugin;
+  } catch {
+    return noopImpl;
+  }
 }
 
-export const BackgroundLocation: BackgroundLocationPlugin = createSafePlugin();
+export const BackgroundLocation: BackgroundLocationPlugin = {
+  startTracking: (opts) => getPlugin().then((p) => p.startTracking(opts)),
+  stopTracking: () => getPlugin().then((p) => p.stopTracking()),
+  addListener: (eventName, callback) => getPlugin().then((p) => p.addListener(eventName, callback)),
+  openAppSettings: () => getPlugin().then((p) => p.openAppSettings()),
+  getDeviceInfo: () => getPlugin().then((p) => p.getDeviceInfo()),
+  openBatterySettings: () => getPlugin().then((p) => p.openBatterySettings()),
+};
 

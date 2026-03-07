@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { Capacitor } from '@capacitor/core';
 import { supabase } from '@/lib/supabase/client';
 import { registerForPush, sendTokenToBackend } from '@/lib/capacitor/pushNotifications';
 
@@ -14,12 +13,14 @@ function isLikelyDevOrEmulator(): boolean {
 
 /**
  * En dispositivos nativos (Android/iOS), al haber sesión registra el token FCM/APNS
- * en el backend para poder enviar notificaciones push. Se omite en emulador/dev.
+ * en el backend. Capacitor se carga solo en cliente para no romper el build (Vercel).
  */
 export default function PushRegistration() {
   const registeredForUser = useRef<string | null>(null);
 
   const register = async () => {
+    if (typeof window === 'undefined') return;
+    const { Capacitor } = await import('@capacitor/core');
     if (!Capacitor.isNativePlatform() || isLikelyDevOrEmulator()) return;
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token || session.user.id === registeredForUser.current) return;

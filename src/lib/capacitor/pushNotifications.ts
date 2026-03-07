@@ -1,12 +1,12 @@
-import { Capacitor } from '@capacitor/core';
-
 export type PushRegisterResult = { ok: true; token: string } | { ok: false; error: string };
 
 /**
  * Solicita permiso, registra el dispositivo en FCM/APNS y devuelve el token.
- * Solo tiene efecto en Android/iOS; en web retorna ok: false.
+ * Solo tiene efecto en Android/iOS. Capacitor se carga en runtime para no romper el build.
  */
 export async function registerForPush(): Promise<PushRegisterResult> {
+  if (typeof window === 'undefined') return { ok: false, error: 'not_native' };
+  const { Capacitor } = await import('@capacitor/core');
   if (!Capacitor.isNativePlatform()) {
     return { ok: false, error: 'not_native' };
   }
