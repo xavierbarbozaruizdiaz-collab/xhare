@@ -6,12 +6,6 @@ import { useAdminAuth } from './AdminAuthContext';
 
 type BlockStatus = 'idle' | 'loading' | 'success' | 'error';
 
-type ProfilesData = {
-  pendingDrivers: number;
-  totalDrivers: number;
-  totalPassengersProfile: number;
-};
-
 type UberpoolData = {
   totalViajesPublicados: number;
   viajesEnCurso: number;
@@ -42,49 +36,9 @@ const authHeaders = (token: string) => ({
   'x-admin-token': token,
 });
 
-function BlockCard({
-  title,
-  status,
-  error,
-  onRetry,
-  children,
-}: {
-  title: string;
-  status: BlockStatus;
-  error: string | null;
-  onRetry: () => void;
-  children: React.ReactNode;
-}) {
-  if (status === 'loading') {
-    return (
-      <div className="app-mobile-card p-4">
-        <p className="text-gray-500 text-sm">{title}</p>
-        <p className="text-gray-400 text-sm mt-1">Cargando…</p>
-      </div>
-    );
-  }
-  if (status === 'error') {
-    return (
-      <div className="app-mobile-card p-4 border-red-200 bg-red-50/30">
-        <p className="text-gray-500 text-sm">{title}</p>
-        <p className="text-sm text-red-600 mt-1">{error ?? 'Error al cargar'}</p>
-        <button type="button" onClick={onRetry} className="btn-secondary text-xs mt-2">
-          Reintentar
-        </button>
-      </div>
-    );
-  }
-  return <>{children}</>;
-}
-
 export default function AdminDashboardPage() {
   const { accessToken, ready, refetch, isAdmin } = useAdminAuth();
 
-  const [profiles, setProfiles] = useState<{ status: BlockStatus; data: ProfilesData | null; error: string | null }>({
-    status: 'idle',
-    data: null,
-    error: null,
-  });
   const [uberpool, setUberpool] = useState<{ status: BlockStatus; data: UberpoolData | null; error: string | null }>({
     status: 'idle',
     data: null,
@@ -138,16 +92,14 @@ export default function AdminDashboardPage() {
     [accessToken, refetch]
   );
 
-  const fetchProfiles = useCallback(() => fetchBlock('/api/admin/dashboard/profiles', setProfiles), [fetchBlock]);
   const fetchUberpool = useCallback(() => fetchBlock('/api/admin/dashboard/uberpool', setUberpool), [fetchBlock]);
   const fetchRatings = useCallback(() => fetchBlock('/api/admin/dashboard/ratings', setRatings), [fetchBlock]);
   const fetchIndriver = useCallback(() => fetchBlock('/api/admin/dashboard/indriver', setIndriver), [fetchBlock]);
 
   useEffect(() => {
     if (!ready || !isAdmin || !accessToken) return;
-    fetchProfiles();
     fetchUberpool();
-  }, [ready, isAdmin, accessToken, fetchProfiles, fetchUberpool]);
+  }, [ready, isAdmin, accessToken, fetchUberpool]);
 
   useEffect(() => {
     if (ratingsExpanded && ratings.status === 'idle') fetchRatings();
@@ -185,70 +137,11 @@ export default function AdminDashboardPage() {
     );
   }
 
-  const profilesData = profiles.data;
   const uberpoolData = uberpool.data;
 
   return (
     <div>
       <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
-
-      {/* Fila: Perfiles (3) + Viajes total (1) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <BlockCard
-          title="Solicitudes de conductores"
-          status={profiles.status}
-          error={profiles.error}
-          onRetry={fetchProfiles}
-        >
-          <Link href="/admin/drivers" className="app-mobile-card p-4 hover:border-green-300 hover:shadow transition block">
-            <p className="text-gray-500 text-sm">Solicitudes de conductores</p>
-            <p className="text-2xl font-bold text-gray-900">{profilesData?.pendingDrivers ?? '—'}</p>
-            <p className="text-xs text-green-600 mt-1">Aprobar o rechazar</p>
-          </Link>
-        </BlockCard>
-        {profiles.status === 'success' && profilesData ? (
-          <>
-            <div className="app-mobile-card p-4">
-              <p className="text-gray-500 text-sm">Conductores aprobados</p>
-              <p className="text-2xl font-bold text-gray-900">{profilesData.totalDrivers}</p>
-            </div>
-            <div className="app-mobile-card p-4">
-              <p className="text-gray-500 text-sm">Pasajeros</p>
-              <p className="text-2xl font-bold text-gray-900">{profilesData.totalPassengersProfile}</p>
-            </div>
-          </>
-        ) : (
-          <>
-            <BlockCard title="Conductores aprobados" status={profiles.status} error={profiles.error} onRetry={fetchProfiles}>
-              <div className="app-mobile-card p-4">
-                <p className="text-gray-500 text-sm">Conductores aprobados</p>
-                <p className="text-2xl font-bold text-gray-900">—</p>
-              </div>
-            </BlockCard>
-            <BlockCard title="Pasajeros" status={profiles.status} error={profiles.error} onRetry={fetchProfiles}>
-              <div className="app-mobile-card p-4">
-                <p className="text-gray-500 text-sm">Pasajeros</p>
-                <p className="text-2xl font-bold text-gray-900">—</p>
-              </div>
-            </BlockCard>
-          </>
-        )}
-        <BlockCard
-          title="Viajes (UberPool)"
-          status={uberpool.status}
-          error={uberpool.error}
-          onRetry={fetchUberpool}
-        >
-          <div className="app-mobile-card p-4">
-            <p className="text-gray-500 text-sm">Viajes (UberPool)</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {uberpoolData
-                ? uberpoolData.totalViajesPublicados + uberpoolData.viajesEnCurso + uberpoolData.viajesCompletados
-                : '—'}
-            </p>
-          </div>
-        </BlockCard>
-      </div>
 
       {/* Sección UberPool (6 métricas + activos) */}
       <section className="mb-8">
