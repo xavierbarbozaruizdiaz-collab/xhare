@@ -29,8 +29,14 @@ export async function getAppLauncher() {
 
 export async function getGeolocation() {
   if (typeof window === 'undefined') return null;
-  const { Geolocation } = await import('@capacitor/geolocation');
-  return Geolocation;
+  const Capacitor = await getCapacitor();
+  if (!Capacitor?.isNativePlatform()) return null;
+  try {
+    const { Geolocation } = await import('@capacitor/geolocation');
+    return Geolocation;
+  } catch {
+    return null;
+  }
 }
 
 export async function isNativePlatform(): Promise<boolean> {

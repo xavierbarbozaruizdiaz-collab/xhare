@@ -3,9 +3,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
-import { getCapacitor, getApp, getBrowser, getAppLauncher, getGeolocation, isNativePlatform } from '@/lib/capacitor/rideNative';
+import * as platform from '@/lib/platform';
 import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
-import { BubbleOverlay } from '@/lib/capacitor/bubbleOverlay';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { getPositionAlongPolyline } from '@/lib/geo';
@@ -61,7 +60,7 @@ export default function RideDetailClient() {
   }, [rideId]);
 
   useEffect(() => {
-    isNativePlatform().then(setIsNative);
+    platform.isNative().then(setIsNative);
   }, []);
 
   // Detección de conexión perdida (online/offline)
@@ -144,29 +143,9 @@ export default function RideDetailClient() {
         setLocationSendFailed(locationFailCountRef.current >= 2);
       };
 
-      // Priorizar navigator.geolocation para evitar "Geolocation.then() is not implemented on web" en WebView/navegador
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => onPosition(pos.coords.latitude, pos.coords.longitude),
-          onError,
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
-        );
-      } else {
-        const native = await isNativePlatform();
-        const Geo = await getGeolocation();
-        if (native && Geo) {
-          try {
-            const pos = await Geo.getCurrentPosition({
-              enableHighAccuracy: true,
-              timeout: 12000,
-              maximumAge: 5000,
-            });
-            onPosition(pos.coords.latitude, pos.coords.longitude);
-          } catch {
-            onError();
-          }
-        }
-      }
+      const pos = await platform.getCurrentPosition({ timeout: 10000, maxAge: 5000 });
+      if (pos) onPosition(pos.lat, pos.lng);
+      else onError();
     };
     void sendLocation();
     const interval = setInterval(() => void sendLocation(), 25000);
@@ -174,24 +153,13 @@ export default function RideDetailClient() {
   }, [rideId, currentUser?.id, ride?.driver_id, ride?.status]);
 
   async function ensureLocationPermissions(): Promise<boolean> {
-    if (!(await isNativePlatform())) return true;
-    try {
-      const Geo = await getGeolocation();
-      if (!Geo) return true;
-      const perms = await Geo.checkPermissions();
-      if (perms.location === 'granted') return true;
-      const req = await Geo.requestPermissions();
-      if (req.location === 'granted') return true;
-      setPermissionModalOpen(true);
-      return false;
-    } catch {
-      // En WebView o cuando Capacitor Geolocation no está implementado en web, no bloquear el flujo
-      return true;
-    }
+    const granted = await platform.requestLocationPermission();
+    if (!granted) setPermissionModalOpen(true);
+    return granted;
   }
 
   async function startBackgroundTracking() {
-    if (!(await isNativePlatform())) return;
+    if (!(await platform.isNative())) return;
     if (!rideId || !currentUser || ride?.driver_id !== currentUser.id || ride?.status !== 'en_route') return;
     const hasPerms = await ensureLocationPermissions();
     if (!hasPerms) return;
@@ -218,7 +186,7 @@ export default function RideDetailClient() {
   }
 
   async function stopBackgroundTracking() {
-    if (!(await isNativePlatform())) return;
+    if (!(await platform.isNative())) return;
     try {
       await BackgroundLocation.stopTracking();
     } finally {
@@ -237,47 +205,41 @@ export default function RideDetailClient() {
   // Listener nativo: sesión vencida (401) desde el servicio en segundo plano
   useEffect(() => {
     let removeFn: (() => Promise<void>) | null = null;
-    isNativePlatform().then((ok) => {
+    platform.isNative().then((ok) => {
       if (!ok) return;
       return BackgroundLocation.addListener('sessionExpired', () => {
         setBackgroundTracking(false);
         setSessionExpiredBanner(true);
       });
-    }).then((h) => { if (h) removeFn = h.remove; });
+    }).then((h) => { if (h && typeof h?.remove === 'function') removeFn = h.remove; });
     return () => { if (removeFn) void removeFn(); };
   }, []);
 
   // Burbuja flotante: solicitar permiso al entrar (viaje en curso) y al ir a segunda plana mostrar burbuja
   useEffect(() => {
     if (!rideId || !ride || ride.status !== 'en_route') return;
-    let removeAppListener: (() => Promise<void>) | null = null;
+    let cleanup: (() => void) | null = null;
     const setup = async () => {
-      if (!(await isNativePlatform())) return;
-      // Solicitar permiso de overlay al entrar a la pantalla con viaje en curso (automático, sin tocar "Activar burbuja")
-      const { granted } = await BubbleOverlay.hasOverlayPermission();
-      if (!granted) await BubbleOverlay.requestOverlayPermission();
-      const AppApi = await getApp();
-      if (!AppApi) return;
-      const { remove } = await AppApi.addListener('appStateChange', async ({ isActive }: { isActive: boolean }) => {
+      if (!(await platform.isNative())) return;
+      await platform.requestOverlayPermission();
+      cleanup = await platform.onAppStateChange(async (isActive) => {
         if (isActive) {
-          await BubbleOverlay.hideBubble();
+          await platform.hideBubble();
         } else {
-          const { granted: nowGranted } = await BubbleOverlay.hasOverlayPermission();
-          if (!nowGranted) await BubbleOverlay.requestOverlayPermission();
-          else {
+          const granted = await platform.requestOverlayPermission();
+          if (granted) {
             const label = ride?.origin_label && ride?.destination_label
               ? `${shortLabel(ride.origin_label, 15)} → ${shortLabel(ride.destination_label, 15)}`
               : 'Viaje en curso';
-            await BubbleOverlay.showBubble({ label });
+            await platform.showBubble(label);
           }
         }
       });
-      removeAppListener = remove;
     };
     void setup();
     return () => {
-      void removeAppListener?.();
-      void BubbleOverlay.hideBubble();
+      if (cleanup) cleanup();
+      void platform.hideBubble();
     };
   }, [rideId, ride?.status, ride?.origin_label, ride?.destination_label]);
 
@@ -638,46 +600,14 @@ export default function RideDetailClient() {
     }
   }
 
-  async function openNavigation(lat: number, lng: number, label?: string, index?: number) {
+  async function openNavigation(lat: number, lng: number, label?: string, _index?: number) {
     const latVal = lat != null ? Number(lat) : NaN;
     const lngVal = lng != null ? Number(lng) : NaN;
     if (typeof window === 'undefined' || !Number.isFinite(latVal) || !Number.isFinite(lngVal)) {
       if (typeof window !== 'undefined') alert('Punto sin ubicación');
       return;
     }
-    const dest = `${latVal},${lngVal}`;
-    const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
-    if (process.env.NODE_ENV === 'development') {
-      console.log('NAV_OPEN', { lat: latVal, lng: lngVal, label, index });
-    }
-    if (await isNativePlatform()) {
-      const AppLaunch = await getAppLauncher();
-      const BrowserApi = await getBrowser();
-      const geoLabel = label ? encodeURIComponent(label) : dest;
-      const geoUrl = `geo:${latVal},${lngVal}?q=${geoLabel}`;
-      // Intentar primero geo: para que el sistema muestre el selector de apps (Maps, Waze, etc.)
-      try {
-        if (AppLaunch) {
-          await AppLaunch.openUrl({ url: geoUrl });
-          return;
-        }
-      } catch (e) {
-        if (process.env.NODE_ENV === 'development') {
-          console.warn('NAV_GEO_APP_LAUNCHER_FAILED', e);
-        }
-      }
-      try {
-        if (BrowserApi) {
-          await BrowserApi.open({ url: fallbackUrl });
-          return;
-        }
-      } catch {
-        window.open(fallbackUrl, '_blank');
-        return;
-      }
-    }
-
-    window.open(fallbackUrl, '_blank');
+    await platform.openNavigation(latVal, lngVal, label ?? undefined);
   }
 
   async function openNavigationToFirstPoint(): Promise<void> {
@@ -698,7 +628,7 @@ export default function RideDetailClient() {
       }
       return;
     }
-    await openNavigation(lat, lng, 'Origen / primer punto', 0);
+    await platform.openNavigation(lat, lng, 'Origen / primer punto');
   }
 
   async function setRideStatus(newStatus: 'en_route' | 'completed') {
@@ -784,16 +714,11 @@ export default function RideDetailClient() {
       }
       if (newStatus === 'en_route') {
         try {
-          // Abrir opciones de navegación primero para que el usuario elija Maps/Waze/etc.
           await openNavigationToFirstPoint().catch((err) => {
             if (process.env.NODE_ENV === 'development') console.warn('NAV_FIRST_POINT_IGNORED', err);
           });
-          const native = await isNativePlatform().catch(() => false);
-          if (native) {
-            try {
-              const { granted: overlayGranted } = await BubbleOverlay.hasOverlayPermission();
-              if (!overlayGranted) await BubbleOverlay.requestOverlayPermission();
-            } catch (_) {}
+          if (await platform.isNative()) {
+            await platform.requestOverlayPermission();
             const granted = await ensureLocationPermissions();
             if (!granted) return;
             try {
