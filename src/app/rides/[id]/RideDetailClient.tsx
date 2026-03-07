@@ -3,13 +3,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
-import { Capacitor } from '@capacitor/core';
-import { App } from '@capacitor/app';
-import { Browser } from '@capacitor/browser';
-import { AppLauncher } from '@capacitor/app-launcher';
+import { getCapacitor, getApp, getBrowser, getAppLauncher, getGeolocation, isNativePlatform } from '@/lib/capacitor/rideNative';
 import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
 import { BubbleOverlay } from '@/lib/capacitor/bubbleOverlay';
-import { Geolocation } from '@capacitor/geolocation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { getPositionAlongPolyline } from '@/lib/geo';
@@ -58,10 +54,15 @@ export default function RideDetailClient() {
   const [xiaomiModalOpen, setXiaomiModalOpen] = useState(false);
   const [trackingToastVisible, setTrackingToastVisible] = useState(false);
   const [driverSuspended, setDriverSuspended] = useState(false);
+  const [isNative, setIsNative] = useState(false);
 
   useEffect(() => {
     loadRide();
   }, [rideId]);
+
+  useEffect(() => {
+    isNativePlatform().then(setIsNative);
+  }, []);
 
   // Detección de conexión perdida (online/offline)
   useEffect(() => {
@@ -143,9 +144,11 @@ export default function RideDetailClient() {
         setLocationSendFailed(locationFailCountRef.current >= 2);
       };
 
-      if (Capacitor.isNativePlatform()) {
+      const native = await isNativePlatform();
+      const Geo = await getGeolocation();
+      if (native && Geo) {
         try {
-          const pos = await Geolocation.getCurrentPosition({
+          const pos = await Geo.getCurrentPosition({
             enableHighAccuracy: true,
             timeout: 12000,
             maximumAge: 5000,
@@ -168,11 +171,13 @@ export default function RideDetailClient() {
   }, [rideId, currentUser?.id, ride?.driver_id, ride?.status]);
 
   async function ensureLocationPermissions(): Promise<boolean> {
-    if (!Capacitor.isNativePlatform()) return true;
+    if (!(await isNativePlatform())) return true;
+    const Geo = await getGeolocation();
+    if (!Geo) return true;
     try {
-      const perms = await Geolocation.checkPermissions();
+      const perms = await Geo.checkPermissions();
       if (perms.location === 'granted') return true;
-      const req = await Geolocation.requestPermissions();
+      const req = await Geo.requestPermissions();
       if (req.location === 'granted') return true;
       setPermissionModalOpen(true);
       return false;
@@ -183,7 +188,7 @@ export default function RideDetailClient() {
   }
 
   async function startBackgroundTracking() {
-    if (!Capacitor.isNativePlatform()) return;
+    if (!(await isNativePlatform())) return;
     if (!rideId || !currentUser || ride?.driver_id !== currentUser.id || ride?.status !== 'en_route') return;
     const hasPerms = await ensureLocationPermissions();
     if (!hasPerms) return;
@@ -210,7 +215,7 @@ export default function RideDetailClient() {
   }
 
   async function stopBackgroundTracking() {
-    if (!Capacitor.isNativePlatform()) return;
+    if (!(await isNativePlatform())) return;
     try {
       await BackgroundLocation.stopTracking();
     } finally {
@@ -228,20 +233,26 @@ export default function RideDetailClient() {
 
   // Listener nativo: sesión vencida (401) desde el servicio en segundo plano
   useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return;
-    const listenerPromise = BackgroundLocation.addListener('sessionExpired', () => {
-      setBackgroundTracking(false);
-      setSessionExpiredBanner(true);
-    });
-    return () => { void listenerPromise.then((h) => h.remove()); };
+    let removeFn: (() => Promise<void>) | null = null;
+    isNativePlatform().then((ok) => {
+      if (!ok) return;
+      return BackgroundLocation.addListener('sessionExpired', () => {
+        setBackgroundTracking(false);
+        setSessionExpiredBanner(true);
+      });
+    }).then((h) => { if (h) removeFn = h.remove; });
+    return () => { if (removeFn) void removeFn(); };
   }, []);
 
   // Burbuja flotante estilo Uber/Bolt: al ir a segunda plana con viaje en curso, mostrar burbuja; al volver, ocultar
   useEffect(() => {
-    if (!Capacitor.isNativePlatform() || !rideId || !ride || ride.status !== 'en_route') return;
+    if (!rideId || !ride || ride.status !== 'en_route') return;
     let removeAppListener: (() => Promise<void>) | null = null;
     const setup = async () => {
-      const { remove } = await App.addListener('appStateChange', async ({ isActive }) => {
+      if (!(await isNativePlatform())) return;
+      const AppApi = await getApp();
+      if (!AppApi) return;
+      const { remove } = await AppApi.addListener('appStateChange', async ({ isActive }: { isActive: boolean }) => {
         if (isActive) {
           await BubbleOverlay.hideBubble();
         } else {
@@ -633,24 +644,29 @@ export default function RideDetailClient() {
     if (process.env.NODE_ENV === 'development') {
       console.log('NAV_OPEN', { lat: latVal, lng: lngVal, label, index });
     }
-    if (Capacitor.isNativePlatform()) {
+    if (await isNativePlatform()) {
+      const AppLaunch = await getAppLauncher();
+      const BrowserApi = await getBrowser();
       const geoLabel = label ? encodeURIComponent(label) : dest;
       const geoUrl = `geo:${latVal},${lngVal}?q=${geoLabel}`;
       try {
-        const { value } = await AppLauncher.canOpenUrl({ url: geoUrl });
-        if (value) {
-          await AppLauncher.openUrl({ url: geoUrl });
-          return;
+        if (AppLaunch) {
+          const { value } = await AppLaunch.canOpenUrl({ url: geoUrl });
+          if (value) {
+            await AppLaunch.openUrl({ url: geoUrl });
+            return;
+          }
         }
       } catch (e) {
         if (process.env.NODE_ENV === 'development') {
           console.warn('NAV_GEO_APP_LAUNCHER_FAILED', e);
         }
       }
-      // Fallback: Google Maps en navegador del sistema
       try {
-        await Browser.open({ url: fallbackUrl });
-        return;
+        if (BrowserApi) {
+          await BrowserApi.open({ url: fallbackUrl });
+          return;
+        }
       } catch {
         window.open(fallbackUrl, '_blank');
         return;
@@ -746,7 +762,7 @@ export default function RideDetailClient() {
         void openNavigationToFirstPoint().catch((err) => {
           if (process.env.NODE_ENV === 'development') console.warn('NAV_FIRST_POINT_IGNORED', err);
         });
-        if (Capacitor.isNativePlatform()) {
+        if (await isNativePlatform()) {
           const granted = await ensureLocationPermissions();
           if (!granted) return;
           try {
@@ -1074,7 +1090,7 @@ export default function RideDetailClient() {
                 <p className="text-xs text-blue-600 mt-2">
                   Tu ubicación se comparte con los pasajeros cada 25 s.
                 </p>
-                {Capacitor.isNativePlatform() && (
+                {isNative && (
                   <p className="text-xs text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
                     Para ver el viaje al usar otras apps (ej. navegación):
                     <button
@@ -1311,7 +1327,7 @@ export default function RideDetailClient() {
                         A bordo: {onboardCount}
                       </span>
                     )}
-                    {process.env.NODE_ENV === 'development' && Capacitor.isNativePlatform() && (
+                    {process.env.NODE_ENV === 'development' && isNative && (
                       <button
                         type="button"
                         onClick={backgroundTracking ? () => void stopBackgroundTracking() : () => void startBackgroundTracking()}
