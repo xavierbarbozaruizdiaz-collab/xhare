@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import { Capacitor } from '@capacitor/core';
+import { App } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { AppLauncher } from '@capacitor/app-launcher';
 import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
+import { BubbleOverlay } from '@/lib/capacitor/bubbleOverlay';
 import { Geolocation } from '@capacitor/geolocation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -48,6 +50,7 @@ export default function RideDetailPage() {
   const [submittingRating, setSubmittingRating] = useState(false);
   const [skippedRateDriver, setSkippedRateDriver] = useState(false);
   const [locationSendFailed, setLocationSendFailed] = useState(false);
+  const locationFailCountRef = useRef(0);
   const [connectionLost, setConnectionLost] = useState(false);
   const [backgroundTracking, setBackgroundTracking] = useState(false);
   const [sessionExpiredBanner, setSessionExpiredBanner] = useState(false);
@@ -102,37 +105,65 @@ export default function RideDetailPage() {
   // Conductor: enviar ubicación cada 25 s (alineado con rate limit 15 s y carga en pasajeros)
   useEffect(() => {
     if (!rideId || !currentUser || ride?.driver_id !== currentUser.id || ride?.status !== 'en_route') return;
-    // En app nativa preferimos el tracking en segundo plano vía servicio; mantenemos este tracking
-    // como refuerzo en foreground (no se desactiva).
     const sendLocation = async () => {
-      if (typeof navigator === 'undefined' || !navigator.geolocation) return;
       const { data: { session } } = await supabase.auth.getSession();
       const accessToken = session?.access_token;
       if (!accessToken) return;
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          fetch(`/api/rides/${rideId}/location`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+
+      const onPosition = (lat: number, lng: number) => {
+        fetch(`/api/rides/${rideId}/location`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ lat, lng }),
+        })
+          .then((res) => {
+            if (res.ok) {
+              locationFailCountRef.current = 0;
+              setLocationSendFailed(false);
+            } else if (res.status === 429) {
+              // Rate limit: no es fallo de GPS/conexión, no mostrar aviso
+              locationFailCountRef.current = 0;
+              setLocationSendFailed(false);
+            } else {
+              locationFailCountRef.current += 1;
+              setLocationSendFailed(locationFailCountRef.current >= 2);
+            }
           })
-            .then((res) => {
-              if (res.ok) setLocationSendFailed(false);
-              else setLocationSendFailed(true);
-            })
-            .catch(() => setLocationSendFailed(true));
-        },
-        () => setLocationSendFailed(true),
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 5000 }
-      );
+          .catch(() => {
+            locationFailCountRef.current += 1;
+            setLocationSendFailed(locationFailCountRef.current >= 2);
+          });
+      };
+
+      const onError = () => {
+        locationFailCountRef.current += 1;
+        setLocationSendFailed(locationFailCountRef.current >= 2);
+      };
+
+      if (Capacitor.isNativePlatform()) {
+        try {
+          const pos = await Geolocation.getCurrentPosition({
+            enableHighAccuracy: true,
+            timeout: 12000,
+            maximumAge: 5000,
+          });
+          onPosition(pos.coords.latitude, pos.coords.longitude);
+        } catch {
+          onError();
+        }
+      } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => onPosition(pos.coords.latitude, pos.coords.longitude),
+          onError,
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+        );
+      }
     };
     void sendLocation();
-    const interval = setInterval(() => {
-      void sendLocation();
-    }, 25000);
+    const interval = setInterval(() => void sendLocation(), 25000);
     return () => clearInterval(interval);
   }, [rideId, currentUser?.id, ride?.driver_id, ride?.status]);
 
@@ -204,6 +235,34 @@ export default function RideDetailPage() {
     });
     return () => { void listenerPromise.then((h) => h.remove()); };
   }, []);
+
+  // Burbuja flotante estilo Uber/Bolt: al ir a segunda plana con viaje en curso, mostrar burbuja; al volver, ocultar
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || !rideId || !ride || ride.status !== 'en_route') return;
+    let removeAppListener: (() => Promise<void>) | null = null;
+    const setup = async () => {
+      const { remove } = await App.addListener('appStateChange', async ({ isActive }) => {
+        if (isActive) {
+          await BubbleOverlay.hideBubble();
+        } else {
+          const { granted } = await BubbleOverlay.hasOverlayPermission();
+          if (!granted) await BubbleOverlay.requestOverlayPermission();
+          else {
+            const label = ride?.origin_label && ride?.destination_label
+              ? `${shortLabel(ride.origin_label, 15)} → ${shortLabel(ride.destination_label, 15)}`
+              : 'Viaje en curso';
+            await BubbleOverlay.showBubble({ label });
+          }
+        }
+      });
+      removeAppListener = remove;
+    };
+    void setup();
+    return () => {
+      void removeAppListener?.();
+      void BubbleOverlay.hideBubble();
+    };
+  }, [rideId, ride?.status, ride?.origin_label, ride?.destination_label]);
 
   const basePolyline = useMemo(() => {
     if (!ride) return [];
@@ -654,15 +713,22 @@ export default function RideDetailPage() {
         });
       }
       if (!res.ok || !data?.ok) {
-        const msg = data?.error === 'account_suspended'
-          ? (data?.details ?? 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.')
-          : (newStatus === 'en_route' ? 'No se pudo iniciar el viaje. Volvé a intentar.' : 'No se pudo actualizar el estado del viaje. Volvé a intentar.');
+        const msg =
+          data?.error === 'account_suspended'
+            ? (data?.details ?? 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.')
+            : data?.error === 'already_has_active_ride'
+              ? (data?.details ?? 'Ya tenés un viaje en curso. Finalizá ese viaje antes de iniciar otro.')
+              : (newStatus === 'en_route' ? 'No se pudo iniciar el viaje. Volvé a intentar.' : 'No se pudo actualizar el estado del viaje. Volvé a intentar.');
         alert(msg);
-        if (data?.error === 'account_suspended') await loadRide();
+        if (data?.error === 'account_suspended' || data?.error === 'already_has_active_ride') await loadRide();
         return;
       }
-      // Estado guardado localmente desde Supabase; el viaje ya inició en la DB.
-      await loadRide();
+      // Actualización optimista: si acabamos de finalizar, el conductor ve el estado "completado" al instante
+      if (newStatus === 'completed' && ride) {
+        setRide((prev: any) => (prev ? { ...prev, status: 'completed' } : prev));
+      }
+      // Sincronizar con el servidor en background
+      void loadRide();
       if (newStatus === 'en_route' && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
         try {
           const n = new Notification('Viaje en curso - Xhare', {
@@ -1242,7 +1308,7 @@ export default function RideDetailPage() {
                       disabled={updatingStatus || driverSuspended}
                       className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition disabled:opacity-50"
                     >
-                      {updatingStatus ? '...' : driverSuspended ? 'Cuenta suspendida' : 'Finalizar viaje'}
+                      {updatingStatus ? 'Finalizando…' : driverSuspended ? 'Cuenta suspendida' : 'Finalizar viaje'}
                     </button>
                   </>
                 )}

@@ -123,6 +123,26 @@ serve(async (req) => {
       );
     }
 
+    // Un conductor no puede tener más de un viaje en curso a la vez
+    if (status === 'en_route') {
+      const { data: otherEnRoute } = await supabase
+        .from('rides')
+        .select('id')
+        .eq('driver_id', user.id)
+        .eq('status', 'en_route')
+        .neq('id', ride_id)
+        .limit(1);
+      if (otherEnRoute && otherEnRoute.length > 0) {
+        return new Response(
+          JSON.stringify({
+            error: 'already_has_active_ride',
+            details: 'Ya tenés un viaje en curso. Finalizá ese viaje antes de iniciar otro.',
+          }),
+          { status: 400, headers: jsonHeaders }
+        );
+      }
+    }
+
     const { data: account } = await supabase
       .from('driver_accounts')
       .select('account_status')
