@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useAdminAuth } from './AdminAuthContext';
 
@@ -37,30 +37,23 @@ export default function AdminDashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hasFetchedRef = useRef(false);
 
   useEffect(() => {
     if (!ready || !isAdmin) return;
+    if (hasFetchedRef.current) return;
+    if (!accessToken) return;
+    hasFetchedRef.current = true;
+
     (async () => {
       try {
-        let token = accessToken;
-        if (!token) {
-          token = await refetch();
-        }
-        if (!token) {
-          setError('Sesión no disponible');
-          setLoading(false);
-          return;
-        }
         const doFetch = (t: string) =>
           fetch('/api/admin/dashboard', {
-            headers: {
-              Authorization: `Bearer ${t}`,
-              'x-admin-token': t,
-            },
+            headers: { Authorization: `Bearer ${t}`, 'x-admin-token': t },
             credentials: 'include',
           });
 
-        let res = await doFetch(token);
+        let res = await doFetch(accessToken);
         if (res.status === 401) {
           const newToken = await refetch();
           if (newToken) res = await doFetch(newToken);
@@ -123,7 +116,7 @@ export default function AdminDashboardPage() {
             if (!t) { setLoading(false); return; }
             try {
               const r = await fetch('/api/admin/dashboard', { headers: { Authorization: `Bearer ${t}`, 'x-admin-token': t }, credentials: 'include' });
-              if (r.ok) { const json = await r.json(); setData(json); } else setError('Error al cargar');
+              if (r.ok) { const json = await r.json(); setData(json); setError(null); } else setError('Error al cargar');
             } catch { setError('Error de conexión'); }
             setLoading(false);
           }}

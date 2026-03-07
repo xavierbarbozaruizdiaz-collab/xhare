@@ -42,10 +42,10 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       router.push('/');
       return null;
     }
-    let { data: { session } } = await supabase.auth.refreshSession();
+    let { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) {
-      const fallback = await supabase.auth.getSession();
-      session = fallback.data.session ?? null;
+      const refreshed = await supabase.auth.refreshSession();
+      session = refreshed.data.session ?? null;
     }
     const token = session?.access_token ?? null;
     if (token) {
@@ -69,12 +69,9 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         setReady(true);
         return;
       }
-      let { data: { session } } = await supabase.auth.refreshSession();
-      if (!session?.access_token) {
-        const fallback = await supabase.auth.getSession();
-        session = fallback.data.session ?? null;
-      }
-      const token = session?.access_token ?? null;
+      // Una sola vez al entrar a /admin: renovar sesión para tener token válido y evitar 401 en la API
+      const { data: { session } } = await supabase.auth.refreshSession();
+      const token = session?.access_token ?? (await supabase.auth.getSession()).data.session?.access_token ?? null;
       setAccessToken(token);
       setIsAdmin(true);
       setReady(true);
