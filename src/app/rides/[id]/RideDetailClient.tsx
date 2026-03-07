@@ -1077,15 +1077,6 @@ export default function RideDetailClient() {
             <p className="text-sm text-gray-500 mt-1" title={ride.destination_label ?? ''}>
               → {shortLabel(ride.destination_label)}
             </p>
-            {ride.origin_lat != null && ride.origin_lng != null && (
-              <button
-                type="button"
-                onClick={() => openNavigation(ride.origin_lat!, ride.origin_lng!, ride.origin_label ?? 'Origen', 0)}
-                className="mt-2 text-xs font-medium text-blue-600 hover:underline"
-              >
-                Abrir mapa para ir al origen
-              </button>
-            )}
           </div>
 
           {/* Paradas (si hay más de origen y destino) */}
