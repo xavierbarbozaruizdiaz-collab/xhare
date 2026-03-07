@@ -1070,9 +1070,27 @@ export default function RideDetailPage() {
               />
             </div>
             {ride.status === 'en_route' && ride.driver_id === currentUser?.id && (
-              <p className="text-xs text-blue-600 mt-2">
-                Tu ubicación se comparte con los pasajeros cada 25 s.
-              </p>
+              <>
+                <p className="text-xs text-blue-600 mt-2">
+                  Tu ubicación se comparte con los pasajeros cada 25 s.
+                </p>
+                {Capacitor.isNativePlatform() && (
+                  <p className="text-xs text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
+                    Para ver el viaje al usar otras apps (ej. navegación):
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const { granted } = await BubbleOverlay.hasOverlayPermission();
+                        if (granted) return;
+                        await BubbleOverlay.requestOverlayPermission();
+                      }}
+                      className="underline font-medium text-blue-600 hover:text-blue-800"
+                    >
+                      Activar burbuja flotante
+                    </button>
+                  </p>
+                )}
+              </>
             )}
             {(passengerPickups.length > 0 || passengerDropoffs.length > 0) && (
               <p className="text-xs text-gray-500 mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5">
