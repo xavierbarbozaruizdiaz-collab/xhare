@@ -678,16 +678,22 @@ export default function RideDetailClient() {
 
   async function openNavigationToFirstPoint(): Promise<void> {
     if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
+    let lat: number | null = null;
+    let lng: number | null = null;
     const target = firstNavigationTarget;
-    if (!target) {
+    if (target && target.lat != null && target.lng != null) {
+      lat = target.lat;
+      lng = target.lng;
+    } else if (ride?.origin_lat != null && ride?.origin_lng != null) {
+      lat = Number(ride.origin_lat);
+      lng = Number(ride.origin_lng);
+    }
+    if (lat == null || lng == null) {
       if (process.env.NODE_ENV === 'development') {
         console.warn('NAV_FIRST_POINT: no target (origen/paradas sin ubicación)');
       }
       return;
     }
-    const lat = target.lat;
-    const lng = target.lng;
-    if (lat == null || lng == null) return;
     await openNavigation(lat, lng, 'Origen / primer punto', 0);
   }
 
@@ -709,14 +715,29 @@ export default function RideDetailClient() {
         return;
       }
       const fnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/ride-update-status`;
-      const res = await fetch(fnUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`, // JWT de Supabase Auth; la Edge Function valida con supabase.auth.getUser()
-        },
-        body: JSON.stringify({ ride_id: rideId, status: newStatus }),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      let res: Response;
+      try {
+        res = await fetch(fnUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ ride_id: rideId, status: newStatus }),
+          signal: controller.signal,
+        });
+      } catch (fetchErr: any) {
+        clearTimeout(timeoutId);
+        if (fetchErr?.name === 'AbortError') {
+          alert('La solicitud tardó demasiado. Revisá tu conexión y volvé a intentar.');
+        } else {
+          alert('Error de conexión. Revisá tu conexión y volvé a intentar.');
+        }
+        return;
+      }
+      clearTimeout(timeoutId);
       const data = await res.json().catch(() => ({}));
       if (process.env.NODE_ENV === 'development') {
         console.log('RIDE_UPDATE_STATUS_FN', { status: res.status, data });
