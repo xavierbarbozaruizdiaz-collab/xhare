@@ -1,8 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { capacitorAuthStorage } from '@/lib/capacitor/auth-storage';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// Placeholder en build si no hay env (ej. Vercel sin configurar); en runtime se usan las vars reales
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder-anon-key';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {

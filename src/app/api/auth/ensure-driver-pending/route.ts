@@ -3,8 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import { createServiceClient } from '@/lib/supabase/server';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder-anon-key';
 
 const ENSURE_DRIVER_WINDOW_MS = 60_000;
 const ENSURE_DRIVER_MAX_PER_WINDOW = 10;
