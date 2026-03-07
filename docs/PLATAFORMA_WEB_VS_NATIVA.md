@@ -38,3 +38,7 @@ La UI (p. ej. `RideDetailClient`) **solo** usa las funciones exportadas por `pla
 
 - Nuevas capacidades que dependan de “web vs nativo” se añaden en `platform.ts` y se usan desde la UI.
 - No añadir en componentes más condicionales del tipo “if native then Capacitor else navigator”; eso vive en la capa.
+
+## Diagnóstico: selector de apps no se abre al tocar "Iniciar viaje"
+
+En desarrollo (`NODE_ENV=development`), `platform.openNavigation()` escribe en consola: `[platform.openNavigation] native, AppLauncher.openUrl geo:...`, `AppLauncher.openUrl ok`, o `AppLauncher.openUrl failed` (con el error). Para ver la consola del APK: conectar el teléfono por USB, en Chrome (PC) ir a `chrome://inspect`, localizar el WebView de la app y "inspect"; en Consola aparecen los mensajes al tocar "Iniciar viaje". El `AndroidManifest.xml` ya declara `<queries>` con `geo` para Android 11+.
