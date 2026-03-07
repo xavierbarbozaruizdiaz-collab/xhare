@@ -144,25 +144,28 @@ export default function RideDetailClient() {
         setLocationSendFailed(locationFailCountRef.current >= 2);
       };
 
-      const native = await isNativePlatform();
-      const Geo = await getGeolocation();
-      if (native && Geo) {
-        try {
-          const pos = await Geo.getCurrentPosition({
-            enableHighAccuracy: true,
-            timeout: 12000,
-            maximumAge: 5000,
-          });
-          onPosition(pos.coords.latitude, pos.coords.longitude);
-        } catch {
-          onError();
-        }
-      } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      // Priorizar navigator.geolocation para evitar "Geolocation.then() is not implemented on web" en WebView/navegador
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (pos) => onPosition(pos.coords.latitude, pos.coords.longitude),
           onError,
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
         );
+      } else {
+        const native = await isNativePlatform();
+        const Geo = await getGeolocation();
+        if (native && Geo) {
+          try {
+            const pos = await Geo.getCurrentPosition({
+              enableHighAccuracy: true,
+              timeout: 12000,
+              maximumAge: 5000,
+            });
+            onPosition(pos.coords.latitude, pos.coords.longitude);
+          } catch {
+            onError();
+          }
+        }
       }
     };
     void sendLocation();
@@ -172,9 +175,9 @@ export default function RideDetailClient() {
 
   async function ensureLocationPermissions(): Promise<boolean> {
     if (!(await isNativePlatform())) return true;
-    const Geo = await getGeolocation();
-    if (!Geo) return true;
     try {
+      const Geo = await getGeolocation();
+      if (!Geo) return true;
       const perms = await Geo.checkPermissions();
       if (perms.location === 'granted') return true;
       const req = await Geo.requestPermissions();
@@ -182,8 +185,8 @@ export default function RideDetailClient() {
       setPermissionModalOpen(true);
       return false;
     } catch {
-      setPermissionModalOpen(true);
-      return false;
+      // En WebView o cuando Capacitor Geolocation no está implementado en web, no bloquear el flujo
+      return true;
     }
   }
 
@@ -780,28 +783,34 @@ export default function RideDetailClient() {
         Notification.requestPermission().catch(() => {});
       }
       if (newStatus === 'en_route') {
-        // Abrir opciones de navegación primero (antes de modales de permisos) para que el usuario elija Maps/Waze/etc.
-        await openNavigationToFirstPoint().catch((err) => {
-          if (process.env.NODE_ENV === 'development') console.warn('NAV_FIRST_POINT_IGNORED', err);
-        });
-        if (await isNativePlatform()) {
-          // Permiso de burbuja flotante: solicitarlo al iniciar viaje para no pedir al usuario que toque "Activar burbuja"
-          const { granted: overlayGranted } = await BubbleOverlay.hasOverlayPermission();
-          if (!overlayGranted) await BubbleOverlay.requestOverlayPermission();
-          const granted = await ensureLocationPermissions();
-          if (!granted) return;
-          try {
-            const info = await BackgroundLocation.getDeviceInfo();
-            const m = (info?.manufacturer ?? '').toLowerCase();
-            if (m.includes('xiaomi') || m.includes('redmi') || m.includes('mi')) {
-              setXiaomiModalOpen(true);
+        try {
+          // Abrir opciones de navegación primero para que el usuario elija Maps/Waze/etc.
+          await openNavigationToFirstPoint().catch((err) => {
+            if (process.env.NODE_ENV === 'development') console.warn('NAV_FIRST_POINT_IGNORED', err);
+          });
+          const native = await isNativePlatform().catch(() => false);
+          if (native) {
+            try {
+              const { granted: overlayGranted } = await BubbleOverlay.hasOverlayPermission();
+              if (!overlayGranted) await BubbleOverlay.requestOverlayPermission();
+            } catch (_) {}
+            const granted = await ensureLocationPermissions();
+            if (!granted) return;
+            try {
+              const info = await BackgroundLocation.getDeviceInfo();
+              const m = (info?.manufacturer ?? '').toLowerCase();
+              if (m.includes('xiaomi') || m.includes('redmi') || m.includes('mi')) {
+                setXiaomiModalOpen(true);
+              }
+            } catch (_) {}
+            if (!backgroundTracking) {
+              await startBackgroundTracking();
+              setTrackingToastVisible(true);
+              setTimeout(() => setTrackingToastVisible(false), 4000);
             }
-          } catch (_) {}
-          if (!backgroundTracking) {
-            await startBackgroundTracking();
-            setTrackingToastVisible(true);
-            setTimeout(() => setTrackingToastVisible(false), 4000);
           }
+        } catch (e) {
+          if (process.env.NODE_ENV === 'development') console.warn('EN_ROUTE_SETUP_IGNORED', e);
         }
       }
     } finally {
@@ -1115,22 +1124,6 @@ export default function RideDetailClient() {
                 <p className="text-xs text-blue-600 mt-2">
                   Tu ubicación se comparte con los pasajeros cada 25 s.
                 </p>
-                {isNative && (
-                  <p className="text-xs text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
-                    Para ver el viaje al usar otras apps (ej. navegación) se pide el permiso de burbuja al entrar. Si no lo activaste:
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const { granted } = await BubbleOverlay.hasOverlayPermission();
-                        if (granted) return;
-                        await BubbleOverlay.requestOverlayPermission();
-                      }}
-                      className="underline font-medium text-blue-600 hover:text-blue-800"
-                    >
-                      Activar burbuja flotante
-                    </button>
-                  </p>
-                )}
               </>
             )}
             {(passengerPickups.length > 0 || passengerDropoffs.length > 0) && (
