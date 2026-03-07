@@ -244,20 +244,23 @@ export default function RideDetailClient() {
     return () => { if (removeFn) void removeFn(); };
   }, []);
 
-  // Burbuja flotante estilo Uber/Bolt: al ir a segunda plana con viaje en curso, mostrar burbuja; al volver, ocultar
+  // Burbuja flotante: solicitar permiso al entrar (viaje en curso) y al ir a segunda plana mostrar burbuja
   useEffect(() => {
     if (!rideId || !ride || ride.status !== 'en_route') return;
     let removeAppListener: (() => Promise<void>) | null = null;
     const setup = async () => {
       if (!(await isNativePlatform())) return;
+      // Solicitar permiso de overlay al entrar a la pantalla con viaje en curso (automático, sin tocar "Activar burbuja")
+      const { granted } = await BubbleOverlay.hasOverlayPermission();
+      if (!granted) await BubbleOverlay.requestOverlayPermission();
       const AppApi = await getApp();
       if (!AppApi) return;
       const { remove } = await AppApi.addListener('appStateChange', async ({ isActive }: { isActive: boolean }) => {
         if (isActive) {
           await BubbleOverlay.hideBubble();
         } else {
-          const { granted } = await BubbleOverlay.hasOverlayPermission();
-          if (!granted) await BubbleOverlay.requestOverlayPermission();
+          const { granted: nowGranted } = await BubbleOverlay.hasOverlayPermission();
+          if (!nowGranted) await BubbleOverlay.requestOverlayPermission();
           else {
             const label = ride?.origin_label && ride?.destination_label
               ? `${shortLabel(ride.origin_label, 15)} → ${shortLabel(ride.destination_label, 15)}`
@@ -649,13 +652,11 @@ export default function RideDetailClient() {
       const BrowserApi = await getBrowser();
       const geoLabel = label ? encodeURIComponent(label) : dest;
       const geoUrl = `geo:${latVal},${lngVal}?q=${geoLabel}`;
+      // Intentar primero geo: para que el sistema muestre el selector de apps (Maps, Waze, etc.)
       try {
         if (AppLaunch) {
-          const { value } = await AppLaunch.canOpenUrl({ url: geoUrl });
-          if (value) {
-            await AppLaunch.openUrl({ url: geoUrl });
-            return;
-          }
+          await AppLaunch.openUrl({ url: geoUrl });
+          return;
         }
       } catch (e) {
         if (process.env.NODE_ENV === 'development') {
@@ -779,11 +780,14 @@ export default function RideDetailClient() {
         Notification.requestPermission().catch(() => {});
       }
       if (newStatus === 'en_route') {
-        // Navegación en segundo plano: si falla no bloquea el estado del viaje (ya iniciado en DB).
-        void openNavigationToFirstPoint().catch((err) => {
+        // Abrir opciones de navegación primero (antes de modales de permisos) para que el usuario elija Maps/Waze/etc.
+        await openNavigationToFirstPoint().catch((err) => {
           if (process.env.NODE_ENV === 'development') console.warn('NAV_FIRST_POINT_IGNORED', err);
         });
         if (await isNativePlatform()) {
+          // Permiso de burbuja flotante: solicitarlo al iniciar viaje para no pedir al usuario que toque "Activar burbuja"
+          const { granted: overlayGranted } = await BubbleOverlay.hasOverlayPermission();
+          if (!overlayGranted) await BubbleOverlay.requestOverlayPermission();
           const granted = await ensureLocationPermissions();
           if (!granted) return;
           try {
@@ -1113,7 +1117,7 @@ export default function RideDetailClient() {
                 </p>
                 {isNative && (
                   <p className="text-xs text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
-                    Para ver el viaje al usar otras apps (ej. navegación):
+                    Para ver el viaje al usar otras apps (ej. navegación) se pide el permiso de burbuja al entrar. Si no lo activaste:
                     <button
                       type="button"
                       onClick={async () => {
