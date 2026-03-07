@@ -6,16 +6,6 @@ import { useAdminAuth } from './AdminAuthContext';
 
 type BlockStatus = 'idle' | 'loading' | 'success' | 'error';
 
-type UberpoolData = {
-  totalViajesPublicados: number;
-  viajesEnCurso: number;
-  viajesCompletados: number;
-  totalReservas: number;
-  asientosOcupados: number;
-  tasaCancelacion: number;
-  activeRides: { id: string; origin_label?: string; destination_label?: string; status: string; driver?: { full_name?: string } }[];
-};
-
 type RatingsData = {
   ratingPromedioConductor: number | null;
   ratingPromedioPasajero: number | null;
@@ -39,11 +29,6 @@ const authHeaders = (token: string) => ({
 export default function AdminDashboardPage() {
   const { accessToken, ready, refetch, isAdmin } = useAdminAuth();
 
-  const [uberpool, setUberpool] = useState<{ status: BlockStatus; data: UberpoolData | null; error: string | null }>({
-    status: 'idle',
-    data: null,
-    error: null,
-  });
   const [ratings, setRatings] = useState<{ status: BlockStatus; data: RatingsData | null; error: string | null }>({
     status: 'idle',
     data: null,
@@ -92,14 +77,8 @@ export default function AdminDashboardPage() {
     [accessToken, refetch]
   );
 
-  const fetchUberpool = useCallback(() => fetchBlock('/api/admin/dashboard/uberpool', setUberpool), [fetchBlock]);
   const fetchRatings = useCallback(() => fetchBlock('/api/admin/dashboard/ratings', setRatings), [fetchBlock]);
   const fetchIndriver = useCallback(() => fetchBlock('/api/admin/dashboard/indriver', setIndriver), [fetchBlock]);
-
-  useEffect(() => {
-    if (!ready || !isAdmin || !accessToken) return;
-    fetchUberpool();
-  }, [ready, isAdmin, accessToken, fetchUberpool]);
 
   useEffect(() => {
     if (ratingsExpanded && ratings.status === 'idle') fetchRatings();
@@ -137,73 +116,9 @@ export default function AdminDashboardPage() {
     );
   }
 
-  const uberpoolData = uberpool.data;
-
   return (
     <div>
       <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-6">Panel de administración</h1>
-
-      {/* Sección UberPool (6 métricas + activos) */}
-      <section className="mb-8">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">UberPool (viajes + reservas)</h2>
-        {uberpool.status === 'loading' && !uberpoolData && (
-          <p className="text-gray-500 text-sm">Cargando…</p>
-        )}
-        {uberpool.status === 'error' && !uberpoolData && (
-          <div className="app-mobile-card p-4 border-red-200 bg-red-50/30">
-            <p className="text-red-600">{uberpool.error}</p>
-            <button type="button" onClick={fetchUberpool} className="btn-secondary text-sm mt-2">
-              Reintentar
-            </button>
-          </div>
-        )}
-        {uberpoolData && (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              <div className="app-mobile-card p-4">
-                <p className="text-gray-500 text-xs">Publicados</p>
-                <p className="text-xl font-bold text-gray-900">{uberpoolData.totalViajesPublicados}</p>
-              </div>
-              <div className="app-mobile-card p-4">
-                <p className="text-gray-500 text-xs">En curso</p>
-                <p className="text-xl font-bold text-blue-600">{uberpoolData.viajesEnCurso}</p>
-              </div>
-              <div className="app-mobile-card p-4">
-                <p className="text-gray-500 text-xs">Completados</p>
-                <p className="text-xl font-bold text-gray-700">{uberpoolData.viajesCompletados}</p>
-              </div>
-              <div className="app-mobile-card p-4">
-                <p className="text-gray-500 text-xs">Reservas</p>
-                <p className="text-xl font-bold text-gray-900">{uberpoolData.totalReservas}</p>
-              </div>
-              <div className="app-mobile-card p-4">
-                <p className="text-gray-500 text-xs">Asientos ocupados</p>
-                <p className="text-xl font-bold text-gray-900">{uberpoolData.asientosOcupados}</p>
-              </div>
-              <div className="app-mobile-card p-4">
-                <p className="text-gray-500 text-xs">Tasa cancelación %</p>
-                <p className="text-xl font-bold text-gray-900">{uberpoolData.tasaCancelacion}</p>
-              </div>
-            </div>
-            {uberpoolData.activeRides.length > 0 && (
-              <div className="mt-4 app-mobile-card p-4">
-                <p className="text-sm font-medium text-gray-700 mb-2">Viajes activos</p>
-                <ul className="text-sm text-gray-600 space-y-1">
-                  {uberpoolData.activeRides.slice(0, 10).map((r) => (
-                    <li key={r.id}>
-                      {r.origin_label ?? 'Origen'} → {r.destination_label ?? 'Destino'} · {r.status}
-                      {r.driver?.full_name ? ` · ${r.driver.full_name}` : ''}
-                    </li>
-                  ))}
-                  {uberpoolData.activeRides.length > 10 && (
-                    <li className="text-gray-400">+ {uberpoolData.activeRides.length - 10} más</li>
-                  )}
-                </ul>
-              </div>
-            )}
-          </>
-        )}
-      </section>
 
       {/* Colapsable: Valoraciones */}
       <section className="mb-8">
