@@ -14,6 +14,7 @@ export type BackgroundLocationPlugin = {
   openAppSettings(): Promise<void>;
   getDeviceInfo(): Promise<{ manufacturer: string }>;
   openBatterySettings(): Promise<void>;
+  requestIgnoreBatteryOptimizations(): Promise<void>;
 };
 
 const noopRemove = async () => {};
@@ -25,6 +26,7 @@ const noopImpl: BackgroundLocationPlugin = {
   openAppSettings: async () => {},
   getDeviceInfo: async () => ({ manufacturer: '' }),
   openBatterySettings: async () => {},
+  requestIgnoreBatteryOptimizations: async () => {},
 };
 
 function isPluginNotImplemented(e: unknown): boolean {
@@ -91,6 +93,14 @@ async function getPlugin(): Promise<BackgroundLocationPlugin> {
         throw e;
       }
     },
+    requestIgnoreBatteryOptimizations: async () => {
+      try {
+        await native.requestIgnoreBatteryOptimizations();
+      } catch (e) {
+        if (isPluginNotImplemented(e)) return;
+        throw e;
+      }
+    },
     };
     return cachedPlugin;
   } catch {
@@ -105,5 +115,6 @@ export const BackgroundLocation: BackgroundLocationPlugin = {
   openAppSettings: () => getPlugin().then((p) => p.openAppSettings()),
   getDeviceInfo: () => getPlugin().then((p) => p.getDeviceInfo()),
   openBatterySettings: () => getPlugin().then((p) => p.openBatterySettings()),
+  requestIgnoreBatteryOptimizations: () => getPlugin().then((p) => p.requestIgnoreBatteryOptimizations()),
 };
 

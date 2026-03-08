@@ -82,28 +82,42 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
     Promise.race([p, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), timeoutMs))]);
 
   if (native) {
-    // Intent 1: geo: (selector de apps en Android)
+    const geoUrl = `geo:${latVal},${lngVal}${label ? `?q=${encodeURIComponent(label)}` : ''}`;
+    // Intent 1: plugin Navigation (createChooser) para mostrar "Abrir con" (Maps, Waze, etc.)
+    try {
+      const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
+      const Nav = await getNavigationPlugin();
+      if (Nav) {
+        const result = await withTimeout(Nav.openWithChooser({ url: geoUrl }));
+        if (result !== 'timeout') {
+          if (dev) console.log('[platform.openNavigation] Navigation.openWithChooser ok');
+          return;
+        }
+        if (dev) console.warn('[platform.openNavigation] Navigation timeout, fallback');
+      }
+    } catch (e) {
+      if (dev) console.warn('[platform.openNavigation] Navigation.openWithChooser failed', e);
+    }
+    // Intent 2: AppLauncher (geo) por si el plugin no está o falló
     try {
       const result = await withTimeout(
         (async () => {
           const { getAppLauncher } = await import('@/lib/capacitor/rideNative');
           const AppLaunch = await getAppLauncher();
           if (!AppLaunch) return;
-          const geoUrl = `geo:${latVal},${lngVal}${label ? `?q=${encodeURIComponent(label)}` : ''}`;
           if (dev) console.log('[platform.openNavigation] native, AppLauncher.openUrl', geoUrl);
           await AppLaunch.openUrl({ url: geoUrl });
         })()
       );
-      if (result === 'timeout') {
-        if (dev) console.warn('[platform.openNavigation] AppLauncher timeout, fallback');
-      } else {
+      if (result !== 'timeout') {
         if (dev) console.log('[platform.openNavigation] AppLauncher.openUrl ok');
         return;
       }
+      if (dev) console.warn('[platform.openNavigation] AppLauncher timeout, fallback');
     } catch (e) {
       if (dev) console.warn('[platform.openNavigation] AppLauncher.openUrl failed', e);
     }
-    // Intent 2: Browser
+    // Intent 3: Browser
     try {
       const result = await withTimeout(
         (async () => {
@@ -136,6 +150,15 @@ export async function requestOverlayPermission(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Batería: solo en native. Muestra el diálogo del sistema para permitir ignorar optimización de batería. */
+export async function requestBatteryPermission(): Promise<void> {
+  if (!(await isNative())) return;
+  try {
+    const { BackgroundLocation } = await import('@/lib/capacitor/backgroundLocation');
+    await BackgroundLocation.requestIgnoreBatteryOptimizations();
+  } catch (_) {}
 }
 
 /** Muestra la burbuja flotante (solo native). */
