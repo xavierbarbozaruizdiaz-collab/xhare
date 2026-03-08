@@ -2,7 +2,10 @@
  * Capa de plataforma: único punto de uso de APIs nativas (Capacitor) vs web (navigator, window).
  * La UI solo usa esta capa; así evitamos "Geolocation.then() is not implemented on web" y
  * condicionales dispersos. Ver docs/PLATAFORMA_WEB_VS_NATIVA.md.
+ * Resultados de plugins en Android se normalizan con safePluginCall.unwrapPluginResult().
  */
+
+import { unwrapPluginResult } from '@/lib/capacitor/safePluginCall';
 
 export type Position = { lat: number; lng: number };
 
@@ -45,8 +48,7 @@ export function getCurrentPosition(options?: { timeout?: number; maxAge?: number
 
 /**
  * Indica si podemos pedir/usar ubicación. En web true si existe navigator.geolocation.
- * En native no bloquea el flujo si el plugin falla.
- * En Android el plugin puede devolver el proxy; solo await si el retorno es thenable para evitar "Geolocation.then() is not implemented".
+ * En native no bloquea el flujo si el plugin falla. Android: resultado del plugin se normaliza con unwrapPluginResult.
  */
 export async function requestLocationPermission(): Promise<boolean> {
   if (typeof navigator !== 'undefined' && navigator.geolocation) return true;
@@ -58,40 +60,12 @@ export async function requestLocationPermission(): Promise<boolean> {
     const Geo = await getGeolocation();
     if (!Geo) return true;
     if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'before_call', method: 'checkPermissions' });
-    const rawPerms = Geo.checkPermissions();
-    let perms: { location?: string } | null = null;
-    try {
-      const raw = rawPerms;
-      const result =
-        raw != null && typeof (raw as unknown as { then?: unknown })?.then === 'function'
-          ? await (raw as Promise<{ location: string }>)
-          : (raw as { location?: string } | null);
-      perms = result;
-    } catch (e) {
-      if (dev) console.error('[GEO_PLUGIN_DEBUG_ERROR]', e);
-      const msg = String(e).toLowerCase();
-      if (msg.includes('then') && msg.includes('not implemented')) perms = null;
-      else throw e;
-    }
-    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'after_call', resultType: typeof rawPerms, hasThen: !!(rawPerms as Promise<unknown>)?.then });
+    const perms = await unwrapPluginResult(Geo.checkPermissions(), null as { location?: string } | null);
+    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'after_call' });
     if (perms?.location === 'granted') return true;
     if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'before_call', method: 'requestPermissions' });
-    const rawReq = Geo.requestPermissions();
-    let req: { location?: string } | null = null;
-    try {
-      const raw = rawReq;
-      const result =
-        raw != null && typeof (raw as unknown as { then?: unknown })?.then === 'function'
-          ? await (raw as Promise<{ location: string }>)
-          : (raw as { location?: string } | null);
-      req = result;
-    } catch (e) {
-      if (dev) console.error('[GEO_PLUGIN_DEBUG_ERROR]', e);
-      const msg = String(e).toLowerCase();
-      if (msg.includes('then') && msg.includes('not implemented')) req = null;
-      else throw e;
-    }
-    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'after_call', resultType: typeof rawReq, hasThen: !!(rawReq as Promise<unknown>)?.then });
+    const req = await unwrapPluginResult(Geo.requestPermissions(), null as { location?: string } | null);
+    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'after_call' });
     return req?.location === 'granted';
   } catch (e) {
     if (dev) console.error('[GEO_PLUGIN_DEBUG_ERROR]', e);
@@ -119,25 +93,18 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
   if (native) {
     const geoUrl = `geo:${latVal},${lngVal}${label ? `?q=${encodeURIComponent(label)}` : ''}`;
     if (dev) console.log('[NAV_PLUGIN_DEBUG]', { step: 'before_open', lat: latVal, lng: lngVal, label: label ?? undefined });
-    // Solo selector "Abrir con" (Maps, Waze, etc.). En Android el plugin puede devolver el proxy en lugar de una Promise; solo await si es thenable para evitar "Navigation.then() is not implemented".
     try {
       const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
       const Nav = await getNavigationPlugin();
       if (Nav) {
         const raw = Nav.openWithChooser({ url: geoUrl });
-        const isPromise = raw != null && typeof (raw as Promise<void>).then === 'function';
-        if (isPromise) {
-          const result = await withTimeout(raw as Promise<void>);
-          if (dev) console.log('[NAV_PLUGIN_DEBUG]', { step: 'after_open_call', result: result === 'timeout' ? 'timeout' : 'ok' });
-          if (result !== 'timeout') {
-            if (dev) console.log('[platform.openNavigation] Navigation.openWithChooser ok');
-            return;
-          }
-          if (dev) console.warn('[platform.openNavigation] Navigation timeout, fallback a Browser');
-        } else {
-          if (dev) console.log('[NAV_PLUGIN_DEBUG]', { step: 'after_open_call', result: 'sync_no_promise' });
+        const result = await withTimeout(unwrapPluginResult(raw, undefined));
+        if (dev) console.log('[NAV_PLUGIN_DEBUG]', { step: 'after_open_call', result: result === 'timeout' ? 'timeout' : 'ok' });
+        if (result !== 'timeout') {
+          if (dev) console.log('[platform.openNavigation] Navigation.openWithChooser ok');
           return;
         }
+        if (dev) console.warn('[platform.openNavigation] Navigation timeout, fallback a Browser');
       }
     } catch (e) {
       if (dev) {
@@ -217,14 +184,10 @@ export async function onAppStateChange(callback: (isActive: boolean) => void | P
     const { getApp } = await import('@/lib/capacitor/rideNative');
     const App = await getApp();
     if (!App) return () => {};
-    // En Android addListener puede devolver el proxy en lugar de Promise; solo await si es thenable para evitar "App.then() is not implemented".
     const raw = App.addListener('appStateChange', (e: { isActive: boolean }) => {
       void callback(e.isActive);
     });
-    const listenerResult =
-      raw != null && typeof (raw as Promise<{ remove: () => void | Promise<void> }>).then === 'function'
-        ? await (raw as Promise<{ remove: () => void | Promise<void> }>)
-        : (raw as { remove?: () => void | Promise<void> } | null);
+    const listenerResult = await unwrapPluginResult(raw, null as { remove?: () => void | Promise<void> } | null);
     const remove = listenerResult?.remove;
     return () => {
       if (typeof remove === 'function') void remove();

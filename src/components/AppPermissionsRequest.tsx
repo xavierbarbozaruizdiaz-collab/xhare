@@ -18,6 +18,7 @@ export default function AppPermissionsRequest() {
   const runPermissionFlow = async () => {
     if (!pendingSessionUserId.current) return;
     const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const batteryKey = 'xhare_battery_request_shown';
     try {
       const permissions = await import('@/lib/mobile/permissions');
       // Solo pedir lo que falta; pausa breve entre cada uno para no saturar
@@ -29,7 +30,11 @@ export default function AppPermissionsRequest() {
         await permissions.requestOverlayPermission();
         await delay(400);
       }
-      await permissions.requestBatteryOptimization();
+      // Batería: solo abrir diálogo del sistema una vez por sesión (mismo criterio que otros modales)
+      if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(batteryKey) !== '1') {
+        await permissions.requestBatteryOptimization();
+        sessionStorage.setItem(batteryKey, '1');
+      }
     } catch (_) {}
     pendingSessionUserId.current = null;
   };

@@ -2,7 +2,10 @@
  * Capa centralizada de permisos para la app móvil (Next.js + Capacitor Android).
  * Delega en platform.ts y plugins; no duplica lógica nativa.
  * Ver docs/AUDITORIA_PERMISOS_APP.md.
+ * Resultados de plugins en Android se normalizan con safePluginCall.unwrapPluginResult().
  */
+
+import { unwrapPluginResult } from '@/lib/capacitor/safePluginCall';
 
 export type LocationPermissionStatus = 'granted' | 'denied' | 'prompt';
 export type NotificationPermissionStatus = 'granted' | 'denied' | 'default';
@@ -32,21 +35,8 @@ export async function checkLocationPermission(): Promise<LocationPermissionStatu
     if (!Geo) return 'prompt';
     const dev = typeof process !== 'undefined' && process.env.NODE_ENV === 'development';
     if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'before_call', method: 'checkPermissions' });
-    const raw = Geo.checkPermissions();
-    let perms: { location?: string } | null = null;
-    try {
-      const result =
-        raw != null && typeof (raw as unknown as { then?: unknown })?.then === 'function'
-          ? await (raw as Promise<{ location: string }>)
-          : (raw as { location?: string } | null);
-      perms = result;
-    } catch (e) {
-      if (dev) console.error('[GEO_PLUGIN_DEBUG_ERROR]', e);
-      const msg = String(e).toLowerCase();
-      if (msg.includes('then') && msg.includes('not implemented')) perms = null;
-      else throw e;
-    }
-    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'after_call', resultType: typeof raw, hasThen: !!raw?.then });
+    const perms = await unwrapPluginResult(Geo.checkPermissions(), null as { location?: string } | null);
+    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'after_call' });
     const status = perms?.location ?? 'prompt';
     return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'prompt';
   } catch (e) {

@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import * as platform from '@/lib/platform';
+import { checkOverlayPermission, ensureLocationPermission } from '@/lib/mobile/permissions';
 import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -164,8 +165,14 @@ export default function RideDetailClient() {
   }, [rideId, currentUser?.id, ride?.driver_id, ride?.status]);
 
   async function ensureLocationPermissions(): Promise<boolean> {
-    const granted = await platform.requestLocationPermission();
-    if (!granted) setPermissionModalOpen(true);
+    const granted = await ensureLocationPermission();
+    if (!granted) {
+      const key = 'xhare_location_background_modal_shown';
+      if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(key) !== '1') {
+        sessionStorage.setItem(key, '1');
+        setPermissionModalOpen(true);
+      }
+    }
     return granted;
   }
 
@@ -226,18 +233,18 @@ export default function RideDetailClient() {
     return () => { if (removeFn) void removeFn(); };
   }, []);
 
-  // Burbuja flotante: solicitar permiso al entrar (viaje en curso) y al ir a segunda plana mostrar burbuja
+  // Burbuja flotante: solicitar permiso al entrar (viaje en curso) solo si falta; al ir a segunda plana mostrar burbuja
   useEffect(() => {
     if (!rideId || !ride || ride.status !== 'en_route') return;
     let cleanup: (() => void) | null = null;
     const setup = async () => {
       if (!(await platform.isNative())) return;
-      await platform.requestOverlayPermission();
+      if (!(await checkOverlayPermission())) await platform.requestOverlayPermission();
       cleanup = await platform.onAppStateChange(async (isActive) => {
         if (isActive) {
           await platform.hideBubble();
         } else {
-          const granted = await platform.requestOverlayPermission();
+          const granted = (await checkOverlayPermission()) || (await platform.requestOverlayPermission());
           if (granted) {
             const label = ride?.origin_label && ride?.destination_label
               ? `${shortLabel(ride.origin_label, 15)} → ${shortLabel(ride.destination_label, 15)}`
@@ -735,14 +742,16 @@ export default function RideDetailClient() {
             new Promise((r) => setTimeout(r, 5000)),
           ]);
           if (await platform.isNative()) {
-            // Overlay ya se pidió tras login (AppPermissionsRequest); si se denegó, se intenta de nuevo para la burbuja
-            await platform.requestOverlayPermission();
+            // Overlay: solo pedir si aún no está concedido (evitar repetir la solicitud al iniciar viaje)
+            if (!(await checkOverlayPermission())) await platform.requestOverlayPermission();
             const granted = await ensureLocationPermissions();
             if (!granted) return;
             try {
               const info = await BackgroundLocation.getDeviceInfo();
               const m = (info?.manufacturer ?? '').toLowerCase();
-              if (m.includes('xiaomi') || m.includes('redmi') || m.includes('mi')) {
+              const xiaomiAlreadyShown = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('xhare_xiaomi_modal_shown') === '1';
+              if ((m.includes('xiaomi') || m.includes('redmi') || m.includes('mi')) && !xiaomiAlreadyShown) {
+                sessionStorage.setItem('xhare_xiaomi_modal_shown', '1');
                 setXiaomiModalOpen(true);
               }
             } catch (_) {}
