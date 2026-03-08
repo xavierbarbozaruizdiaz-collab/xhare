@@ -735,6 +735,7 @@ export default function RideDetailClient() {
             new Promise((r) => setTimeout(r, 5000)),
           ]);
           if (await platform.isNative()) {
+            // Overlay ya se pidió tras login (AppPermissionsRequest); si se denegó, se intenta de nuevo para la burbuja
             await platform.requestOverlayPermission();
             const granted = await ensureLocationPermissions();
             if (!granted) return;
