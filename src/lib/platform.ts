@@ -46,20 +46,55 @@ export function getCurrentPosition(options?: { timeout?: number; maxAge?: number
 /**
  * Indica si podemos pedir/usar ubicación. En web true si existe navigator.geolocation.
  * En native no bloquea el flujo si el plugin falla.
+ * En Android el plugin puede devolver el proxy; solo await si el retorno es thenable para evitar "Geolocation.then() is not implemented".
  */
 export async function requestLocationPermission(): Promise<boolean> {
   if (typeof navigator !== 'undefined' && navigator.geolocation) return true;
   const native = await isNative();
   if (!native) return true;
+  const dev = typeof process !== 'undefined' && process.env.NODE_ENV === 'development';
   try {
     const { getGeolocation } = await import('@/lib/capacitor/rideNative');
     const Geo = await getGeolocation();
     if (!Geo) return true;
-    const perms = await Geo.checkPermissions();
-    if (perms.location === 'granted') return true;
-    const req = await Geo.requestPermissions();
-    return req.location === 'granted';
-  } catch {
+    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'before_call', method: 'checkPermissions' });
+    const rawPerms = Geo.checkPermissions();
+    let perms: { location?: string } | null = null;
+    try {
+      const raw = rawPerms;
+      const result =
+        raw != null && typeof (raw as unknown as { then?: unknown })?.then === 'function'
+          ? await (raw as Promise<{ location: string }>)
+          : (raw as { location?: string } | null);
+      perms = result;
+    } catch (e) {
+      if (dev) console.error('[GEO_PLUGIN_DEBUG_ERROR]', e);
+      const msg = String(e).toLowerCase();
+      if (msg.includes('then') && msg.includes('not implemented')) perms = null;
+      else throw e;
+    }
+    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'after_call', resultType: typeof rawPerms, hasThen: !!(rawPerms as Promise<unknown>)?.then });
+    if (perms?.location === 'granted') return true;
+    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'before_call', method: 'requestPermissions' });
+    const rawReq = Geo.requestPermissions();
+    let req: { location?: string } | null = null;
+    try {
+      const raw = rawReq;
+      const result =
+        raw != null && typeof (raw as unknown as { then?: unknown })?.then === 'function'
+          ? await (raw as Promise<{ location: string }>)
+          : (raw as { location?: string } | null);
+      req = result;
+    } catch (e) {
+      if (dev) console.error('[GEO_PLUGIN_DEBUG_ERROR]', e);
+      const msg = String(e).toLowerCase();
+      if (msg.includes('then') && msg.includes('not implemented')) req = null;
+      else throw e;
+    }
+    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'after_call', resultType: typeof rawReq, hasThen: !!(rawReq as Promise<unknown>)?.then });
+    return req?.location === 'granted';
+  } catch (e) {
+    if (dev) console.error('[GEO_PLUGIN_DEBUG_ERROR]', e);
     return true;
   }
 }

@@ -30,10 +30,27 @@ export async function checkLocationPermission(): Promise<LocationPermissionStatu
     const { getGeolocation } = await import('@/lib/capacitor/rideNative');
     const Geo = await getGeolocation();
     if (!Geo) return 'prompt';
-    const perms = await Geo.checkPermissions();
+    const dev = typeof process !== 'undefined' && process.env.NODE_ENV === 'development';
+    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'before_call', method: 'checkPermissions' });
+    const raw = Geo.checkPermissions();
+    let perms: { location?: string } | null = null;
+    try {
+      const result =
+        raw != null && typeof (raw as unknown as { then?: unknown })?.then === 'function'
+          ? await (raw as Promise<{ location: string }>)
+          : (raw as { location?: string } | null);
+      perms = result;
+    } catch (e) {
+      if (dev) console.error('[GEO_PLUGIN_DEBUG_ERROR]', e);
+      const msg = String(e).toLowerCase();
+      if (msg.includes('then') && msg.includes('not implemented')) perms = null;
+      else throw e;
+    }
+    if (dev) console.log('[GEO_PLUGIN_DEBUG]', { step: 'after_call', resultType: typeof raw, hasThen: !!raw?.then });
     const status = perms?.location ?? 'prompt';
     return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'prompt';
-  } catch {
+  } catch (e) {
+    if (typeof process !== 'undefined' && process.env.NODE_ENV === 'development') console.error('[GEO_PLUGIN_DEBUG_ERROR]', e);
     return 'prompt';
   }
 }
