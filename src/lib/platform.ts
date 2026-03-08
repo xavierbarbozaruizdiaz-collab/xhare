@@ -83,41 +83,34 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
 
   if (native) {
     const geoUrl = `geo:${latVal},${lngVal}${label ? `?q=${encodeURIComponent(label)}` : ''}`;
-    // Intent 1: plugin Navigation (createChooser) para mostrar "Abrir con" (Maps, Waze, etc.)
+    if (dev) console.log('[NAV_PLUGIN_DEBUG]', { step: 'before_open', lat: latVal, lng: lngVal, label: label ?? undefined });
+    // Solo selector "Abrir con" (Maps, Waze, etc.). En Android el plugin puede devolver el proxy en lugar de una Promise; solo await si es thenable para evitar "Navigation.then() is not implemented".
     try {
       const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
       const Nav = await getNavigationPlugin();
       if (Nav) {
-        const result = await withTimeout(Nav.openWithChooser({ url: geoUrl }));
-        if (result !== 'timeout') {
-          if (dev) console.log('[platform.openNavigation] Navigation.openWithChooser ok');
+        const raw = Nav.openWithChooser({ url: geoUrl });
+        const isPromise = raw != null && typeof (raw as Promise<void>).then === 'function';
+        if (isPromise) {
+          const result = await withTimeout(raw as Promise<void>);
+          if (dev) console.log('[NAV_PLUGIN_DEBUG]', { step: 'after_open_call', result: result === 'timeout' ? 'timeout' : 'ok' });
+          if (result !== 'timeout') {
+            if (dev) console.log('[platform.openNavigation] Navigation.openWithChooser ok');
+            return;
+          }
+          if (dev) console.warn('[platform.openNavigation] Navigation timeout, fallback a Browser');
+        } else {
+          if (dev) console.log('[NAV_PLUGIN_DEBUG]', { step: 'after_open_call', result: 'sync_no_promise' });
           return;
         }
-        if (dev) console.warn('[platform.openNavigation] Navigation timeout, fallback');
       }
     } catch (e) {
-      if (dev) console.warn('[platform.openNavigation] Navigation.openWithChooser failed', e);
-    }
-    // Intent 2: AppLauncher (geo) por si el plugin no está o falló
-    try {
-      const result = await withTimeout(
-        (async () => {
-          const { getAppLauncher } = await import('@/lib/capacitor/rideNative');
-          const AppLaunch = await getAppLauncher();
-          if (!AppLaunch) return;
-          if (dev) console.log('[platform.openNavigation] native, AppLauncher.openUrl', geoUrl);
-          await AppLaunch.openUrl({ url: geoUrl });
-        })()
-      );
-      if (result !== 'timeout') {
-        if (dev) console.log('[platform.openNavigation] AppLauncher.openUrl ok');
-        return;
+      if (dev) {
+        console.error('[NAV_PLUGIN_DEBUG_ERROR]', e);
+        console.warn('[platform.openNavigation] Navigation.openWithChooser failed', e);
       }
-      if (dev) console.warn('[platform.openNavigation] AppLauncher timeout, fallback');
-    } catch (e) {
-      if (dev) console.warn('[platform.openNavigation] AppLauncher.openUrl failed', e);
     }
-    // Intent 3: Browser
+    // Fallback: abrir URL de Maps en navegador (puede redirigir a app o mostrar opciones)
     try {
       const result = await withTimeout(
         (async () => {
@@ -189,11 +182,17 @@ export async function onAppStateChange(callback: (isActive: boolean) => void | P
     const { getApp } = await import('@/lib/capacitor/rideNative');
     const App = await getApp();
     if (!App) return () => {};
-    const { remove } = await App.addListener('appStateChange', (e: { isActive: boolean }) => {
+    // En Android addListener puede devolver el proxy en lugar de Promise; solo await si es thenable para evitar "App.then() is not implemented".
+    const raw = App.addListener('appStateChange', (e: { isActive: boolean }) => {
       void callback(e.isActive);
     });
+    const listenerResult =
+      raw != null && typeof (raw as Promise<{ remove: () => void | Promise<void> }>).then === 'function'
+        ? await (raw as Promise<{ remove: () => void | Promise<void> }>)
+        : (raw as { remove?: () => void | Promise<void> } | null);
+    const remove = listenerResult?.remove;
     return () => {
-      void remove();
+      if (typeof remove === 'function') void remove();
     };
   } catch {
     return () => {};
