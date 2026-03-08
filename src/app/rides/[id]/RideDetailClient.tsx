@@ -59,6 +59,17 @@ export default function RideDetailClient() {
     loadRide();
   }, [rideId]);
 
+  // En la app la sesión puede restaurarse un poco después; reintentar carga para que currentUser se setee y se muestren los botones del conductor
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) setCurrentUser((prev: any) => (prev ? prev : user));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [rideId]);
+
   useEffect(() => {
     platform.isNative().then(setIsNative);
   }, []);
@@ -429,6 +440,8 @@ export default function RideDetailClient() {
 
   async function loadRide() {
     try {
+      // En app (WebView) la sesión puede no estar lista en el primer tick; forzar lectura del storage
+      await supabase.auth.getSession();
       const { data: { user } } = await supabase.auth.getUser();
       setCurrentUser(user ?? null);
       let data: any = null;
@@ -714,9 +727,13 @@ export default function RideDetailClient() {
       }
       if (newStatus === 'en_route') {
         try {
-          await openNavigationToFirstPoint().catch((err) => {
-            if (process.env.NODE_ENV === 'development') console.warn('NAV_FIRST_POINT_IGNORED', err);
-          });
+          // No bloquear el flujo si openNavigation tarda o falla en la app (timeout 5s)
+          await Promise.race([
+            openNavigationToFirstPoint().catch((err) => {
+              if (process.env.NODE_ENV === 'development') console.warn('NAV_FIRST_POINT_IGNORED', err);
+            }),
+            new Promise((r) => setTimeout(r, 5000)),
+          ]);
           if (await platform.isNative()) {
             await platform.requestOverlayPermission();
             const granted = await ensureLocationPermissions();

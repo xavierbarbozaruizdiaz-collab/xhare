@@ -77,31 +77,45 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
   const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
   const dev = typeof process !== 'undefined' && process.env.NODE_ENV === 'development';
   const native = await isNative();
+  const timeoutMs = 4000;
+  const withTimeout = <T>(p: Promise<T>): Promise<T | 'timeout'> =>
+    Promise.race([p, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), timeoutMs))]);
+
   if (native) {
-    // Intent 1: geo: (suele mostrar selector de apps en Android si está declarado en manifest <queries>)
+    // Intent 1: geo: (selector de apps en Android)
     try {
-      const { getAppLauncher } = await import('@/lib/capacitor/rideNative');
-      const AppLaunch = await getAppLauncher();
-      if (AppLaunch) {
-        const geoUrl = `geo:${latVal},${lngVal}${label ? `?q=${encodeURIComponent(label)}` : ''}`;
-        if (dev) console.log('[platform.openNavigation] native, AppLauncher.openUrl', geoUrl);
-        await AppLaunch.openUrl({ url: geoUrl });
+      const result = await withTimeout(
+        (async () => {
+          const { getAppLauncher } = await import('@/lib/capacitor/rideNative');
+          const AppLaunch = await getAppLauncher();
+          if (!AppLaunch) return;
+          const geoUrl = `geo:${latVal},${lngVal}${label ? `?q=${encodeURIComponent(label)}` : ''}`;
+          if (dev) console.log('[platform.openNavigation] native, AppLauncher.openUrl', geoUrl);
+          await AppLaunch.openUrl({ url: geoUrl });
+        })()
+      );
+      if (result === 'timeout') {
+        if (dev) console.warn('[platform.openNavigation] AppLauncher timeout, fallback');
+      } else {
         if (dev) console.log('[platform.openNavigation] AppLauncher.openUrl ok');
         return;
       }
-      if (dev) console.warn('[platform.openNavigation] AppLauncher null');
     } catch (e) {
       if (dev) console.warn('[platform.openNavigation] AppLauncher.openUrl failed', e);
     }
-    // Intent 2: Browser (abre fuera del WebView; en algunos dispositivos puede ofrecer "Abrir con Maps")
+    // Intent 2: Browser
     try {
-      const { getBrowser } = await import('@/lib/capacitor/rideNative');
-      const Browser = await getBrowser();
-      if (Browser) {
-        if (dev) console.log('[platform.openNavigation] fallback Browser.open', fallbackUrl);
-        await Browser.open({ url: fallbackUrl });
-        return;
-      }
+      const result = await withTimeout(
+        (async () => {
+          const { getBrowser } = await import('@/lib/capacitor/rideNative');
+          const Browser = await getBrowser();
+          if (Browser) {
+            if (dev) console.log('[platform.openNavigation] fallback Browser.open', fallbackUrl);
+            await Browser.open({ url: fallbackUrl });
+          }
+        })()
+      );
+      if (result !== 'timeout') return;
     } catch (e) {
       if (dev) console.warn('[platform.openNavigation] Browser.open failed', e);
     }
