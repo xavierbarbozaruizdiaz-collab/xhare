@@ -1,11 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Android 11+: declarar intención geo para que el sistema resuelva apps de mapas (Maps, Waze, etc.) -->
+    <!-- Android 11+: declarar intenciones para que el sistema resuelva apps de mapas (Maps, Waze, Waze web, etc.) -->
     <queries>
+        <!-- Esquema geo: para apps que aceptan geo:lat,lng o geo:0,0?q= -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="geo" />
+        </intent>
+        <!-- google.navigation: para apps que implementan directamente navegación tipo google.navigation:q= -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="google.navigation" />
+        </intent>
+        <!-- URLs de mapas (https) para navegadores/Maps/Waze que manejan enlaces de Google Maps -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+            <data android:host="www.google.com" />
+        </intent>
+        <!-- Waze app URI -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="waze" />
         </intent>
     </queries>
 
