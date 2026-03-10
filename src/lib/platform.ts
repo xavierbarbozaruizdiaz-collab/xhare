@@ -96,6 +96,17 @@ export async function openNavigation(lat: number, lng: number, _label?: string):
           return;
         }
       } catch (_) {}
+      // Fallback: enlace con target=_blank; muchos WebViews lo abren en el navegador del sistema
+      try {
+        const a = document.createElement('a');
+        a.href = mapsUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      } catch (_) {}
     }
     window.open(mapsUrl, '_blank');
   } catch (_) {

@@ -118,36 +118,41 @@ export default function RideDetailClient() {
   useEffect(() => {
     if (!rideId || !currentUser || ride?.driver_id !== currentUser.id || ride?.status !== 'en_route') return;
     const sendLocation = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const accessToken = session?.access_token;
+      let { data: { session } } = await supabase.auth.getSession();
+      let accessToken = session?.access_token;
       if (!accessToken) return;
 
-      const onPosition = (lat: number, lng: number) => {
+      const doPost = (token: string) =>
         fetch(`/api/rides/${rideId}/location`, {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({ lat, lng }),
-        })
-          .then((res) => {
-            if (res.ok) {
-              locationFailCountRef.current = 0;
-              setLocationSendFailed(false);
-            } else if (res.status === 429) {
-              // Rate limit: no es fallo de GPS/conexión, no mostrar aviso
-              locationFailCountRef.current = 0;
-              setLocationSendFailed(false);
-            } else {
-              locationFailCountRef.current += 1;
-              setLocationSendFailed(locationFailCountRef.current >= 2);
-            }
-          })
-          .catch(() => {
-            locationFailCountRef.current += 1;
-            setLocationSendFailed(locationFailCountRef.current >= 2);
-          });
+        });
+
+      const onPosition = async (lat: number, lng: number) => {
+        let res = await doPost(accessToken!);
+        if (res.status === 401) {
+          const { data: { session: newSession } } = await supabase.auth.refreshSession();
+          const newToken = newSession?.access_token;
+          if (newToken) {
+            res = await doPost(newToken);
+            accessToken = newToken;
+          }
+        }
+        if (res.ok) {
+          locationFailCountRef.current = 0;
+          setLocationSendFailed(false);
+        } else if (res.status === 429) {
+          locationFailCountRef.current = 0;
+          setLocationSendFailed(false);
+        } else {
+          locationFailCountRef.current += 1;
+          setLocationSendFailed(locationFailCountRef.current >= 2);
+        }
       };
 
       const onError = () => {
@@ -156,7 +161,7 @@ export default function RideDetailClient() {
       };
 
       const pos = await platform.getCurrentPosition({ timeout: 10000, maxAge: 5000 });
-      if (pos) onPosition(pos.lat, pos.lng);
+      if (pos) void onPosition(pos.lat, pos.lng);
       else onError();
     };
     void sendLocation();
