@@ -14,26 +14,40 @@ export default function AppPermissionsRequest() {
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const pendingSessionUserId = useRef<string | null>(null);
+  const STORAGE_KEY_LOCATION_PREFIX = 'xhare_permissions_location_done_user_';
+  const STORAGE_KEY_DRIVER_PREFIX = 'xhare_permissions_driver_flow_done_user_';
 
   const runPermissionFlow = async () => {
     if (!pendingSessionUserId.current) return;
-    const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    const batteryKey = 'xhare_battery_request_shown';
+    const userId = pendingSessionUserId.current;
+    const locationKey = `${STORAGE_KEY_LOCATION_PREFIX}${userId}`;
+    const driverKey = `${STORAGE_KEY_DRIVER_PREFIX}${userId}`;
     try {
       const permissions = await import('@/lib/mobile/permissions');
-      // Solo pedir lo que falta; pausa breve entre cada uno para no saturar
+      const { data: { user } } = await supabase.auth.getUser();
+      const roles = (user as any)?.user_metadata?.roles as string[] | undefined;
+      const isDriver = Array.isArray(roles) && roles.includes('driver');
+
+      // 1) Ubicación: pedir si falta (para todos)
       if ((await permissions.checkLocationPermission()) !== 'granted') {
         await permissions.requestLocationPermission();
-        await delay(400);
       }
-      if (!(await permissions.checkOverlayPermission())) {
-        await permissions.requestOverlayPermission();
-        await delay(400);
-      }
-      // Batería: solo abrir diálogo del sistema una vez por sesión (mismo criterio que otros modales)
-      if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(batteryKey) !== '1') {
+
+      // 2) Si es conductor: pedir también overlay y batería aquí, una vez
+      if (isDriver) {
+        await permissions.ensureOverlayPermission();
         await permissions.requestBatteryOptimization();
-        sessionStorage.setItem(batteryKey, '1');
+      }
+
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(locationKey, '1');
+          if (isDriver) {
+            window.localStorage.setItem(driverKey, '1');
+          }
+        } catch {
+          // ignore
+        }
       }
     } catch (_) {}
     pendingSessionUserId.current = null;
@@ -46,6 +60,21 @@ export default function AppPermissionsRequest() {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user?.id) return;
         if (requestedForUser.current === session.user.id) return;
+
+        const locationKey = `${STORAGE_KEY_LOCATION_PREFIX}${session.user.id}`;
+        const driverKey = `${STORAGE_KEY_DRIVER_PREFIX}${session.user.id}`;
+        if (typeof window !== 'undefined') {
+          try {
+            const locationDone = window.localStorage.getItem(locationKey) === '1';
+            const driverDone = window.localStorage.getItem(driverKey) === '1';
+            if (locationDone && driverDone) {
+              requestedForUser.current = session.user.id;
+              return;
+            }
+          } catch {
+            // ignore storage errors and fall back to runtime-only guard
+          }
+        }
 
         const { isNative } = await import('@/lib/platform');
         if (!(await isNative())) return;
