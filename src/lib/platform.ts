@@ -89,11 +89,16 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
 
   if (native) {
     console.log('[NAV_PLUGIN_DEBUG]', { step: 'before_open', lat: latVal, lng: lngVal, label: label ?? undefined, env: process.env.NODE_ENV, url: mapsUrl });
+    const NAV_CHOOSER_MS = 2500;
     try {
       const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
       const Nav = await getNavigationPlugin();
       if (Nav) {
-        await Nav.openWithChooser({ url: mapsUrl });
+        const chooserPromise = Nav.openWithChooser({ url: mapsUrl });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Navigation.openWithChooser timeout')), NAV_CHOOSER_MS)
+        );
+        await Promise.race([chooserPromise, timeoutPromise]);
         console.log('[platform.openNavigation] Navigation.openWithChooser ok');
         return;
       }
