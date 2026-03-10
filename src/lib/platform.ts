@@ -83,7 +83,7 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
   const lngVal = Number(lng);
   if (!Number.isFinite(latVal) || !Number.isFinite(lngVal)) return;
   const dest = `${latVal},${lngVal}`;
-  const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+  const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}${label ? `&destination_place_id=&travelmode=driving` : ''}`;
   const dev = typeof process !== 'undefined' && process.env.NODE_ENV === 'development';
   const native = await isNative();
   const timeoutMs = 4000;
@@ -91,13 +91,13 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
     Promise.race([p, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), timeoutMs))]);
 
   if (native) {
-    const geoUrl = `geo:${latVal},${lngVal}${label ? `?q=${encodeURIComponent(label)}` : ''}`;
     console.log('[NAV_PLUGIN_DEBUG]', { step: 'before_open', lat: latVal, lng: lngVal, label: label ?? undefined, env: process.env.NODE_ENV });
     try {
       const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
       const Nav = await getNavigationPlugin();
       if (Nav) {
-        const raw = Nav.openWithChooser({ url: geoUrl });
+        // Usar siempre URL HTTPS de Google Maps para maximizar compatibilidad con apps/navegadores.
+        const raw = Nav.openWithChooser({ url: fallbackUrl });
         const result = await withTimeout(unwrapPluginResult(raw, undefined));
         console.log('[NAV_PLUGIN_DEBUG]', { step: 'after_open_call', result: result === 'timeout' ? 'timeout' : 'ok' });
         if (result !== 'timeout') {
