@@ -101,6 +101,18 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
       console.error('[NAV_PLUGIN_DEBUG_ERROR]', e);
       console.warn('[platform.openNavigation] Navigation.openWithChooser failed', e);
     }
+    // Fallback nativo: abrir con plugin Browser (navegador del sistema / in-app browser)
+    try {
+      const { getBrowser } = await import('@/lib/capacitor/rideNative');
+      const Browser = await getBrowser();
+      if (Browser) {
+        console.log('[platform.openNavigation] fallback Browser.open', mapsUrl);
+        await Browser.open({ url: mapsUrl });
+        return;
+      }
+    } catch (e) {
+      console.warn('[platform.openNavigation] Browser.open failed', e);
+    }
   }
   console.log('[platform.openNavigation] using window.open', mapsUrl);
   window.open(mapsUrl, '_blank');
