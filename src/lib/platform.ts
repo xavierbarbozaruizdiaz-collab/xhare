@@ -75,52 +75,33 @@ export async function requestLocationPermission(): Promise<boolean> {
 
 /**
  * Abre navegación hacia (lat, lng).
- * - En app nativa: usa el plugin Navigation con Intent.createChooser("Abrir con") sobre una URL de Google Maps.
- * - En web: usa window.open con URL de Google Maps.
+ * En app nativa: Capacitor Browser.open. En web: window.open.
  */
-export async function openNavigation(lat: number, lng: number, label?: string): Promise<void> {
-  if (typeof window === 'undefined') return;
-  const latVal = Number(lat);
-  const lngVal = Number(lng);
-  if (!Number.isFinite(latVal) || !Number.isFinite(lngVal)) return;
-  const dest = `${latVal},${lngVal}`;
-  const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
-  const native = await isNative();
+export async function openNavigation(lat: number, lng: number, _label?: string): Promise<void> {
+  try {
+    if (typeof window === 'undefined') return;
+    const latVal = Number(lat);
+    const lngVal = Number(lng);
+    if (!Number.isFinite(latVal) || !Number.isFinite(lngVal)) return;
+    const dest = `${latVal},${lngVal}`;
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
 
-  if (native) {
-    console.log('[NAV_PLUGIN_DEBUG]', { step: 'before_open', lat: latVal, lng: lngVal, label: label ?? undefined, env: process.env.NODE_ENV, url: mapsUrl });
-    const NAV_CHOOSER_MS = 2500;
-    try {
-      const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
-      const Nav = await getNavigationPlugin();
-      if (Nav) {
-        const chooserPromise = Nav.openWithChooser({ url: mapsUrl });
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Navigation.openWithChooser timeout')), NAV_CHOOSER_MS)
-        );
-        await Promise.race([chooserPromise, timeoutPromise]);
-        console.log('[platform.openNavigation] Navigation.openWithChooser ok');
-        return;
-      }
-    } catch (e) {
-      console.error('[NAV_PLUGIN_DEBUG_ERROR]', e);
-      console.warn('[platform.openNavigation] Navigation.openWithChooser failed', e);
+    const native = await isNative();
+    if (native) {
+      try {
+        const { getBrowser } = await import('@/lib/capacitor/rideNative');
+        const Browser = await getBrowser();
+        if (Browser) {
+          await Browser.open({ url: mapsUrl });
+          return;
+        }
+      } catch (_) {}
     }
-    // Fallback nativo: abrir con plugin Browser (navegador del sistema / in-app browser)
-    try {
-      const { getBrowser } = await import('@/lib/capacitor/rideNative');
-      const Browser = await getBrowser();
-      if (Browser) {
-        console.log('[platform.openNavigation] fallback Browser.open', mapsUrl);
-        await Browser.open({ url: mapsUrl });
-        return;
-      }
-    } catch (e) {
-      console.warn('[platform.openNavigation] Browser.open failed', e);
-    }
+    window.open(mapsUrl, '_blank');
+  } catch (_) {
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${Number(lat)},${Number(lng)}`;
+    if (typeof window !== 'undefined') window.open(mapsUrl, '_blank');
   }
-  console.log('[platform.openNavigation] using window.open', mapsUrl);
-  window.open(mapsUrl, '_blank');
 }
 
 /** Overlay (burbuja): solo en native. Solicita permiso. */
