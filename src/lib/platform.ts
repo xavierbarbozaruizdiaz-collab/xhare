@@ -92,25 +92,23 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
 
   if (native) {
     const geoUrl = `geo:${latVal},${lngVal}${label ? `?q=${encodeURIComponent(label)}` : ''}`;
-    if (dev) console.log('[NAV_PLUGIN_DEBUG]', { step: 'before_open', lat: latVal, lng: lngVal, label: label ?? undefined });
+    console.log('[NAV_PLUGIN_DEBUG]', { step: 'before_open', lat: latVal, lng: lngVal, label: label ?? undefined, env: process.env.NODE_ENV });
     try {
       const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
       const Nav = await getNavigationPlugin();
       if (Nav) {
         const raw = Nav.openWithChooser({ url: geoUrl });
         const result = await withTimeout(unwrapPluginResult(raw, undefined));
-        if (dev) console.log('[NAV_PLUGIN_DEBUG]', { step: 'after_open_call', result: result === 'timeout' ? 'timeout' : 'ok' });
+        console.log('[NAV_PLUGIN_DEBUG]', { step: 'after_open_call', result: result === 'timeout' ? 'timeout' : 'ok' });
         if (result !== 'timeout') {
-          if (dev) console.log('[platform.openNavigation] Navigation.openWithChooser ok');
+          console.log('[platform.openNavigation] Navigation.openWithChooser ok');
           return;
         }
-        if (dev) console.warn('[platform.openNavigation] Navigation timeout, fallback a Browser');
+        console.warn('[platform.openNavigation] Navigation timeout, fallback a Browser');
       }
     } catch (e) {
-      if (dev) {
-        console.error('[NAV_PLUGIN_DEBUG_ERROR]', e);
-        console.warn('[platform.openNavigation] Navigation.openWithChooser failed', e);
-      }
+      console.error('[NAV_PLUGIN_DEBUG_ERROR]', e);
+      console.warn('[platform.openNavigation] Navigation.openWithChooser failed', e);
     }
     // Fallback: abrir URL de Maps en navegador (puede redirigir a app o mostrar opciones)
     try {
@@ -119,17 +117,17 @@ export async function openNavigation(lat: number, lng: number, label?: string): 
           const { getBrowser } = await import('@/lib/capacitor/rideNative');
           const Browser = await getBrowser();
           if (Browser) {
-            if (dev) console.log('[platform.openNavigation] fallback Browser.open', fallbackUrl);
+            console.log('[platform.openNavigation] fallback Browser.open', fallbackUrl);
             await Browser.open({ url: fallbackUrl });
           }
         })()
       );
       if (result !== 'timeout') return;
     } catch (e) {
-      if (dev) console.warn('[platform.openNavigation] Browser.open failed', e);
+      console.warn('[platform.openNavigation] Browser.open failed', e);
     }
   }
-  if (dev) console.log('[platform.openNavigation] using window.open', fallbackUrl);
+  console.log('[platform.openNavigation] using window.open', fallbackUrl);
   window.open(fallbackUrl, '_blank');
 }
 
