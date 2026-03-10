@@ -872,6 +872,10 @@ export default function RideDetailClient() {
   }
 
   function openNavigationToNextStop() {
+    if (process.env.NODE_ENV === 'development') {
+      // Debug: botón de navegación en app nativa
+      console.log('[NAV_FINAL_DEBUG]', { step: 'button_pressed', context: 'openNavigationToNextStop' });
+    }
     if (typeof window === 'undefined' || !nextStop) return;
     const lat = nextStop.lat;
     const lng = nextStop.lng;
