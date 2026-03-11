@@ -120,6 +120,11 @@ export default function RideDetailClient() {
     const sendLocation = async () => {
       let { data: { session } } = await supabase.auth.getSession();
       let accessToken = session?.access_token;
+      if (!accessToken) {
+        await supabase.auth.refreshSession();
+        const next = await supabase.auth.getSession();
+        accessToken = next.data.session?.access_token;
+      }
       if (!accessToken) return;
 
       const doPost = (token: string) =>
