@@ -34,6 +34,14 @@ export default function NavigationPreferencePage() {
     }
   }
 
+  const visibleApps: NavigationAppOption[] =
+    apps.length > 0
+      ? apps.filter((opt) => opt.id === 'google_maps' || opt.id === 'waze')
+      : [
+          { id: 'google_maps', label: 'Google Maps', available: true },
+          { id: 'waze', label: 'Waze', available: true },
+        ];
+
   return (
     <div className="min-h-screen bg-gray-50 app-mobile-shell">
       <header className="bg-white border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40">
@@ -51,7 +59,7 @@ export default function NavigationPreferencePage() {
           Elegí la app que querés usar para navegar hacia los puntos del viaje.
         </p>
         <div className="space-y-3">
-          {apps.map((opt) => (
+          {visibleApps.map((opt) => (
             <button
               key={opt.id}
               type="button"
