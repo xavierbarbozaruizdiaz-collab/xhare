@@ -5,7 +5,6 @@ import ActiveRideBar from '@/components/ActiveRideBar'
 import OfferAcceptedNotifier from '@/components/OfferAcceptedNotifier'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import PushRegistration from '@/components/PushRegistration'
-import AppPermissionsRequest from '@/components/AppPermissionsRequest'
 import CapacitorPromiseShim from '@/components/CapacitorPromiseShim'
 
 const inter = Inter({ subsets: ['latin'] })
@@ -27,7 +26,6 @@ export default function RootLayout({
         <ActiveRideBar />
         <OfferAcceptedNotifier />
         <PushRegistration />
-        <AppPermissionsRequest />
         <ErrorBoundary>{children}</ErrorBoundary>
       </body>
     </html>

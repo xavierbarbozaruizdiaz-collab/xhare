@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -20,6 +20,53 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [isSignUp, setIsSignUp] = useState(searchParams.get('signup') === '1');
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    let didRedirect = false;
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (cancelled || !session?.user?.id) {
+        if (!cancelled) setCheckingSession(false);
+        return;
+      }
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).maybeSingle();
+      if (cancelled) return;
+      const role = profile?.role;
+      if (role === 'admin') {
+        didRedirect = true;
+        router.replace('/admin');
+        return;
+      }
+      if (role === 'driver' || role === 'driver_pending') {
+        if (role === 'driver_pending') {
+          didRedirect = true;
+          router.replace('/driver/pending');
+          return;
+        }
+        const { data: p } = await supabase.from('profiles').select('vehicle_seat_count, driver_approved_at').eq('id', session.user.id).maybeSingle();
+        if (p?.driver_approved_at && p?.vehicle_seat_count == null) {
+          didRedirect = true;
+          router.replace('/driver/setup');
+          return;
+        }
+        if (p?.driver_approved_at) {
+          didRedirect = true;
+          router.replace('/my-rides');
+          return;
+        }
+        didRedirect = true;
+        router.replace('/driver/pending');
+        return;
+      }
+      didRedirect = true;
+      router.replace(nextUrl.startsWith('/') ? nextUrl : '/');
+    })().finally(() => {
+      if (!cancelled && !didRedirect) setCheckingSession(false);
+    });
+    return () => { cancelled = true; };
+  }, [router, nextUrl]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -119,6 +166,17 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="w-full max-w-md bg-white rounded-lg shadow p-6 flex flex-col items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-green-600" aria-hidden />
+          <p className="mt-4 text-sm text-gray-500">Comprobando sesión…</p>
+        </div>
+      </div>
+    );
   }
 
   return (
