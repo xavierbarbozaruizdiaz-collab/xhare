@@ -642,14 +642,19 @@ export default function RideDetailClient() {
     }
     setUpdatingStatus(true);
     try {
-      let { data: { session } } = await supabase.auth.getSession();
+      let {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (!session?.access_token) {
-        const { data: { session: refreshed } } = await supabase.auth.refreshSession();
+        const {
+          data: { session: refreshed },
+        } = await supabase.auth.refreshSession();
         session = refreshed ?? session;
       }
       const token = session?.access_token;
       if (!token) {
-        alert('Tu sesión no está lista. Volvé a iniciar sesión.');
+        setSessionExpiredBanner(true);
+        alert('Tu sesión venció. Volvé a iniciar sesión para continuar con el viaje.');
         return;
       }
       const fnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/ride-update-status`;
@@ -687,13 +692,21 @@ export default function RideDetailClient() {
           body: data,
         });
       }
+      if (res.status === 401) {
+        setSessionExpiredBanner(true);
+        alert('Tu sesión venció. Cerrá y volvé a abrir la app o volvé a iniciar sesión para continuar con el viaje.');
+        return;
+      }
       if (!res.ok || !data?.ok) {
         const msg =
           data?.error === 'account_suspended'
-            ? (data?.details ?? 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.')
+            ? data?.details ??
+              'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.'
             : data?.error === 'already_has_active_ride'
-              ? (data?.details ?? 'Ya tenés un viaje en curso. Finalizá ese viaje antes de iniciar otro.')
-              : (newStatus === 'en_route' ? 'No se pudo iniciar el viaje. Volvé a intentar.' : 'No se pudo actualizar el estado del viaje. Volvé a intentar.');
+              ? data?.details ?? 'Ya tenés un viaje en curso. Finalizá ese viaje antes de iniciar otro.'
+              : newStatus === 'en_route'
+                ? 'No se pudo iniciar el viaje. Volvé a intentar.'
+                : 'No se pudo actualizar el estado del viaje. Volvé a intentar.';
         alert(msg);
         if (data?.error === 'account_suspended' || data?.error === 'already_has_active_ride') await loadRide();
         return;
