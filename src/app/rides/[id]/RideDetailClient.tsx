@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import * as platform from '@/lib/platform';
-import { checkOverlayPermission, ensureLocationPermission } from '@/lib/mobile/permissions';
+import { ensureLocationPermission } from '@/lib/mobile/permissions';
 import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -127,7 +127,7 @@ export default function RideDetailClient() {
       }
       if (!accessToken) return;
 
-      const doPost = (token: string) =>
+      const doPost = (token: string, lat: number, lng: number) =>
         fetch(`/api/rides/${rideId}/location`, {
           method: 'POST',
           credentials: 'include',
@@ -139,12 +139,12 @@ export default function RideDetailClient() {
         });
 
       const onPosition = async (lat: number, lng: number) => {
-        let res = await doPost(accessToken!);
+        let res = await doPost(accessToken!, lat, lng);
         if (res.status === 401) {
           const { data: { session: newSession } } = await supabase.auth.refreshSession();
           const newToken = newSession?.access_token;
           if (newToken) {
-            res = await doPost(newToken);
+            res = await doPost(newToken, lat, lng);
             accessToken = newToken;
           }
         }
@@ -243,33 +243,7 @@ export default function RideDetailClient() {
     return () => { if (removeFn) void removeFn(); };
   }, []);
 
-  // Burbuja flotante: solicitar permiso al entrar (viaje en curso) solo si falta; al ir a segunda plana mostrar burbuja
-  useEffect(() => {
-    if (!rideId || !ride || ride.status !== 'en_route') return;
-    let cleanup: (() => void) | null = null;
-    const setup = async () => {
-      if (!(await platform.isNative())) return;
-      if (!(await checkOverlayPermission())) await platform.requestOverlayPermission();
-      cleanup = await platform.onAppStateChange(async (isActive) => {
-        if (isActive) {
-          await platform.hideBubble();
-        } else {
-          const granted = (await checkOverlayPermission()) || (await platform.requestOverlayPermission());
-          if (granted) {
-            const label = ride?.origin_label && ride?.destination_label
-              ? `${shortLabel(ride.origin_label, 15)} → ${shortLabel(ride.destination_label, 15)}`
-              : 'Viaje en curso';
-            await platform.showBubble(label);
-          }
-        }
-      });
-    };
-    void setup();
-    return () => {
-      if (cleanup) cleanup();
-      void platform.hideBubble();
-    };
-  }, [rideId, ride?.status, ride?.origin_label, ride?.destination_label]);
+  // Burbuja flotante eliminada: ya no se solicita permiso de overlay ni se muestra overlay durante el viaje
 
   const basePolyline = useMemo(() => {
     if (!ride) return [];
@@ -752,8 +726,6 @@ export default function RideDetailClient() {
             new Promise((r) => setTimeout(r, 5000)),
           ]);
           if (await platform.isNative()) {
-            // Overlay: solo pedir si aún no está concedido (evitar repetir la solicitud al iniciar viaje)
-            if (!(await checkOverlayPermission())) await platform.requestOverlayPermission();
             const granted = await ensureLocationPermissions();
             if (!granted) return;
             try {

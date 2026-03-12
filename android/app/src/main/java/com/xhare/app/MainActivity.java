@@ -10,7 +10,6 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundLocationPlugin.class);
-        registerPlugin(BubbleOverlayPlugin.class);
         registerPlugin(NavigationPlugin.class);
         super.onCreate(savedInstanceState);
     }

@@ -33,9 +33,8 @@ export default function AppPermissionsRequest() {
         await permissions.requestLocationPermission();
       }
 
-      // 2) Si es conductor: pedir también overlay y batería aquí, una vez
+      // 2) Si es conductor: pedir batería aquí, una vez
       if (isDriver) {
-        await permissions.ensureOverlayPermission();
         await permissions.requestBatteryOptimization();
       }
 
@@ -114,7 +113,7 @@ export default function AppPermissionsRequest() {
       <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
         <h2 id="permissions-confirm-title" className="text-lg font-semibold text-gray-900 mb-2">Permisos de la app</h2>
         <p className="text-sm text-gray-600 mb-4">
-          Para que los viajes funcionen bien (ubicación, burbuja en curso, batería) podemos revisar los permisos ahora. Podés aceptar cada uno o ir a configuración cuando lo pida el sistema.
+          Para que los viajes funcionen bien (ubicación y batería) podemos revisar los permisos ahora. Podés aceptar cada uno o ir a configuración cuando lo pida el sistema.
         </p>
         <div className="flex gap-2">
           <button

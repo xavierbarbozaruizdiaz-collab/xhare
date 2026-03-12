@@ -14,7 +14,6 @@ export type NotificationPermissionStatus = 'granted' | 'denied' | 'default';
 export const PERMISSION_FLOWS = {
   location: 'Búsqueda/publicar: "Usar mi ubicación"; detalle viaje: enviar posición; navegación',
   background_location: 'Conductor: tracking en segundo plano durante viaje en curso',
-  overlay: 'Conductor: burbuja flotante cuando el viaje está en curso',
   battery: 'Conductor: evitar que el sistema mate el tracking en segundo plano',
   notifications: 'Push: avisos de viajes; web: notificación "Viaje en curso"',
 } as const;
@@ -65,39 +64,6 @@ export async function ensureLocationPermission(): Promise<boolean> {
 }
 
 /**
- * Comprueba si ya tiene permiso de overlay (sobre otras apps).
- * Solo relevante en native.
- */
-export async function checkOverlayPermission(): Promise<boolean> {
-  const platform = await import('@/lib/platform');
-  if (!(await platform.isNative())) return false;
-  try {
-    const { BubbleOverlay } = await import('@/lib/capacitor/bubbleOverlay');
-    const { granted } = await BubbleOverlay.hasOverlayPermission();
-    return granted;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Pide permiso de overlay (burbuja).
- * Flujo: tras login (native) o al configurar burbuja en viaje en curso.
- */
-export async function requestOverlayPermission(): Promise<boolean> {
-  const platform = await import('@/lib/platform');
-  return platform.requestOverlayPermission();
-}
-
-/**
- * Asegura permiso de overlay: check y si no, request.
- */
-export async function ensureOverlayPermission(): Promise<boolean> {
-  if (await checkOverlayPermission()) return true;
-  return requestOverlayPermission();
-}
-
-/**
  * Pide al sistema que permita ignorar optimización de batería (solo native).
  * Flujo: tras login (native).
  */
@@ -137,8 +103,6 @@ export async function ensurePermissionForAction(
     case 'location':
     case 'background_location':
       return ensureLocationPermission();
-    case 'overlay':
-      return ensureOverlayPermission();
     case 'battery':
       await requestBatteryOptimization();
       return true;
