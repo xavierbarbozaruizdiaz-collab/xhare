@@ -61,6 +61,18 @@ export default function AdminBillingPage() {
     else await load();
   }
 
+  async function markAllPendingForDriver(driverId: string) {
+    setActing(driverId);
+    const { error } = await supabase
+      .from('driver_charges')
+      .update({ status: 'paid' })
+      .eq('driver_id', driverId)
+      .eq('status', 'pending');
+    setActing(null);
+    if (error) alert(error.message);
+    else await load();
+  }
+
   const filtered = filter === 'all' ? charges : charges.filter((c) => c.status === filter);
   const detailRows = selectedDriverId ? filtered.filter((c) => c.driver_id === selectedDriverId) : filtered;
   const pendingTotal = charges.filter((c) => c.status === 'pending').reduce((s, c) => s + c.amount_pyg, 0);
@@ -149,13 +161,25 @@ export default function AdminBillingPage() {
                   <td className="p-3 text-right">{s.pendingAmount.toLocaleString('es-PY')}</td>
                   <td className="p-3 text-right">{s.pendingCount}</td>
                   <td className="p-3">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedDriverId(s.driverId)}
-                      className="text-green-600 hover:underline text-sm font-medium"
-                    >
-                      Ver detalles
-                    </button>
+                    <div className="flex flex-wrap gap-3 items-center">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDriverId(s.driverId)}
+                        className="text-green-600 hover:underline text-sm font-medium"
+                      >
+                        Ver detalles
+                      </button>
+                      {s.pendingCount > 0 && (
+                        <button
+                          type="button"
+                          disabled={acting !== null}
+                          onClick={() => markAllPendingForDriver(s.driverId)}
+                          className="text-sm font-medium text-amber-700 hover:underline disabled:opacity-50"
+                        >
+                          {acting === s.driverId ? 'Marcando…' : 'Marcar todos pagados'}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
