@@ -21,6 +21,7 @@ export default function AdminBillingPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [acting, setActing] = useState<string | null>(null);
+  const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
 
   useEffect(() => {
     load();
@@ -61,7 +62,34 @@ export default function AdminBillingPage() {
   }
 
   const filtered = filter === 'all' ? charges : charges.filter((c) => c.status === filter);
+  const detailRows = selectedDriverId ? filtered.filter((c) => c.driver_id === selectedDriverId) : filtered;
   const pendingTotal = charges.filter((c) => c.status === 'pending').reduce((s, c) => s + c.amount_pyg, 0);
+
+  const driverSummaries = (() => {
+    const map = new Map<
+      string,
+      { driverId: string; pendingAmount: number; pendingCount: number; totalAmount: number; totalCount: number }
+    >();
+    for (const c of charges) {
+      if (!map.has(c.driver_id)) {
+        map.set(c.driver_id, {
+          driverId: c.driver_id,
+          pendingAmount: 0,
+          pendingCount: 0,
+          totalAmount: 0,
+          totalCount: 0,
+        });
+      }
+      const s = map.get(c.driver_id)!;
+      s.totalAmount += c.amount_pyg;
+      s.totalCount += 1;
+      if (c.status === 'pending') {
+        s.pendingAmount += c.amount_pyg;
+        s.pendingCount += 1;
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.pendingAmount - a.pendingAmount);
+  })();
 
   function exportCsv() {
     const headers = ['id', 'ride_id', 'driver_id', 'driver_name', 'amount_pyg', 'status', 'created_at'];
@@ -95,6 +123,53 @@ export default function AdminBillingPage() {
       <p className="text-sm text-amber-700 mb-4">
         Total pendiente (todos los cargos): <strong>{pendingTotal.toLocaleString('es-PY')} PYG</strong>
       </p>
+
+      <h2 className="text-lg font-semibold text-gray-900 mb-2">Resumen por conductor</h2>
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-6">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="text-left p-3">Conductor</th>
+              <th className="text-right p-3">Pendiente (PYG)</th>
+              <th className="text-right p-3"># cargos pendientes</th>
+              <th className="text-left p-3">Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {driverSummaries.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="p-6 text-center text-gray-500">
+                  No hay cargos de conductores.
+                </td>
+              </tr>
+            ) : (
+              driverSummaries.map((s) => (
+                <tr key={s.driverId} className="border-b border-gray-100">
+                  <td className="p-3">{driverNames[s.driverId] ?? s.driverId.slice(0, 8)}</td>
+                  <td className="p-3 text-right">{s.pendingAmount.toLocaleString('es-PY')}</td>
+                  <td className="p-3 text-right">{s.pendingCount}</td>
+                  <td className="p-3">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDriverId(s.driverId)}
+                      className="text-green-600 hover:underline text-sm font-medium"
+                    >
+                      Ver detalles
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <h2 className="text-lg font-semibold text-gray-900 mb-2">
+        {selectedDriverId
+          ? `Detalles de cargos – ${driverNames[selectedDriverId] ?? selectedDriverId.slice(0, 8)}`
+          : 'Detalles de cargos'}
+      </h2>
+
       <div className="flex flex-wrap gap-2 mb-4">
         <button
           type="button"
@@ -138,14 +213,14 @@ export default function AdminBillingPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {detailRows.length === 0 ? (
               <tr>
                 <td colSpan={6} className="p-6 text-center text-gray-500">
                   No hay cargos.
                 </td>
               </tr>
             ) : (
-              filtered.map((c) => (
+              detailRows.map((c) => (
                 <tr key={c.id} className="border-b border-gray-100">
                   <td className="p-3">{new Date(c.created_at).toLocaleString('es-PY')}</td>
                   <td className="p-3">{driverNames[c.driver_id] ?? c.driver_id.slice(0, 8)}</td>
