@@ -32,9 +32,9 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 app-mobile-shell">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm app-mobile-header">
-        <div className="max-w-6xl mx-auto app-mobile-px py-3">
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
+        <div className="max-w-6xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between gap-2 mb-3">
             <Link href="/admin" className="text-lg font-bold text-green-600 whitespace-nowrap">Xhare Admin</Link>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -48,7 +48,10 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
               </button>
             </div>
           </div>
-          <nav className="flex gap-1 overflow-x-auto pb-1 -mx-1 scrollbar-thin min-h-[44px] items-center" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+          <nav
+            className="flex gap-1 overflow-x-auto pb-1 -mx-1 scrollbar-thin min-h-[44px] items-center"
+            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          >
             {nav.map(({ href, label }) => (
               <Link
                 key={href}
@@ -61,7 +64,7 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
           </nav>
         </div>
       </header>
-      <main className="max-w-6xl mx-auto app-mobile-px py-6 app-mobile-section">
+      <main className="max-w-6xl mx-auto px-4 py-6">
         {children}
       </main>
     </div>
