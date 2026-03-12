@@ -250,15 +250,26 @@ export default function Home() {
             </button>
           </li>
           {settingsOpen && (
-            <li className="pl-8">
-              <Link
-                href="/settings/navigation"
-                onClick={() => { setSettingsOpen(false); setDrawerOpen(false); }}
-                className="block px-4 py-2 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[40px] flex items-center"
-              >
-                Preferencia de navegación
-              </Link>
-            </li>
+            <>
+              <li className="pl-8">
+                <Link
+                  href="/settings/navigation"
+                  onClick={() => { setSettingsOpen(false); setDrawerOpen(false); }}
+                  className="block px-4 py-2 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[40px] flex items-center"
+                >
+                  Preferencia de navegación
+                </Link>
+              </li>
+              <li className="pl-8">
+                <Link
+                  href="/settings/permissions"
+                  onClick={() => { setSettingsOpen(false); setDrawerOpen(false); }}
+                  className="block px-4 py-2 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[40px] flex items-center"
+                >
+                  Permisos de la app
+                </Link>
+              </li>
+            </>
           )}
           <li className="pt-1">
             <button
