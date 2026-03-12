@@ -9,7 +9,20 @@ import { unwrapPluginResult } from '@/lib/capacitor/safePluginCall';
 
 export type Position = { lat: number; lng: number };
 
+export type NavigationPreference = 'google_maps' | 'waze' | 'browser' | 'ask_every_time';
+
+export type NavigationAppOption = {
+  id: NavigationPreference;
+  label: string;
+  available: boolean;
+};
+
 let cachedNative: boolean | null = null;
+const NAV_PREF_KEY = 'xhare_navigation_preference';
+
+function isDevEnv() {
+  return typeof process !== 'undefined' && process.env.NODE_ENV === 'development';
+}
 
 /** True solo cuando la app corre en el contenedor nativo (Capacitor), no en navegador. */
 export async function isNative(): Promise<boolean> {
@@ -73,9 +86,117 @@ export async function requestLocationPermission(): Promise<boolean> {
   }
 }
 
+async function getNativePreferences() {
+  const native = await isNative();
+  if (!native || typeof window === 'undefined') return null;
+  try {
+    const { Preferences } = await import('@capacitor/preferences');
+    return Preferences;
+  } catch {
+    return null;
+  }
+}
+
+export async function getNavigationPreference(): Promise<NavigationPreference> {
+  let raw: string | null = null;
+
+  const prefs = await getNativePreferences();
+  if (prefs) {
+    try {
+      const { value } = await prefs.get({ key: NAV_PREF_KEY });
+      raw = value ?? null;
+    } catch {
+      raw = null;
+    }
+  }
+
+  if (!raw && typeof window !== 'undefined' && 'localStorage' in window) {
+    try {
+      raw = window.localStorage.getItem(NAV_PREF_KEY);
+    } catch {
+      raw = null;
+    }
+  }
+
+  const value = raw as NavigationPreference | null;
+  if (value === 'google_maps' || value === 'waze' || value === 'browser' || value === 'ask_every_time') {
+    return value;
+  }
+  return 'ask_every_time';
+}
+
+export async function setNavigationPreference(pref: NavigationPreference): Promise<void> {
+  const prefs = await getNativePreferences();
+  if (prefs) {
+    try {
+      await prefs.set({ key: NAV_PREF_KEY, value: pref });
+    } catch {
+      // ignore
+    }
+  }
+  if (typeof window !== 'undefined' && 'localStorage' in window) {
+    try {
+      window.localStorage.setItem(NAV_PREF_KEY, pref);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export async function getAvailableNavigationApps(): Promise<NavigationAppOption[]> {
+  const dev = isDevEnv();
+  const native = await isNative();
+  const base: NavigationAppOption[] = [
+    { id: 'google_maps', label: 'Google Maps', available: false },
+    { id: 'waze', label: 'Waze', available: false },
+    { id: 'browser', label: 'Navegador', available: true },
+    { id: 'ask_every_time', label: 'Preguntar cada vez', available: true },
+  ];
+
+  if (!native) {
+    if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'available_apps_loaded', native: false, apps: base });
+    return base;
+  }
+
+  try {
+    const { registerPlugin } = await import('@capacitor/core');
+    const Navigation = registerPlugin<{
+      getAvailableApps(): Promise<{ value: NavigationAppOption[] } | NavigationAppOption[]>;
+    }>('Navigation');
+
+    const result = await Navigation.getAvailableApps();
+    const apps = Array.isArray((result as any)?.value) ? (result as any).value : (result as any);
+
+    const byId = new Map<NavigationPreference, NavigationAppOption>();
+    base.forEach((opt) => byId.set(opt.id, { ...opt }));
+
+    if (Array.isArray(apps)) {
+      for (const item of apps) {
+        if (!item?.id) continue;
+        const id = item.id as NavigationPreference;
+        if (!byId.has(id)) continue;
+        const prev = byId.get(id)!;
+        byId.set(id, {
+          ...prev,
+          available: Boolean(item.available),
+          label: item.label || prev.label,
+        });
+      }
+    }
+
+    const finalApps = Array.from(byId.values());
+    if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'available_apps_loaded', native: true, apps: finalApps });
+    return finalApps;
+  } catch (e) {
+    if (dev) console.warn('[NAV_PREF_DEBUG]', { step: 'available_apps_failed', error: String(e) });
+    return base;
+  }
+}
+
 /**
- * Abre navegación hacia (lat, lng).
- * En app nativa: Capacitor Browser.open. En web: window.open.
+ * Abre navegación hacia (lat, lng) respetando la preferencia del usuario.
+ * - En nativo Android: intenta abrir Google Maps o Waze según preferencia.
+ * - En web / PWA: abre siempre navegador con Google Maps web.
  */
 export async function openNavigation(lat: number, lng: number, _label?: string): Promise<void> {
   try {
@@ -84,19 +205,11 @@ export async function openNavigation(lat: number, lng: number, _label?: string):
     const lngVal = Number(lng);
     if (!Number.isFinite(latVal) || !Number.isFinite(lngVal)) return;
     const dest = `${latVal},${lngVal}`;
-    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+    const dev = isDevEnv();
 
-    const native = await isNative();
-    if (native) {
-      try {
-        const { getBrowser } = await import('@/lib/capacitor/rideNative');
-        const Browser = await getBrowser();
-        if (Browser) {
-          await Browser.open({ url: mapsUrl });
-          return;
-        }
-      } catch (_) {}
-      // Fallback: enlace con target=_blank; muchos WebViews lo abren en el navegador del sistema
+    const openBrowser = () => {
+      const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+      if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'opening_browser', mapsUrl });
       try {
         const a = document.createElement('a');
         a.href = mapsUrl;
@@ -105,27 +218,80 @@ export async function openNavigation(lat: number, lng: number, _label?: string):
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        return;
-      } catch (_) {}
+      } catch {
+        try {
+          window.open(mapsUrl, '_blank');
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    const pref = await getNavigationPreference();
+    const apps = await getAvailableNavigationApps();
+    if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'preference_loaded', pref, apps });
+
+    const native = await isNative();
+    if (!native) {
+      openBrowser();
+      return;
     }
-    window.open(mapsUrl, '_blank');
+
+    const { registerPlugin } = await import('@capacitor/core');
+    const Navigation = registerPlugin<{
+      openWithChooser(options: { url: string }): Promise<unknown>;
+    }>('Navigation');
+
+    const googleAvailable = apps.find((a) => a.id === 'google_maps')?.available;
+    const wazeAvailable = apps.find((a) => a.id === 'waze')?.available;
+
+    const openGoogleMaps = async () => {
+      if (!googleAvailable) {
+        if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'fallback_used', from: 'google_maps', to: 'browser' });
+        openBrowser();
+        return;
+      }
+      const uri = `google.navigation:q=${encodeURIComponent(dest)}`;
+      if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'opening_google_maps', uri });
+      await Navigation.openWithChooser({ url: uri });
+    };
+
+    const openWaze = async () => {
+      if (!wazeAvailable) {
+        if (googleAvailable) {
+          if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'fallback_used', from: 'waze', to: 'google_maps' });
+          await openGoogleMaps();
+          return;
+        }
+        if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'fallback_used', from: 'waze', to: 'browser' });
+        openBrowser();
+        return;
+      }
+      const uri = `waze://?ll=${latVal},${lngVal}&navigate=yes`;
+      if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'opening_waze', uri });
+      await Navigation.openWithChooser({ url: uri });
+    };
+
+    if (pref === 'ask_every_time') {
+      if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'ask_every_time', behaviour: 'browser_for_now' });
+      openBrowser();
+      return;
+    }
+
+    if (pref === 'google_maps') {
+      await openGoogleMaps();
+      return;
+    }
+
+    if (pref === 'waze') {
+      await openWaze();
+      return;
+    }
+
+    openBrowser();
   } catch (_) {
     const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${Number(lat)},${Number(lng)}`;
     if (typeof window !== 'undefined') window.open(mapsUrl, '_blank');
-  }
-}
-
-/** Overlay (burbuja): solo en native. Solicita permiso. */
-export async function requestOverlayPermission(): Promise<boolean> {
-  if (!(await isNative())) return false;
-  try {
-    const { BubbleOverlay } = await import('@/lib/capacitor/bubbleOverlay');
-    const { granted } = await BubbleOverlay.hasOverlayPermission();
-    if (granted) return true;
-    const { granted: after } = await BubbleOverlay.requestOverlayPermission();
-    return after;
-  } catch {
-    return false;
   }
 }
 
@@ -135,27 +301,6 @@ export async function requestBatteryPermission(): Promise<void> {
   try {
     const { BackgroundLocation } = await import('@/lib/capacitor/backgroundLocation');
     await BackgroundLocation.requestIgnoreBatteryOptimizations();
-  } catch (_) {}
-}
-
-/** Muestra la burbuja flotante (solo native). */
-export async function showBubble(label?: string): Promise<boolean> {
-  if (!(await isNative())) return false;
-  try {
-    const { BubbleOverlay } = await import('@/lib/capacitor/bubbleOverlay');
-    const { shown } = await BubbleOverlay.showBubble({ label });
-    return shown;
-  } catch {
-    return false;
-  }
-}
-
-/** Oculta la burbuja (solo native, no-op en web). */
-export async function hideBubble(): Promise<void> {
-  if (!(await isNative())) return;
-  try {
-    const { BubbleOverlay } = await import('@/lib/capacitor/bubbleOverlay');
-    await BubbleOverlay.hideBubble();
   } catch (_) {}
 }
 

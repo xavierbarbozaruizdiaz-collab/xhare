@@ -1,17 +1,20 @@
 package com.xhare.app;
 
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.util.Log;
 
+import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.PluginMethod;
 
 /**
- * Abre una URL (p. ej. geo:lat,lng) usando el selector del sistema
- * para que el usuario elija con qué app navegar (Maps, Waze, etc.).
+ * Navegación: abre URLs geo:/google.navigation/waze:// usando Intents.
+ * También expone getAvailableApps para que la UI decida preferencia.
  */
 @CapacitorPlugin(name = "Navigation")
 public class NavigationPlugin extends Plugin {
@@ -59,6 +62,52 @@ public class NavigationPlugin extends Plugin {
         } catch (Exception e) {
             Log.e(TAG, "Error launching navigation chooser", e);
             call.reject("No se pudo abrir: " + (e.getMessage() != null ? e.getMessage() : "error desconocido"));
+        }
+    }
+
+    @PluginMethod
+    public void getAvailableApps(PluginCall call) {
+        try {
+            PackageManager pm = getContext().getPackageManager();
+
+            boolean hasGoogleMaps = isPackageInstalled(pm, "com.google.android.apps.maps");
+            boolean hasWaze = isPackageInstalled(pm, "com.waze");
+
+            JSArray arr = new JSArray();
+
+            JSObject google = new JSObject();
+            google.put("id", "google_maps");
+            google.put("label", "Google Maps");
+            google.put("available", hasGoogleMaps);
+            arr.put(google);
+
+            JSObject waze = new JSObject();
+            waze.put("id", "waze");
+            waze.put("label", "Waze");
+            waze.put("available", hasWaze);
+            arr.put(waze);
+
+            JSObject browser = new JSObject();
+            browser.put("id", "browser");
+            browser.put("label", "Navegador");
+            browser.put("available", true);
+            arr.put(browser);
+
+            JSObject result = new JSObject();
+            result.put("value", arr);
+            call.resolve(result);
+        } catch (Exception e) {
+            Log.e(TAG, "Error in getAvailableApps", e);
+            call.reject("No se pudieron detectar las apps de navegación");
+        }
+    }
+
+    private boolean isPackageInstalled(PackageManager pm, String packageName) {
+        try {
+            pm.getPackageInfo(packageName, 0);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 }

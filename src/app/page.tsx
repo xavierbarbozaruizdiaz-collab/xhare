@@ -28,6 +28,7 @@ export default function Home() {
   const [destinationMapPoint, setDestinationMapPoint] = useState<MapPoint>(null);
   const [mapActiveField, setMapActiveField] = useState<'pickup' | 'dropoff' | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Verificar sesión y rol: guest → landing; driver → my-rides; passenger → búsqueda
   useEffect(() => {
@@ -236,6 +237,30 @@ export default function Home() {
             </Link>
           </li>
           <li className="pt-3 mt-2 border-t border-gray-200">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((v) => !v)}
+              className="w-full text-left px-4 py-3 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[44px] flex items-center justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <span>⚙️</span>
+                <span>Configuraciones</span>
+              </span>
+              <span className="text-xs text-gray-500">{settingsOpen ? '▲' : '▼'}</span>
+            </button>
+          </li>
+          {settingsOpen && (
+            <li className="pl-8">
+              <Link
+                href="/settings/navigation"
+                onClick={() => { setSettingsOpen(false); setDrawerOpen(false); }}
+                className="block px-4 py-2 rounded-xl text-gray-700 hover:bg-gray-100 font-medium min-h-[40px] flex items-center"
+              >
+                Preferencia de navegación
+              </Link>
+            </li>
+          )}
+          <li className="pt-1">
             <button
               type="button"
               onClick={() => { setDrawerOpen(false); supabase.auth.signOut().then(() => { window.location.href = '/'; }); }}
