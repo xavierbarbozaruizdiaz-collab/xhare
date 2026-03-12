@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { checkLocationPermission, checkNotificationPermission } from '@/lib/mobile/permissions';
 import { isNative } from '@/lib/platform';
@@ -13,39 +13,52 @@ export default function PermissionsSettingsPage() {
   const [notificationStatus, setNotificationStatus] = useState<Status>('unknown');
   const [native, setNative] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const isNativePlatform = await isNative();
-      if (cancelled) return;
-      setNative(isNativePlatform);
-      const loc = await checkLocationPermission();
-      if (cancelled) return;
-      setLocationStatus(loc);
-      const notif = await checkNotificationPermission();
-      if (cancelled) return;
-      setNotificationStatus(notif === 'granted' ? 'granted' : notif === 'denied' ? 'denied' : 'prompt');
-    })();
-    return () => { cancelled = true; };
+  const refreshStatus = useCallback(async () => {
+    const isNativePlatform = await isNative();
+    setNative(isNativePlatform);
+    const loc = await checkLocationPermission();
+    setLocationStatus(loc);
+    const notif = await checkNotificationPermission();
+    setNotificationStatus(notif === 'granted' ? 'granted' : notif === 'denied' ? 'denied' : 'prompt');
   }, []);
 
-  async function openSystemSettings() {
+  useEffect(() => {
+    let cancelled = false;
+    refreshStatus().catch(() => {});
+    return () => { cancelled = true; };
+  }, [refreshStatus]);
+
+  useEffect(() => {
+    const onVisible = () => { void refreshStatus(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refreshStatus]);
+
+  async function openAppSettings() {
     try {
       await BackgroundLocation.openAppSettings();
     } catch (_) {}
+  }
+
+  async function openBatterySettings() {
+    try {
+      await BackgroundLocation.openBatterySettings();
+    } catch (_) {
+      await openAppSettings();
+    }
   }
 
   function statusLabel(s: Status): string {
     if (s === 'granted') return 'Concedido';
     if (s === 'denied') return 'No concedido';
     if (s === 'prompt') return 'Sin decidir';
-    return '—';
+    return '…';
   }
 
-  function statusColor(s: Status): string {
-    if (s === 'granted') return 'text-green-700';
-    if (s === 'denied') return 'text-amber-700';
-    return 'text-gray-600';
+  function statusBadgeClass(s: Status): string {
+    if (s === 'granted') return 'bg-green-100 text-green-800 font-semibold';
+    if (s === 'denied') return 'bg-amber-100 text-amber-800 font-semibold';
+    return 'bg-gray-100 text-gray-600';
   }
 
   return (
@@ -62,49 +75,69 @@ export default function PermissionsSettingsPage() {
 
       <div className="app-mobile-px py-5 max-w-md mx-auto">
         <p className="text-sm text-gray-600 mb-4">
-          Para que la app funcione bien en tu celular necesitamos estos permisos. Podés activarlos o revisarlos desde la configuración del teléfono.
+          Tocá cada permiso para abrir donde se configura. Al volver a la app se actualiza el estado.
         </p>
 
         <div className="space-y-3 mb-6">
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3">
-            <div>
+          <button
+            type="button"
+            onClick={native ? openAppSettings : undefined}
+            className="w-full bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3 text-left hover:bg-gray-50 active:bg-gray-100 transition"
+          >
+            <div className="min-w-0 flex-1">
               <p className="font-medium text-gray-900">Ubicación</p>
               <p className="text-xs text-gray-500 mt-0.5">Mapa, navegación y compartir posición en viajes</p>
             </div>
-            <span className={`text-sm font-medium shrink-0 ${statusColor(locationStatus)}`}>
-              {statusLabel(locationStatus)}
-            </span>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3">
-            <div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`px-2.5 py-1 rounded-lg text-sm ${statusBadgeClass(locationStatus)}`}>
+                {statusLabel(locationStatus)}
+              </span>
+              {native && <span className="text-gray-400" aria-hidden>→</span>}
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={native ? openAppSettings : undefined}
+            className="w-full bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3 text-left hover:bg-gray-50 active:bg-gray-100 transition"
+          >
+            <div className="min-w-0 flex-1">
               <p className="font-medium text-gray-900">Notificaciones</p>
               <p className="text-xs text-gray-500 mt-0.5">Avisos de viajes, reservas y mensajes</p>
             </div>
-            <span className={`text-sm font-medium shrink-0 ${statusColor(notificationStatus)}`}>
-              {statusLabel(notificationStatus)}
-            </span>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3">
-            <div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`px-2.5 py-1 rounded-lg text-sm ${statusBadgeClass(notificationStatus)}`}>
+                {statusLabel(notificationStatus)}
+              </span>
+              {native && <span className="text-gray-400" aria-hidden>→</span>}
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={native ? openBatterySettings : undefined}
+            className="w-full bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between gap-3 text-left hover:bg-gray-50 active:bg-gray-100 transition"
+          >
+            <div className="min-w-0 flex-1">
               <p className="font-medium text-gray-900">Batería (no optimizar)</p>
               <p className="text-xs text-gray-500 mt-0.5">Para que el viaje siga enviando tu ubicación con la pantalla apagada</p>
             </div>
-            <span className="text-sm font-medium text-gray-600 shrink-0">Configurable en Ajustes</span>
-          </div>
+            {native && <span className="text-gray-400 shrink-0" aria-hidden>→</span>}
+          </button>
         </div>
 
         {native && (
           <button
             type="button"
-            onClick={openSystemSettings}
+            onClick={openAppSettings}
             className="w-full inline-flex justify-center items-center px-4 py-3 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition"
           >
-            Abrir configuración del teléfono
+            Abrir configuración de la app
           </button>
         )}
         {!native && (
           <p className="text-sm text-gray-500">
-            En el navegador los permisos se gestionan desde la configuración del sitio. En la app instalada (Android) usá el botón de arriba.
+            En el navegador los permisos se gestionan desde la configuración del sitio. En la app instalada (Android) tocá cada permiso arriba.
           </p>
         )}
       </div>
