@@ -18,8 +18,21 @@ export default function PermissionsSettingsPage() {
     setNative(isNativePlatform);
     const loc = await checkLocationPermission();
     setLocationStatus(loc);
-    const notif = await checkNotificationPermission();
-    setNotificationStatus(notif === 'granted' ? 'granted' : notif === 'denied' ? 'denied' : 'prompt');
+    let notif: Status = 'prompt';
+    if (isNativePlatform) {
+      try {
+        const { PushNotifications } = await import('@capacitor/push-notifications');
+        const res = await PushNotifications.checkPermissions();
+        notif = res?.receive === 'granted' ? 'granted' : res?.receive === 'denied' ? 'denied' : 'prompt';
+      } catch {
+        const web = await checkNotificationPermission();
+        notif = web === 'granted' ? 'granted' : web === 'denied' ? 'denied' : 'prompt';
+      }
+    } else {
+      const web = await checkNotificationPermission();
+      notif = web === 'granted' ? 'granted' : web === 'denied' ? 'denied' : 'prompt';
+    }
+    setNotificationStatus(notif);
   }, []);
 
   useEffect(() => {
