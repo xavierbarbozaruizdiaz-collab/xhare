@@ -55,6 +55,8 @@ export default function RideDetailClient() {
   const [trackingToastVisible, setTrackingToastVisible] = useState(false);
   const [driverSuspended, setDriverSuspended] = useState(false);
   const [isNative, setIsNative] = useState(false);
+  const [openingNavigation, setOpeningNavigation] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     loadRide();
@@ -430,6 +432,7 @@ export default function RideDetailClient() {
   }, [bookings, boardingEvents]);
 
   async function loadRide() {
+    setLoadError(false);
     try {
       // En app (WebView) la sesión puede no estar lista en el primer tick; forzar lectura del storage
       await supabase.auth.getSession();
@@ -597,8 +600,8 @@ export default function RideDetailClient() {
         const dropoffs = [...dropoffsFromBookings, ...tripDropoffs];
         setPublicInfo({ booked_seats: bookedSeats, pickups, dropoffs });
       }
-    } catch (error) {
-      router.push('/search');
+    } catch (_error) {
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -611,7 +614,14 @@ export default function RideDetailClient() {
       if (typeof window !== 'undefined') alert('Punto sin ubicación');
       return;
     }
-    await platform.openNavigation(latVal, lngVal, label ?? undefined);
+    setOpeningNavigation(true);
+    try {
+      await platform.openNavigation(latVal, lngVal, label ?? undefined);
+    } catch {
+      if (typeof window !== 'undefined') alert('No se pudo abrir la navegación.');
+    } finally {
+      setOpeningNavigation(false);
+    }
   }
 
   async function openNavigationToFirstPoint(): Promise<void> {
@@ -654,7 +664,7 @@ export default function RideDetailClient() {
       const token = session?.access_token;
       if (!token) {
         setSessionExpiredBanner(true);
-        alert('Tu sesión venció. Volvé a iniciar sesión para continuar con el viaje.');
+        router.push('/login?session_expired=1');
         return;
       }
       const fnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/ride-update-status`;
@@ -694,7 +704,7 @@ export default function RideDetailClient() {
       }
       if (res.status === 401) {
         setSessionExpiredBanner(true);
-        alert('Tu sesión venció. Cerrá y volvé a abrir la app o volvé a iniciar sesión para continuar con el viaje.');
+        router.push('/login?session_expired=1');
         return;
       }
       if (!res.ok || !data?.ok) {
@@ -953,6 +963,24 @@ export default function RideDetailClient() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600" />
+      </div>
+    );
+  }
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-gray-50 app-mobile-shell flex flex-col items-center justify-center p-6">
+        <p className="text-gray-700 font-medium mb-2">Sin conexión</p>
+        <p className="text-sm text-gray-500 mb-4 text-center">No se pudieron cargar los datos del viaje.</p>
+        <button
+          type="button"
+          onClick={() => { setLoading(true); loadRide(); }}
+          className="px-5 py-2.5 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition"
+        >
+          Reintentar
+        </button>
+        <Link href="/search" className="mt-4 text-sm text-green-600 font-medium hover:underline">
+          Volver a búsqueda
+        </Link>
       </div>
     );
   }
@@ -1265,18 +1293,20 @@ export default function RideDetailClient() {
                       <button
                         type="button"
                         onClick={() => openNavigation(currentStop.lat!, currentStop.lng!, currentStop.label, currentStopIndex)}
-                        className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-gray-700 text-white font-semibold rounded-xl hover:bg-gray-800 transition"
+                        disabled={openingNavigation}
+                        className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-gray-700 text-white font-semibold rounded-xl hover:bg-gray-800 transition disabled:opacity-70"
                       >
-                        Ir al punto actual
+                        {openingNavigation ? 'Abriendo…' : 'Ir al punto actual'}
                       </button>
                     )}
                     {!ride.awaiting_stop_confirmation && nextStop && (
                       <button
                         type="button"
                         onClick={openNavigationToNextStop}
-                        className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition"
+                        disabled={openingNavigation}
+                        className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition disabled:opacity-70"
                       >
-                        Continuar viaje
+                        {openingNavigation ? 'Abriendo…' : 'Continuar viaje'}
                       </button>
                     )}
                     {onboardCount > 0 && (

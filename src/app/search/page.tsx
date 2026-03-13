@@ -70,6 +70,7 @@ export default function SearchPage() {
   const [visibleCount, setVisibleCount] = useState(20);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const SEARCH_PAGE_SIZE = 20;
 
   useEffect(() => {
@@ -146,6 +147,7 @@ export default function SearchPage() {
 
   async function searchRides() {
     setLoading(true);
+    setSearchError(false);
     try {
       const date = searchParams.get('date');
       const origin = searchParams.get('origin');
@@ -205,6 +207,7 @@ export default function SearchPage() {
       if (error) {
         console.error('Error searching rides:', error);
         setRides([]);
+        setSearchError(true);
       } else {
         let filtered = (ridesData || []).filter((ride: any) =>
           ride.status === 'published' &&
@@ -295,6 +298,8 @@ export default function SearchPage() {
       }
     } catch (error) {
       console.error('Error:', error);
+      setSearchError(true);
+      setRides([]);
     } finally {
       setLoading(false);
     }
@@ -591,6 +596,18 @@ export default function SearchPage() {
 
           {/* Results */}
           <div className="lg:col-span-3">
+            {searchError && !loading && (
+              <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-wrap items-center justify-between gap-3">
+                <p className="text-amber-800 font-medium">Sin conexión. No se pudieron cargar los viajes.</p>
+                <button
+                  type="button"
+                  onClick={() => searchRides()}
+                  className="px-4 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 transition"
+                >
+                  Reintentar
+                </button>
+              </div>
+            )}
             {loading ? (
               <div className="text-center py-12">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>

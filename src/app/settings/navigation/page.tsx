@@ -36,10 +36,12 @@ export default function NavigationPreferencePage() {
 
   const visibleApps: NavigationAppOption[] =
     apps.length > 0
-      ? apps.filter((opt) => opt.id === 'google_maps' || opt.id === 'waze')
+      ? apps
       : [
           { id: 'google_maps', label: 'Google Maps', available: true },
           { id: 'waze', label: 'Waze', available: true },
+          { id: 'browser', label: 'Navegador', available: true },
+          { id: 'ask_every_time', label: 'Preguntar cada vez', available: true },
         ];
 
   return (
@@ -73,7 +75,7 @@ export default function NavigationPreferencePage() {
             >
               <span>
                 {opt.label}
-                {!opt.available && opt.id !== 'browser' && (
+                {!opt.available && opt.id !== 'browser' && opt.id !== 'ask_every_time' && (
                   <span className="ml-1 text-xs text-gray-500">(no instalada)</span>
                 )}
               </span>

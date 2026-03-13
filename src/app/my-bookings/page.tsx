@@ -48,12 +48,14 @@ export default function MyBookingsPage() {
   const [loading, setLoading] = useState(true);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [networkError, setNetworkError] = useState(false);
 
   useEffect(() => {
     loadBookings();
   }, []);
 
   async function loadBookings() {
+    setNetworkError(false);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) {
@@ -102,8 +104,8 @@ export default function MyBookingsPage() {
           : null,
       }));
       setBookings(normalized);
-    } catch {
-      router.push('/login');
+    } catch (_err) {
+      setNetworkError(true);
     } finally {
       setLoading(false);
     }
@@ -127,6 +129,22 @@ export default function MyBookingsPage() {
   }
 
   if (loading) return <PageLoading />;
+
+  if (networkError) {
+    return (
+      <div className="min-h-screen bg-gray-50 app-mobile-shell flex flex-col items-center justify-center p-6">
+        <p className="text-gray-700 font-medium mb-2">Sin conexión</p>
+        <p className="text-sm text-gray-500 mb-4 text-center">No se pudieron cargar tus reservas.</p>
+        <button
+          type="button"
+          onClick={() => { setLoading(true); loadBookings(); }}
+          className="px-5 py-2.5 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition"
+        >
+          Reintentar
+        </button>
+      </div>
+    );
+  }
 
   const activeBookings = bookings.filter((b) => !isBookingFinished(b));
 

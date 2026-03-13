@@ -29,38 +29,47 @@ public class NavigationPlugin extends Plugin {
             call.reject("url es obligatoria");
             return;
         }
+        String preferPackage = call.getString("package");
         try {
-            Log.d(TAG, "openWithChooser start, url=" + url);
+            Log.d(TAG, "openWithChooser start, url=" + url + ", package=" + preferPackage);
 
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
 
-            // Verificar que exista al menos una app que pueda manejar el intent
+            // Si hay preferencia de app, abrir esa app directamente con el destino
+            boolean useChooser = true;
+            if (preferPackage != null && !preferPackage.isEmpty()) {
+                intent.setPackage(preferPackage);
+                if (intent.resolveActivity(getContext().getPackageManager()) != null) {
+                    useChooser = false;
+                } else {
+                    Log.w(TAG, "Preferred app not installed, falling back to chooser");
+                    intent.setPackage(null);
+                }
+            }
+
             if (intent.resolveActivity(getContext().getPackageManager()) == null) {
                 Log.e(TAG, "No activity found to handle navigation intent for url=" + url);
                 call.reject("No hay aplicaciones disponibles para abrir la navegación");
                 return;
             }
 
-            Intent chooser = Intent.createChooser(intent, "Abrir con");
-            Log.d(TAG, "Launching chooser for navigation using activity context");
+            Intent toLaunch = useChooser ? Intent.createChooser(intent, "Abrir con") : intent;
             try {
-                // Preferir actividad actual para no necesitar FLAG_ACTIVITY_NEW_TASK
                 if (getActivity() != null) {
-                    getActivity().startActivity(chooser);
+                    getActivity().startActivity(toLaunch);
                 } else {
-                    Log.w(TAG, "getActivity() is null, falling back to application context with NEW_TASK flag");
-                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    getContext().startActivity(chooser);
+                    toLaunch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    getContext().startActivity(toLaunch);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error using activity context, retrying with application context", e);
-                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                getContext().startActivity(chooser);
+                toLaunch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(toLaunch);
             }
-            Log.d(TAG, "Chooser launched successfully");
+            Log.d(TAG, "Navigation launched successfully");
             call.resolve();
         } catch (Exception e) {
-            Log.e(TAG, "Error launching navigation chooser", e);
+            Log.e(TAG, "Error launching navigation", e);
             call.reject("No se pudo abrir: " + (e.getMessage() != null ? e.getMessage() : "error desconocido"));
         }
     }

@@ -61,12 +61,14 @@ export function getCurrentPosition(options?: { timeout?: number; maxAge?: number
 
 /**
  * Indica si podemos pedir/usar ubicación. En web true si existe navigator.geolocation.
- * En native no bloquea el flujo si el plugin falla. Android: resultado del plugin se normaliza con unwrapPluginResult.
+ * En native usa siempre el plugin: comprueba y solo pide si no está concedido (evita repetir el diálogo).
+ * Android: resultado del plugin se normaliza con unwrapPluginResult.
  */
 export async function requestLocationPermission(): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && navigator.geolocation) return true;
   const native = await isNative();
-  if (!native) return true;
+  if (!native) {
+    return typeof navigator !== 'undefined' && !!navigator?.geolocation;
+  }
   const dev = typeof process !== 'undefined' && process.env.NODE_ENV === 'development';
   try {
     const { getGeolocation } = await import('@/lib/capacitor/rideNative');
@@ -239,8 +241,11 @@ export async function openNavigation(lat: number, lng: number, _label?: string):
 
     const { registerPlugin } = await import('@capacitor/core');
     const Navigation = registerPlugin<{
-      openWithChooser(options: { url: string }): Promise<unknown>;
+      openWithChooser(options: { url: string; package?: string }): Promise<unknown>;
     }>('Navigation');
+
+    const GOOGLE_MAPS_PACKAGE = 'com.google.android.apps.maps';
+    const WAZE_PACKAGE = 'com.waze';
 
     const googleAvailable = apps.find((a) => a.id === 'google_maps')?.available;
     const wazeAvailable = apps.find((a) => a.id === 'waze')?.available;
@@ -251,9 +256,9 @@ export async function openNavigation(lat: number, lng: number, _label?: string):
         openBrowser();
         return;
       }
-      const uri = `google.navigation:q=${encodeURIComponent(dest)}`;
+      const uri = `google.navigation:q=${latVal},${lngVal}`;
       if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'opening_google_maps', uri });
-      await Navigation.openWithChooser({ url: uri });
+      await Navigation.openWithChooser({ url: uri, package: GOOGLE_MAPS_PACKAGE });
     };
 
     const openWaze = async () => {
@@ -269,7 +274,7 @@ export async function openNavigation(lat: number, lng: number, _label?: string):
       }
       const uri = `waze://?ll=${latVal},${lngVal}&navigate=yes`;
       if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'opening_waze', uri });
-      await Navigation.openWithChooser({ url: uri });
+      await Navigation.openWithChooser({ url: uri, package: WAZE_PACKAGE });
     };
 
     if (pref === 'ask_every_time') {

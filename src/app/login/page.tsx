@@ -179,10 +179,17 @@ export default function LoginPage() {
     );
   }
 
+  const sessionExpired = searchParams.get('session_expired') === '1';
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md bg-white rounded-lg shadow p-6">
         <h1 className="text-2xl font-bold text-center mb-6 text-green-600">Xhare</h1>
+        {sessionExpired && (
+          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm text-center">
+            Tu sesión venció. Volvé a iniciar sesión.
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Email</label>

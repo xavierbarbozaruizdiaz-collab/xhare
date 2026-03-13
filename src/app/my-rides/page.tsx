@@ -47,12 +47,14 @@ export default function MyRidesPage() {
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [networkError, setNetworkError] = useState(false);
 
   useEffect(() => {
     checkUser();
   }, []);
 
   async function checkUser() {
+    setNetworkError(false);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) {
@@ -93,14 +95,30 @@ export default function MyRidesPage() {
         setReservedByRide(reservedMap);
         setExpectedAmountByRide(amountMap);
       }
-    } catch (error) {
-      router.push('/login');
+    } catch (_error) {
+      setNetworkError(true);
     } finally {
       setLoading(false);
     }
   }
 
   if (loading) return <PageLoading />;
+
+  if (networkError) {
+    return (
+      <div className="min-h-screen bg-gray-50 app-mobile-shell flex flex-col items-center justify-center p-6">
+        <p className="text-gray-700 font-medium mb-2">Sin conexión</p>
+        <p className="text-sm text-gray-500 mb-4 text-center">No se pudieron cargar tus viajes.</p>
+        <button
+          type="button"
+          onClick={() => { setLoading(true); checkUser(); }}
+          className="px-5 py-2.5 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition"
+        >
+          Reintentar
+        </button>
+      </div>
+    );
+  }
 
   const now = new Date();
   const upcomingRides = rides.filter((r: any) => {

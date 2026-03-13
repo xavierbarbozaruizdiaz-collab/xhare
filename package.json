@@ -9,6 +9,7 @@
     "lint": "next lint",
     "cap:sync": "npx cap sync android",
     "android:apk": "npm run build && npx cap sync android && cd android && .\\gradlew.bat clean assembleDebug",
+    "android:apk:dist": "npm run android:apk && node scripts/copy-apk.js",
     "android:release": "cd android && .\\gradlew.bat assembleRelease"
   },
   "dependencies": {
