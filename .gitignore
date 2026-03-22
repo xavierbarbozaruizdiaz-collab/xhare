@@ -32,6 +32,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Legado: el APK nativo vive en mobile-app/ (Expo), no un android/ Capacitor en la raíz
+/android/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

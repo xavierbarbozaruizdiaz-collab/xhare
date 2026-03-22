@@ -4,8 +4,6 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import * as platform from '@/lib/platform';
-import { ensureLocationPermission } from '@/lib/mobile/permissions';
-import { BackgroundLocation } from '@/lib/capacitor/backgroundLocation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { getPositionAlongPolyline } from '@/lib/geo';
@@ -48,13 +46,8 @@ export default function RideDetailClient() {
   const [locationSendFailed, setLocationSendFailed] = useState(false);
   const locationFailCountRef = useRef(0);
   const [connectionLost, setConnectionLost] = useState(false);
-  const [backgroundTracking, setBackgroundTracking] = useState(false);
   const [sessionExpiredBanner, setSessionExpiredBanner] = useState(false);
-  const [permissionModalOpen, setPermissionModalOpen] = useState(false);
-  const [xiaomiModalOpen, setXiaomiModalOpen] = useState(false);
-  const [trackingToastVisible, setTrackingToastVisible] = useState(false);
   const [driverSuspended, setDriverSuspended] = useState(false);
-  const [isNative, setIsNative] = useState(false);
   const [openingNavigation, setOpeningNavigation] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
@@ -72,10 +65,6 @@ export default function RideDetailClient() {
     }, 800);
     return () => clearTimeout(t);
   }, [rideId]);
-
-  useEffect(() => {
-    platform.isNative().then(setIsNative);
-  }, []);
 
   // Detección de conexión perdida (online/offline)
   useEffect(() => {
@@ -178,77 +167,6 @@ export default function RideDetailClient() {
     const interval = setInterval(() => void sendLocation(), 25000);
     return () => clearInterval(interval);
   }, [rideId, currentUser?.id, ride?.driver_id, ride?.status]);
-
-  async function ensureLocationPermissions(): Promise<boolean> {
-    const granted = await ensureLocationPermission();
-    if (!granted) {
-      const key = 'xhare_location_background_modal_shown';
-      if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(key) !== '1') {
-        sessionStorage.setItem(key, '1');
-        setPermissionModalOpen(true);
-      }
-    }
-    return granted;
-  }
-
-  async function startBackgroundTracking() {
-    if (!(await platform.isNative())) return;
-    if (!rideId || !currentUser || ride?.driver_id !== currentUser.id || ride?.status !== 'en_route') return;
-    const hasPerms = await ensureLocationPermissions();
-    if (!hasPerms) return;
-    const { data: { session } } = await supabase.auth.getSession();
-    let accessToken = session?.access_token;
-    if (!accessToken) return;
-
-    const serverUrl =
-      typeof window !== 'undefined' && window.location.origin
-        ? window.location.origin
-        : 'https://xhare-ashy.vercel.app';
-
-    try {
-      await BackgroundLocation.startTracking({
-        serverUrl,
-        rideId: String(rideId),
-        token: accessToken,
-        intervalMs: 15000,
-      });
-      setBackgroundTracking(true);
-    } catch {
-      // Si falla, mantenemos solo el tracking foreground
-    }
-  }
-
-  async function stopBackgroundTracking() {
-    if (!(await platform.isNative())) return;
-    try {
-      await BackgroundLocation.stopTracking();
-    } finally {
-      setBackgroundTracking(false);
-    }
-  }
-
-  // Auto-detener tracking en segundo plano cuando el viaje termina o cambia de estado relevante
-  useEffect(() => {
-    if (!backgroundTracking) return;
-    if (ride?.status !== 'en_route' || ride?.driver_id !== currentUser?.id) {
-      void stopBackgroundTracking();
-    }
-  }, [backgroundTracking, ride?.status, ride?.driver_id, currentUser?.id]);
-
-  // Listener nativo: sesión vencida (401) desde el servicio en segundo plano
-  useEffect(() => {
-    let removeFn: (() => Promise<void>) | null = null;
-    platform.isNative().then((ok) => {
-      if (!ok) return;
-      return BackgroundLocation.addListener('sessionExpired', () => {
-        setBackgroundTracking(false);
-        setSessionExpiredBanner(true);
-      });
-    }).then((h) => { if (h && typeof h?.remove === 'function') removeFn = h.remove; });
-    return () => { if (removeFn) void removeFn(); };
-  }, []);
-
-  // Burbuja flotante eliminada: ya no se solicita permiso de overlay ni se muestra overlay durante el viaje
 
   const basePolyline = useMemo(() => {
     if (!ride) return [];
@@ -657,9 +575,6 @@ export default function RideDetailClient() {
 
   async function setRideStatus(newStatus: 'en_route' | 'completed') {
     if (!rideId || ride?.driver_id !== currentUser?.id || updatingStatus) return;
-    if (newStatus === 'completed') {
-      void stopBackgroundTracking();
-    }
     setUpdatingStatus(true);
     try {
       let {
@@ -751,31 +666,12 @@ export default function RideDetailClient() {
       }
       if (newStatus === 'en_route') {
         try {
-          // No bloquear el flujo si openNavigation tarda o falla en la app (timeout 5s)
           await Promise.race([
             openNavigationToFirstPoint().catch((err) => {
               if (process.env.NODE_ENV === 'development') console.warn('NAV_FIRST_POINT_IGNORED', err);
             }),
             new Promise((r) => setTimeout(r, 5000)),
           ]);
-          if (await platform.isNative()) {
-            const granted = await ensureLocationPermissions();
-            if (!granted) return;
-            try {
-              const info = await BackgroundLocation.getDeviceInfo();
-              const m = (info?.manufacturer ?? '').toLowerCase();
-              const xiaomiAlreadyShown = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('xhare_xiaomi_modal_shown') === '1';
-              if ((m.includes('xiaomi') || m.includes('redmi') || m.includes('mi')) && !xiaomiAlreadyShown) {
-                sessionStorage.setItem('xhare_xiaomi_modal_shown', '1');
-                setXiaomiModalOpen(true);
-              }
-            } catch (_) {}
-            if (!backgroundTracking) {
-              await startBackgroundTracking();
-              setTrackingToastVisible(true);
-              setTimeout(() => setTrackingToastVisible(false), 4000);
-            }
-          }
         } catch (e) {
           if (process.env.NODE_ENV === 'development') console.warn('EN_ROUTE_SETUP_IGNORED', e);
         }
@@ -1325,15 +1221,6 @@ export default function RideDetailClient() {
                         A bordo: {onboardCount}
                       </span>
                     )}
-                    {process.env.NODE_ENV === 'development' && isNative && (
-                      <button
-                        type="button"
-                        onClick={backgroundTracking ? () => void stopBackgroundTracking() : () => void startBackgroundTracking()}
-                        className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-gray-800 text-white font-semibold rounded-xl hover:bg-gray-900 transition"
-                      >
-                        {backgroundTracking ? 'Detener seguimiento en segundo plano' : 'Iniciar seguimiento en segundo plano'}
-                      </button>
-                    )}
                     <button
                       type="button"
                       onClick={() => setRideStatus('completed')}
@@ -1552,73 +1439,10 @@ export default function RideDetailClient() {
         </div>
       )}
 
-      {/* Modal: Ubicación en segundo plano requerida (solo nativo) */}
-      {permissionModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="permission-modal-title">
-          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
-            <h2 id="permission-modal-title" className="text-lg font-semibold text-gray-900 mb-2">Ubicación en segundo plano requerida</h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Para compartir tu ubicación durante el viaje, habilitá los permisos de ubicación &quot;Permitir siempre&quot; en Ajustes.
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setPermissionModalOpen(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50"
-              >
-                Cerrar
-              </button>
-              <button
-                type="button"
-                onClick={() => { void BackgroundLocation.openAppSettings(); setPermissionModalOpen(false); }}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700"
-              >
-                Ir a ajustes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Xiaomi/Redmi - evitar que el teléfono corte el seguimiento */}
-      {xiaomiModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="xiaomi-modal-title">
-          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
-            <h2 id="xiaomi-modal-title" className="text-lg font-semibold text-gray-900 mb-2">Evitar que el teléfono corte el seguimiento</h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Poné Batería: Sin restricciones y activá Inicio automático para Xhare.
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setXiaomiModalOpen(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50"
-              >
-                Continuar
-              </button>
-              <button
-                type="button"
-                onClick={() => { void BackgroundLocation.openBatterySettings(); setXiaomiModalOpen(false); }}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700"
-              >
-                Abrir ajustes de batería
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Banner: Sesión vencida (401 desde servicio en segundo plano) */}
+      {/* Banner: Sesión vencida */}
       {sessionExpiredBanner && (
         <div className="fixed bottom-0 left-0 right-0 z-50 px-4 py-3 bg-amber-700 text-white text-center text-sm font-medium shadow-lg">
-          Sesión vencida, volvé a abrir la app.
-        </div>
-      )}
-
-      {/* Toast: Seguimiento activo (tras Iniciar viaje en nativo) */}
-      {trackingToastVisible && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-full bg-gray-800 text-white text-sm font-medium shadow-lg">
-          Seguimiento activo
+          Sesión vencida. Volvé a iniciar sesión.
         </div>
       )}
     </div>

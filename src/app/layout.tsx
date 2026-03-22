@@ -5,7 +5,6 @@ import ActiveRideBar from '@/components/ActiveRideBar'
 import OfferAcceptedNotifier from '@/components/OfferAcceptedNotifier'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import PushRegistration from '@/components/PushRegistration'
-import CapacitorPromiseShim from '@/components/CapacitorPromiseShim'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -22,7 +21,6 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={inter.className}>
-        <CapacitorPromiseShim />
         <ActiveRideBar />
         <OfferAcceptedNotifier />
         <PushRegistration />

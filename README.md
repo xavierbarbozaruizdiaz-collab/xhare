@@ -122,24 +122,16 @@ npm run dev
 
 El servidor queda en **http://localhost:3000**. Dejalo abierto mientras trabajás.
 
-### Terminal 2 — Emulador Android con live reload (opcional)
+### App móvil (APK) — Expo
 
-Solo si querés probar la app en el emulador. **Primero** tené el servidor corriendo en la Terminal 1.
-
-```bash
-cd move-transporte
-npx cap run android --live-reload
-```
-
-- En **emulador**: la app carga desde `http://10.0.2.2:3000` (configurado en `capacitor.config.ts`).
-- En **dispositivo físico**: cambiá en `capacitor.config.ts` la URL del `server` por la IP de tu PC, por ejemplo `http://192.168.x.x:3000`.
+El cliente nativo está en **`mobile-app/`** (Expo / React Native), no en Capacitor. Para desarrollo en Android seguí `mobile-app/README.md` y `mobile-app/docs/BUILD_ANDROID.md` (Metro + `npm run android:*`).
 
 ### Resumen
 
 | Terminal | Comando | Cuándo |
 |----------|---------|--------|
-| 1 | `npm run dev` | Siempre; deja corriendo |
-| 2 | `npx cap run android --live-reload` | Cuando quieras probar en Android |
+| 1 | `npm run dev` | Siempre para la web y las APIs Next |
+| 2 | (en `mobile-app`) `npm run start` + build/emulador | Cuando quieras probar el APK |
 
 Para solo abrir la web: con la Terminal 1 alcanza; entrá a http://localhost:3000 en el navegador.
 

@@ -6,21 +6,9 @@
     "dev": "next dev --hostname 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "cap:sync": "npx cap sync android",
-    "android:apk": "npm run build && npx cap sync android && cd android && .\\gradlew.bat clean assembleDebug",
-    "android:apk:dist": "npm run android:apk && node scripts/copy-apk.js",
-    "android:release": "cd android && .\\gradlew.bat assembleRelease"
+    "lint": "next lint"
   },
   "dependencies": {
-    "@capacitor/android": "^8.1.0",
-    "@capacitor/app": "^8.0.1",
-    "@capacitor/app-launcher": "^8.0.1",
-    "@capacitor/browser": "^8.0.1",
-    "@capacitor/core": "^8.1.0",
-    "@capacitor/geolocation": "^8.1.0",
-    "@capacitor/preferences": "^8.0.1",
-    "@capacitor/push-notifications": "^8.0.1",
     "@supabase/supabase-js": "^2.39.0",
     "jwt-decode": "^4.0.0",
     "leaflet": "^1.9.4",
@@ -31,7 +19,6 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.1.0",
     "@types/leaflet": "^1.9.8",
     "@types/node": "^20",
     "@types/react": "^18",

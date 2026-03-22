@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 
-/** Carga solo en cliente para no importar Capacitor durante el build (Vercel). */
+/** Mapa y geolocalización solo en cliente. */
 const RideDetailClient = dynamic(() => import('./RideDetailClient'), { ssr: false });
 
 export default function RideDetailPage() {
