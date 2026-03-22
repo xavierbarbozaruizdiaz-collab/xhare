@@ -39,3 +39,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# IDE y cachés locales (no forman parte de la app)
+.cursor/
+.idea/
+supabase/.temp/
+
