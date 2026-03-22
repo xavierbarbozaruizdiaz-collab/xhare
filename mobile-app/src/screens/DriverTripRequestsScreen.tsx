@@ -196,6 +196,14 @@ export function DriverTripRequestsScreen() {
 
   return (
     <View style={styles.container}>
+      <TouchableOpacity
+        style={styles.myRidesBtn}
+        onPress={() => parentNav?.navigate('MyPublishedRides')}
+        accessibilityRole="button"
+        accessibilityLabel="Ver mis viajes publicados"
+      >
+        <Text style={styles.myRidesBtnText}>Mis viajes publicados</Text>
+      </TouchableOpacity>
       <Text style={styles.intro}>
         {showGroups
           ? 'Rutas con demanda agrupadas. Actualizá para recalcular grupos; tocá una ruta para ver el mapa y publicar un viaje.'
@@ -229,6 +237,17 @@ export function DriverTripRequestsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  myRidesBtn: {
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#166534',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  myRidesBtnText: { color: '#166534', fontSize: 15, fontWeight: '700' },
   intro: { fontSize: 14, color: '#6b7280', marginBottom: 16 },
   apiError: { fontSize: 13, color: '#b91c1c', marginBottom: 8 },
   listContent: { paddingBottom: 24 },

@@ -6,15 +6,16 @@ type Point = { lat: number; lng: number };
 
 /**
  * POST /api/route/segment-stats
- * Body: { origin: { lat, lng }, destination: { lat, lng } }
- * Returns distance (km) and duration (min) for the segment (pickup → dropoff),
- * using OSRM exclusively.
+ * Body: { origin: { lat, lng }, destination: { lat, lng }, waypoints?: { lat, lng }[] }
+ * waypoints: puntos intermedios en orden (ej. paradas del pasajero entre recogida y descenso).
+ * Returns distance (km) and duration (min) for the recorrido completo vía OSRM.
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const origin = body.origin as Point;
     const destination = body.destination as Point;
+    const waypoints = Array.isArray(body.waypoints) ? (body.waypoints as Point[]) : [];
 
     if (!origin?.lat || !origin?.lng || !destination?.lat || !destination?.lng) {
       return NextResponse.json(
@@ -23,7 +24,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const url = `${OSRM_BASE}/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=false`;
+    const MAX_VIA = 8;
+    const via = waypoints
+      .filter((p) => p?.lat != null && p?.lng != null)
+      .slice(0, MAX_VIA);
+    const coords: Point[] = [origin, ...via, destination];
+    const path = coords.map((p) => `${p.lng},${p.lat}`).join(';');
+    const url = `${OSRM_BASE}/route/v1/driving/${path}?overview=false`;
 
     let data: any;
     try {

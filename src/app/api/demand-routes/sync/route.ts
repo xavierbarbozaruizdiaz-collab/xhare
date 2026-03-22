@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
 import {
   distancePointToPolylineMeters,
   getPositionAlongPolyline,
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
 
     if (!useCron) {
       const server = createServerClient(request);
-      const { data: { user }, error: authError } = await server.auth.getUser();
+      const { data: { user }, error: authError } = await authGetUser(server, request);
       if (authError || !user) {
         return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
       }

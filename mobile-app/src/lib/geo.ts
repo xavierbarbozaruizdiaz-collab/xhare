@@ -46,6 +46,23 @@ export function distancePointToPolylineMeters(point: Point, polyline: Point[]): 
   return minDistance;
 }
 
+/** Proyecta un punto sobre la polyline (útil para marcar subida/bajada/paradas sobre el corredor OSRM). */
+export function snapToPolyline(point: Point, polyline: Point[]): Point {
+  if (!polyline || polyline.length === 0) return point;
+  if (polyline.length === 1) return { lat: polyline[0].lat, lng: polyline[0].lng };
+  let minDistance = Infinity;
+  let closestPoint: Point = polyline[0];
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const closest = closestPointOnSegment(point, polyline[i], polyline[i + 1]);
+    const dist = distanceMeters(point, closest);
+    if (dist < minDistance) {
+      minDistance = dist;
+      closestPoint = closest;
+    }
+  }
+  return closestPoint;
+}
+
 function closestPointOnSegment(point: Point, segmentStart: Point, segmentEnd: Point): Point {
   const A = point.lat - segmentStart.lat;
   const B = point.lng - segmentStart.lng;

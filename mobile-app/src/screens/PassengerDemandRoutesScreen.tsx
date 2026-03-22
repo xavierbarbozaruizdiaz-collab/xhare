@@ -81,6 +81,14 @@ export function PassengerDemandRoutesScreen() {
 
   return (
     <View style={styles.container}>
+      <TouchableOpacity
+        style={styles.searchPublishedBtn}
+        onPress={() => parentNav?.navigate('SearchPublishedRides')}
+        accessibilityRole="button"
+        accessibilityLabel="Buscar viajes ya publicados por conductores"
+      >
+        <Text style={styles.searchPublishedBtnText}>Buscar viajes publicados</Text>
+      </TouchableOpacity>
       <Text style={styles.intro}>
         Rutas con demanda agrupadas. Tocá una para ver el mapa y unirte marcando tu subida y bajada.
       </Text>
@@ -120,6 +128,15 @@ export function PassengerDemandRoutesScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  searchPublishedBtn: {
+    backgroundColor: '#166534',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  searchPublishedBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   intro: { fontSize: 14, color: '#6b7280', marginBottom: 16 },
   apiError: { fontSize: 13, color: '#b91c1c', marginBottom: 8 },
   listContent: { paddingBottom: 24 },

@@ -50,15 +50,23 @@ export type SegmentStatsResult = {
   error?: string;
 };
 
-/** POST /api/route/segment-stats — distance and duration for pickup→dropoff segment. */
-export async function fetchSegmentStats(origin: Point, destination: Point): Promise<SegmentStatsResult> {
+/** POST /api/route/segment-stats — OSRM: pickup → waypoints opcionales → dropoff. */
+export async function fetchSegmentStats(
+  origin: Point,
+  destination: Point,
+  waypoints: Point[] = []
+): Promise<SegmentStatsResult> {
   const base = getApiBase();
   if (!base) return { error: 'EXPO_PUBLIC_API_BASE_URL no configurado' };
   try {
     const res = await fetch(`${base}/api/route/segment-stats`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ origin, destination }),
+      body: JSON.stringify({
+        origin,
+        destination,
+        ...(waypoints.length > 0 ? { waypoints } : {}),
+      }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { error: (data as { error?: string }).error ?? 'Error al calcular tramo' };

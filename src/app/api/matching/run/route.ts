@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
 import { matchRequest } from '@/lib/matching/engine';
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createServerClient();
-    
+    const supabase = createServerClient(request);
+
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await authGetUser(supabase, request);
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

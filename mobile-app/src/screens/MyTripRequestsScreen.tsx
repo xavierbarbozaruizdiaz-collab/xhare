@@ -201,8 +201,8 @@ export function MyTripRequestsScreen() {
       {requests.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>No tenés solicitudes guardadas.</Text>
-          <TouchableOpacity style={styles.searchLink} onPress={() => navigation.navigate('MainTabs')}>
-            <Text style={styles.searchLinkText}>Buscar viajes</Text>
+          <TouchableOpacity style={styles.searchLink} onPress={() => navigation.navigate('SearchPublishedRides')}>
+            <Text style={styles.searchLinkText}>Buscar viajes publicados</Text>
           </TouchableOpacity>
         </View>
       ) : (

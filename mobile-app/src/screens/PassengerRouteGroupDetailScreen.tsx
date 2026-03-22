@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import MapView, { Polyline, Marker } from 'react-native-maps';
+import { androidMapProvider } from '../lib/androidMapProvider';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { fetchDemandRouteDetail, type DemandRouteDetail } from '../backend/demandRoutesApi';
@@ -119,7 +120,13 @@ export function PassengerRouteGroupDetailScreen() {
       </View>
 
       <View style={styles.mapWrap}>
-        <MapView style={styles.map} initialRegion={region} scrollEnabled zoomEnabled>
+        <MapView
+          provider={androidMapProvider}
+          style={styles.map}
+          initialRegion={region}
+          scrollEnabled
+          zoomEnabled
+        >
           {polylineCoords.length >= 2 && (
             <Polyline coordinates={polylineCoords} strokeColor="#166534" strokeWidth={4} />
           )}

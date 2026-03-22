@@ -12,6 +12,7 @@ import {
   ScrollView,
 } from 'react-native';
 import MapView, { Polyline, Marker } from 'react-native-maps';
+import { androidMapProvider } from '../lib/androidMapProvider';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { fetchDemandRouteDetail, type DemandRouteDetail } from '../backend/demandRoutesApi';
@@ -122,6 +123,7 @@ export function DriverRouteGroupDetailScreen() {
 
       <View style={styles.mapWrap}>
         <MapView
+          provider={androidMapProvider}
           style={styles.map}
           initialRegion={region}
           scrollEnabled

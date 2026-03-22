@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { authGetUser, createServerClient } from '@/lib/supabase/server';
 import type { User } from '@supabase/supabase-js';
 
 type AuthResult =
@@ -20,7 +20,7 @@ export async function getAuth(req?: Request): Promise<AuthResult> {
   const {
     data: { user },
     error: authError,
-  } = await supabase.auth.getUser();
+  } = await authGetUser(supabase, req);
 
   if (authError || !user) {
     if (process.env.NODE_ENV === 'development') {

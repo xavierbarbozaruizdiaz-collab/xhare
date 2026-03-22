@@ -19,8 +19,10 @@ import { PassengerScreen } from '../screens/PassengerScreen';
 import { RideDetailScreen } from '../screens/RideDetailScreen';
 import { BookRideScreen } from '../screens/BookRideScreen';
 import { PublishRideScreen } from '../screens/PublishRideScreen';
+import { SearchPublishedRidesScreen } from '../screens/SearchPublishedRidesScreen';
 import { EditRideScreen } from '../screens/EditRideScreen';
 import { MyTripRequestsScreen } from '../screens/MyTripRequestsScreen';
+import { MyPublishedRidesScreen } from '../screens/MyPublishedRidesScreen';
 import { DriverTripRequestsScreen } from '../screens/DriverTripRequestsScreen';
 import { DriverRouteGroupDetailScreen } from '../screens/DriverRouteGroupDetailScreen';
 import { PassengerDemandRoutesScreen } from '../screens/PassengerDemandRoutesScreen';
@@ -96,6 +98,11 @@ function MainStackNavigator() {
         options={{ title: 'Publicar viaje' }}
       />
       <MainStack.Screen
+        name="SearchPublishedRides"
+        component={SearchPublishedRidesScreen}
+        options={{ title: 'Buscar viajes' }}
+      />
+      <MainStack.Screen
         name="EditRide"
         component={EditRideScreen}
         options={{ title: 'Editar viaje' }}
@@ -104,6 +111,11 @@ function MainStackNavigator() {
         name="MyTripRequests"
         component={MyTripRequestsScreen}
         options={{ title: 'Mis solicitudes' }}
+      />
+      <MainStack.Screen
+        name="MyPublishedRides"
+        component={MyPublishedRidesScreen}
+        options={{ title: 'Mis viajes publicados' }}
       />
       <MainStack.Screen
         name="DriverTripRequests"

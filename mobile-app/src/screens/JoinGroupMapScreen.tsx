@@ -167,6 +167,8 @@ export function JoinGroupMapScreen() {
         dropoff={dropoff}
         onPickupChange={setPickup}
         onDropoffChange={setDropoff}
+        maxDeviationMeters={PROXIMITY_METERS}
+        snapToRoute
         height={320}
       />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}

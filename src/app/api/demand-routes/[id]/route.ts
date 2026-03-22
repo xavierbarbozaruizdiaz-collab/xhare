@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
 
 /**
  * GET /api/demand-routes/[id]
@@ -14,7 +14,7 @@ export async function GET(
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await authGetUser(supabase, request);
 
     if (authError || !user) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 });

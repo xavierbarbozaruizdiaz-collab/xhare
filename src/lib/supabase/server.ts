@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { cookies, headers } from 'next/headers';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
@@ -40,6 +40,22 @@ export function createServerClient(incomingRequest?: Request) {
       },
     },
   });
+}
+
+/**
+ * With persistSession: false, auth.getUser() does not infer the user from global Authorization;
+ * pass the Bearer JWT explicitly when present (mobile app and API clients).
+ */
+export async function authGetUser(
+  supabase: SupabaseClient,
+  incomingRequest?: Request
+) {
+  const sourceHeaders = incomingRequest ? incomingRequest.headers : headers();
+  const h = sourceHeaders.get('authorization') ?? sourceHeaders.get('Authorization');
+  const m = h?.trim() ? /^Bearer\s+(\S+)/i.exec(h.trim()) : null;
+  const jwt = m?.[1] ?? null;
+  if (jwt) return supabase.auth.getUser(jwt);
+  return supabase.auth.getUser();
 }
 
 export function createServiceClient() {

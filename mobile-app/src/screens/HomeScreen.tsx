@@ -7,6 +7,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import type { MainStackParamList } from '../navigation/types';
+import { getAppFlavor } from '../core/flavor';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'MainTabs'>;
 
@@ -15,6 +16,7 @@ export function HomeScreen() {
   const { session } = useAuth();
   const name = session?.full_name ?? session?.email ?? 'Usuario';
   const role = session?.role;
+  const flavor = getAppFlavor();
   const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
   return (
@@ -31,7 +33,11 @@ export function HomeScreen() {
           </View>
         )}
         <Text style={styles.welcome}>Hola, {name}</Text>
-        <Text style={styles.hint}>Usá las pestañas Conductor o Pasajero para viajes y reservas.</Text>
+        <Text style={styles.hint}>
+          {flavor === 'driver'
+            ? 'En la pestaña Conductor tenés solicitudes y el botón Mis viajes publicados para ver lo que publicaste.'
+            : 'Usá las pestañas Conductor o Pasajero para viajes y reservas.'}
+        </Text>
         <View style={styles.links}>
           <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('Messages')}>
             <Text style={styles.linkBtnText}>Mensajes</Text>
@@ -40,6 +46,16 @@ export function HomeScreen() {
             <Text style={styles.linkBtnText}>Viajes a oferta</Text>
           </TouchableOpacity>
         </View>
+        {flavor === 'driver' ? (
+          <TouchableOpacity
+            style={styles.linkBtnFull}
+            onPress={() => parentNav?.navigate('MyPublishedRides')}
+            accessibilityRole="button"
+            accessibilityLabel="Mis viajes publicados"
+          >
+            <Text style={styles.linkBtnText}>Mis viajes publicados</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     </View>
   );
@@ -92,5 +108,12 @@ const styles = StyleSheet.create({
   bannerText: { fontSize: 14, color: '#1f2937' },
   links: { flexDirection: 'row', gap: 12, marginTop: 20 },
   linkBtn: { flex: 1, paddingVertical: 12, borderRadius: 8, backgroundColor: '#166534', alignItems: 'center' },
+  linkBtnFull: {
+    marginTop: 12,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#14532d',
+    alignItems: 'center',
+  },
   linkBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
 });

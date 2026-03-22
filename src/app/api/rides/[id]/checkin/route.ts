@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createServerClient } from '@/lib/supabase/server';
+import { authGetUser, createServerClient } from '@/lib/supabase/server';
 
 const checkinSchema = z.object({
   request_id: z.string().uuid(),
@@ -12,13 +12,13 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = createServerClient();
+    const supabase = createServerClient(request);
     const rideId = params.id;
 
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await authGetUser(supabase, request);
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
