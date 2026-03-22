@@ -7,6 +7,7 @@ import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.util.Log;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -21,6 +22,8 @@ import com.getcapacitor.PluginMethod;
 @CapacitorPlugin(name = "BackgroundLocation")
 public class BackgroundLocationPlugin extends Plugin {
 
+    private static final String TAG = "BG_LOCATION_DEBUG";
+
     private BroadcastReceiver sessionExpiredReceiver;
 
     @PluginMethod
@@ -34,6 +37,9 @@ public class BackgroundLocationPlugin extends Plugin {
             call.reject("serverUrl, rideId y token son obligatorios");
             return;
         }
+
+        // No realizar trabajo pesado aquí: solo configurar y delegar al servicio.
+        Log.d(TAG, "startTracking: delegando inicio de LocationService a servicio en segundo plano");
 
         registerSessionExpiredReceiver();
 

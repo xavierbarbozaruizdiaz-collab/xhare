@@ -1,7 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 // URL de producción: el APK debe cargar la app desde aquí para no quedar en blanco (webDir solo tiene index stub).
-const PRODUCTION_URL = 'https://xhare-ashy.vercel.app';
+// Importante: usar siempre el dominio público estable del proyecto Vercel.
+const PRODUCTION_URL = 'https://transporte-beige.vercel.app';
 
 // Prioridad: 1) CAP_LIVE_RELOAD=1 -> dev local | 2) CAP_APP_URL -> override | 3) producción por defecto.
 const isLiveReload = process.env.CAP_LIVE_RELOAD === '1';

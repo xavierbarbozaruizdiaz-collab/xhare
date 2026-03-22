@@ -14,9 +14,16 @@ export async function registerForPush(): Promise<PushRegisterResult> {
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications');
 
-    const perm = await PushNotifications.requestPermissions();
-    if (perm.receive !== 'granted') {
+    const current = await PushNotifications.checkPermissions();
+    const status = current?.receive ?? 'prompt';
+    if (status === 'denied') {
       return { ok: false, error: 'permission_denied' };
+    }
+    if (status !== 'granted') {
+      const perm = await PushNotifications.requestPermissions();
+      if (perm.receive !== 'granted') {
+        return { ok: false, error: 'permission_denied' };
+      }
     }
 
     const token = await new Promise<string>((resolve, reject) => {

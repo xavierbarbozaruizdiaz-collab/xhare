@@ -1,0 +1,2 @@
+# App Expo: no forma parte del build Next en Vercel (evita typecheck/build remoto roto y subidas enormes).
+mobile-app

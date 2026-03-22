@@ -100,8 +100,26 @@ async function getNativePreferences() {
 }
 
 export async function getNavigationPreference(): Promise<NavigationPreference> {
-  let raw: string | null = null;
+  const native = await isNative();
+  if (native) {
+    const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
+    const plugin = await getNavigationPlugin();
+    if (!plugin) {
+      const msg = 'Plugin Navigation no disponible. ¿Estás usando el APK de Xhare instalado?';
+      console.error('[NAV]', msg);
+      throw new Error(msg);
+    }
+    try {
+      const { value } = await plugin.getPreference();
+      if (value === 'google_maps' || value === 'waze' || value === 'browser' || value === 'ask_every_time') return value;
+    } catch (e) {
+      console.error('[NAV] getPreference falló', e);
+      throw e;
+    }
+    return 'ask_every_time';
+  }
 
+  let raw: string | null = null;
   const prefs = await getNativePreferences();
   if (prefs) {
     try {
@@ -111,7 +129,6 @@ export async function getNavigationPreference(): Promise<NavigationPreference> {
       raw = null;
     }
   }
-
   if (!raw && typeof window !== 'undefined' && 'localStorage' in window) {
     try {
       raw = window.localStorage.getItem(NAV_PREF_KEY);
@@ -119,7 +136,6 @@ export async function getNavigationPreference(): Promise<NavigationPreference> {
       raw = null;
     }
   }
-
   const value = raw as NavigationPreference | null;
   if (value === 'google_maps' || value === 'waze' || value === 'browser' || value === 'ask_every_time') {
     return value;
@@ -128,6 +144,18 @@ export async function getNavigationPreference(): Promise<NavigationPreference> {
 }
 
 export async function setNavigationPreference(pref: NavigationPreference): Promise<void> {
+  const native = await isNative();
+  if (native) {
+    const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
+    const plugin = await getNavigationPlugin();
+    if (!plugin) {
+      const msg = 'Plugin Navigation no disponible. No se pudo guardar la preferencia.';
+      console.error('[NAV]', msg);
+      throw new Error(msg);
+    }
+    await plugin.setPreference({ value: pref });
+    return;
+  }
   const prefs = await getNativePreferences();
   if (prefs) {
     try {
@@ -160,14 +188,16 @@ export async function getAvailableNavigationApps(): Promise<NavigationAppOption[
     return base;
   }
 
-  try {
-    const { registerPlugin } = await import('@capacitor/core');
-    const Navigation = registerPlugin<{
-      getAvailableApps(): Promise<{ value: NavigationAppOption[] } | NavigationAppOption[]>;
-    }>('Navigation');
+  const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
+  const plugin = await getNavigationPlugin();
+  if (!plugin) {
+    if (dev) console.warn('[NAV_PREF_DEBUG]', { step: 'available_apps_plugin_null' });
+    return base;
+  }
 
-    const result = await Navigation.getAvailableApps();
-    const apps = Array.isArray((result as any)?.value) ? (result as any).value : (result as any);
+  try {
+    const result = await plugin.getAvailableApps();
+    const apps = Array.isArray(result?.value) ? result.value : (result as any);
 
     const byId = new Map<NavigationPreference, NavigationAppOption>();
     base.forEach((opt) => byId.set(opt.id, { ...opt }));
@@ -190,15 +220,15 @@ export async function getAvailableNavigationApps(): Promise<NavigationAppOption[
     if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'available_apps_loaded', native: true, apps: finalApps });
     return finalApps;
   } catch (e) {
-    if (dev) console.warn('[NAV_PREF_DEBUG]', { step: 'available_apps_failed', error: String(e) });
+    console.warn('[NAV] getAvailableApps falló', e);
     return base;
   }
 }
 
 /**
- * Abre navegación hacia (lat, lng) respetando la preferencia del usuario.
- * - En nativo Android: intenta abrir Google Maps o Waze según preferencia.
- * - En web / PWA: abre siempre navegador con Google Maps web.
+ * Abre navegación hacia (lat, lng).
+ * - Web / PWA: siempre navegador con Google Maps web (sin plugins).
+ * - Nativo Android (Capacitor): siempre plugin Navigation.openWithChooser con un intent de navegación.
  */
 export async function openNavigation(lat: number, lng: number, _label?: string): Promise<void> {
   try {
@@ -208,6 +238,9 @@ export async function openNavigation(lat: number, lng: number, _label?: string):
     if (!Number.isFinite(latVal) || !Number.isFinite(lngVal)) return;
     const dest = `${latVal},${lngVal}`;
     const dev = isDevEnv();
+    // Señal visible en Chrome Inspect (consola del WebView): buscar "XHARE_NAV" o filtrar por "NAV"
+    console.warn('[XHARE_NAV] openNavigation start', { lat: latVal, lng: lngVal });
+    console.log('[NAV] openNavigation start', { lat: latVal, lng: lngVal });
 
     const openBrowser = () => {
       const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
@@ -229,72 +262,33 @@ export async function openNavigation(lat: number, lng: number, _label?: string):
       }
     };
 
-    const pref = await getNavigationPreference();
-    const apps = await getAvailableNavigationApps();
-    if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'preference_loaded', pref, apps });
-
     const native = await isNative();
+    if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'native_check', native });
+
+    // Web / PWA: siempre navegador, nunca plugin.
     if (!native) {
       openBrowser();
       return;
     }
 
-    const { registerPlugin } = await import('@capacitor/core');
-    const Navigation = registerPlugin<{
-      openWithChooser(options: { url: string; package?: string }): Promise<unknown>;
-    }>('Navigation');
-
-    const GOOGLE_MAPS_PACKAGE = 'com.google.android.apps.maps';
-    const WAZE_PACKAGE = 'com.waze';
-
-    const googleAvailable = apps.find((a) => a.id === 'google_maps')?.available;
-    const wazeAvailable = apps.find((a) => a.id === 'waze')?.available;
-
-    const openGoogleMaps = async () => {
-      if (!googleAvailable) {
-        if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'fallback_used', from: 'google_maps', to: 'browser' });
-        openBrowser();
-        return;
-      }
-      const uri = `google.navigation:q=${latVal},${lngVal}`;
-      if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'opening_google_maps', uri });
-      await Navigation.openWithChooser({ url: uri, package: GOOGLE_MAPS_PACKAGE });
-    };
-
-    const openWaze = async () => {
-      if (!wazeAvailable) {
-        if (googleAvailable) {
-          if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'fallback_used', from: 'waze', to: 'google_maps' });
-          await openGoogleMaps();
-          return;
-        }
-        if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'fallback_used', from: 'waze', to: 'browser' });
-        openBrowser();
-        return;
-      }
-      const uri = `waze://?ll=${latVal},${lngVal}&navigate=yes`;
-      if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'opening_waze', uri });
-      await Navigation.openWithChooser({ url: uri, package: WAZE_PACKAGE });
-    };
-
-    if (pref === 'ask_every_time') {
-      if (dev) console.log('[NAV_PREF_DEBUG]', { step: 'ask_every_time', behaviour: 'browser_for_now' });
+    const { getNavigationPlugin } = await import('@/lib/capacitor/navigation');
+    const plugin = await getNavigationPlugin();
+    if (!plugin) {
+      console.error('[NAV] Plugin no disponible; no se puede abrir navegación nativa. ¿Usás el APK instalado?');
       openBrowser();
       return;
     }
 
-    if (pref === 'google_maps') {
-      await openGoogleMaps();
-      return;
-    }
+    console.log('[NAV] Llamando plugin openNativeNavigation (100% nativo)', { lat: latVal, lng: lngVal });
 
-    if (pref === 'waze') {
-      await openWaze();
-      return;
+    try {
+      await plugin.openNativeNavigation({ lat: latVal, lng: lngVal });
+    } catch (e) {
+      console.error('[NAV] openNativeNavigation falló (causa raíz)', e);
+      openBrowser();
     }
-
-    openBrowser();
-  } catch (_) {
+  } catch (e) {
+    console.warn('[NAV] openNavigation error', e);
     const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${Number(lat)},${Number(lng)}`;
     if (typeof window !== 'undefined') window.open(mapsUrl, '_blank');
   }

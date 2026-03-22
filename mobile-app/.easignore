@@ -1,0 +1,61 @@
+# EAS Build upload exclusions – reduces archive size and upload time.
+# Same syntax as .gitignore. Required for build: app.config.js, package.json, eas.json, src/, assets/ are NOT listed here.
+
+# dependencies (reinstalled on EAS)
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files (EAS uses its own env / secrets)
+.env
+.env*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# generated native folders (EAS runs prebuild when needed)
+/ios
+/android
+
+# --- extra exclusions for EAS upload (smaller archive, fewer ECONNRESET) ---
+
+# Git history (not needed on build servers)
+.git/
+
+# Logs and temp
+logs/
+*.log
+tmp/
+temp/
+.tmp/
+.temp/
+.cache/
+
+# Local build outputs (EAS builds on its servers)
+build/
+out/

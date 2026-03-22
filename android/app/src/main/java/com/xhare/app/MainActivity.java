@@ -9,8 +9,8 @@ import com.getcapacitor.Plugin;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
         registerPlugin(BackgroundLocationPlugin.class);
         registerPlugin(NavigationPlugin.class);
-        super.onCreate(savedInstanceState);
     }
 }

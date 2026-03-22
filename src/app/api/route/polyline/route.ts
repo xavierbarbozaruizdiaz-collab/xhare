@@ -18,22 +18,6 @@ function cacheKey(origin: Point, destination: Point, waypoints: Point[]): string
   return [round(origin), round(destination), ...waypoints.map(round)].join('|');
 }
 
-function haversineKm(a: Point, b: Point): number {
-  const R = 6371;
-  const dLat = (b.lat - a.lat) * Math.PI / 180;
-  const dLon = (b.lng - a.lng) * Math.PI / 180;
-  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-}
-
-/** Estima duración en minutos suponiendo ~50 km/h cuando OSRM no devuelve ruta */
-function estimateDurationMinutesFromPoints(points: Point[]): number {
-  if (!points || points.length < 2) return 60;
-  let km = 0;
-  for (let i = 0; i < points.length - 1; i++) km += haversineKm(points[i], points[i + 1]);
-  return Math.max(15, Math.ceil((km / 50) * 60));
-}
-
 /**
  * POST /api/route/polyline
  * Body: { origin: { lat, lng }, destination: { lat, lng }, waypoints?: { lat, lng }[] }
@@ -74,11 +58,26 @@ export async function POST(request: NextRequest) {
     });
     url += `;${destination.lng},${destination.lat}?overview=full&geometries=geojson`;
 
-    const res = await fetch(url, {
-      next: { revalidate: 60 },
-      headers: { 'Accept': 'application/json' },
-    });
-    const data = await res.json();
+    let data: any;
+    try {
+      const res = await fetch(url, {
+        next: { revalidate: 60 },
+        headers: { 'Accept': 'application/json' },
+      });
+      if (!res.ok) {
+        return NextResponse.json(
+          { error: 'Network error contacting OSRM', code: 'osrm_network_error', status: res.status },
+          { status: 503 }
+        );
+      }
+      data = await res.json();
+    } catch (err) {
+      console.error('OSRM polyline fetch error:', err);
+      return NextResponse.json(
+        { error: 'Network error contacting OSRM', code: 'osrm_network_error' },
+        { status: 503 }
+      );
+    }
 
     if (data.code === 'Ok' && data.routes?.[0]) {
       const route = data.routes[0];
@@ -86,23 +85,27 @@ export async function POST(request: NextRequest) {
       const polyline = coords?.length
         ? coords.map(([lng, lat]) => ({ lat, lng }))
         : [origin, ...(waypoints || []), destination].filter((p: Point) => p?.lat != null && p?.lng != null);
-      const durationSeconds = route.duration != null ? Number(route.duration) : undefined;
-      const durationMinutes = durationSeconds != null ? Math.max(1, Math.ceil(durationSeconds / 60)) : undefined;
+      const durationSeconds = route.duration != null ? Number(route.duration) : null;
+      if (durationSeconds == null) {
+        return NextResponse.json(
+          { error: 'OSRM did not return duration' },
+          { status: 502 }
+        );
+      }
+      const durationMinutes = Math.max(1, Math.ceil(durationSeconds / 60));
       const result = { polyline, durationSeconds, durationMinutes };
       polylineCache.set(key, { data: result, expiresAt: Date.now() + CACHE_TTL_MS });
       return NextResponse.json(result);
     }
 
-    // OSRM puede devolver NoRoute, etc.; estimamos duración por distancia en línea recta (~50 km/h)
-    const fallbackPoints = [origin, ...(waypoints || []), destination].filter((p: Point) => p?.lat != null && p?.lng != null);
-    const durationMinutes = estimateDurationMinutesFromPoints(fallbackPoints);
-    const fallbackResult = { polyline: fallbackPoints, durationMinutes, fallback: true };
-    polylineCache.set(key, { data: fallbackResult, expiresAt: Date.now() + CACHE_TTL_MS });
-    return NextResponse.json(fallbackResult);
+    return NextResponse.json(
+      { error: 'OSRM route not found', code: 'osrm_no_route' },
+      { status: 502 }
+    );
   } catch (error) {
     console.error('OSRM polyline error:', error);
     return NextResponse.json(
-      { error: 'Route request failed' },
+      { error: 'Route request failed', code: 'polyline_error' },
       { status: 500 }
     );
   }

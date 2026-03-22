@@ -94,7 +94,10 @@ export default function RideDetailClient() {
 
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState === 'visible' && rideId) loadRide();
+      if (document.visibilityState === 'visible') {
+        setOpeningNavigation(false);
+        if (rideId) loadRide();
+      }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
@@ -608,6 +611,7 @@ export default function RideDetailClient() {
   }
 
   async function openNavigation(lat: number, lng: number, label?: string, _index?: number) {
+    console.warn('[XHARE_NAV] Botón navegación pulsado (Ir al punto actual / parada)', { lat, lng });
     const latVal = lat != null ? Number(lat) : NaN;
     const lngVal = lng != null ? Number(lng) : NaN;
     if (typeof window === 'undefined' || !Number.isFinite(latVal) || !Number.isFinite(lngVal)) {
@@ -615,13 +619,19 @@ export default function RideDetailClient() {
       return;
     }
     setOpeningNavigation(true);
-    try {
-      await platform.openNavigation(latVal, lngVal, label ?? undefined);
-    } catch {
-      if (typeof window !== 'undefined') alert('No se pudo abrir la navegación.');
-    } finally {
+    const SAFETY_MS = 1500;
+    const timeoutId = window.setTimeout(() => {
       setOpeningNavigation(false);
-    }
+    }, SAFETY_MS);
+    platform
+      .openNavigation(latVal, lngVal, label ?? undefined)
+      .catch(() => {
+        if (typeof window !== 'undefined') alert('No se pudo abrir la navegación.');
+      })
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+        setOpeningNavigation(false);
+      });
   }
 
   async function openNavigationToFirstPoint(): Promise<void> {
@@ -877,6 +887,7 @@ export default function RideDetailClient() {
   }
 
   function openNavigationToNextStop() {
+    console.warn('[XHARE_NAV] Botón "Continuar viaje" pulsado');
     console.log('[NAV_FINAL_DEBUG]', { step: 'button_pressed', context: 'openNavigationToNextStop', env: process.env.NODE_ENV });
     if (typeof window === 'undefined' || !nextStop) return;
     const lat = nextStop.lat;

@@ -12,18 +12,10 @@ const MapComponent = dynamic(() => import('@/components/MapComponent'), {
   ssr: false,
 });
 
-/** Estima duración en minutos desde polyline (haversine, ~50 km/h) cuando la API no devuelve duración */
-function estimateDurationFromPolyline(points: Array<{ lat: number; lng: number }>): number {
-  if (!points || points.length < 2) return 60;
-  const R = 6371;
-  let km = 0;
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i], b = points[i + 1];
-    const dLat = (b.lat - a.lat) * Math.PI / 180, dLon = (b.lng - a.lng) * Math.PI / 180;
-    const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-    km += R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-  }
-  return Math.max(15, Math.ceil((km / 50) * 60));
+/** Duración por defecto cuando la API no devuelve duración (fallback fijo) */
+function estimateDurationFromPolyline(_points: Array<{ lat: number; lng: number }>): number {
+  // Confiamos en OSRM para la duración; este fallback solo evita crashear la UI.
+  return 60;
 }
 
 /** Formatea el error de Supabase para mostrarlo al usuario (mensaje, código 400, detalles). */

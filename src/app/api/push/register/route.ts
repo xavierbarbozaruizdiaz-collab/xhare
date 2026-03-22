@@ -13,7 +13,7 @@ const bodySchema = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
-    const auth = await getAuth();
+    const auth = await getAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
