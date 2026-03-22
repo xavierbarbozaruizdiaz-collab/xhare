@@ -38,19 +38,30 @@ async function apiRequest(
   const token = session?.access_token;
   if (!token) return { ok: false, status: 401, error: 'No hay sesión' };
   const url = `${base}${path.startsWith('/') ? path : '/' + path}`;
-  const init: RequestInit = {
-    method: options.method,
-    headers: { Authorization: `Bearer ${token}` },
+
+  const buildInit = (bearer: string): RequestInit => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
+    if (options.method === 'POST') {
+      headers['Content-Type'] = 'application/json';
+    }
+    return {
+      method: options.method,
+      headers,
+      ...(options.method === 'POST' ? { body: JSON.stringify(options.body) } : {}),
+    };
   };
-  if (options.method === 'POST') {
-    (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
-    init.body = JSON.stringify(options.body);
-  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
+    let res = await fetch(url, { ...buildInit(token), signal: controller.signal });
+    if (res.status === 401) {
+      const { data: ref } = await supabase.auth.refreshSession();
+      const t2 = ref.session?.access_token;
+      if (t2 && t2 !== token) {
+        res = await fetch(url, { ...buildInit(t2), signal: controller.signal });
+      }
+    }
     const data = await res.json().catch(() => ({}));
     const bodyError = (data as { error?: string })?.error;
     return {

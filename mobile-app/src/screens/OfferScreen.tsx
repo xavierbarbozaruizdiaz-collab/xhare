@@ -11,7 +11,6 @@ type Nav = NativeStackNavigationProp<MainStackParamList, 'Offer'>;
 
 export function OfferScreen() {
   const navigation = useNavigation<Nav>();
-  const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -20,7 +19,7 @@ export function OfferScreen() {
       </Text>
       <TouchableOpacity
         style={styles.card}
-        onPress={() => parentNav?.navigate('OfferBusco')}
+        onPress={() => navigation.navigate('OfferBusco')}
         activeOpacity={0.8}
       >
         <Text style={styles.cardEmoji}>🔍</Text>
@@ -29,7 +28,7 @@ export function OfferScreen() {
       </TouchableOpacity>
       <TouchableOpacity
         style={styles.card}
-        onPress={() => parentNav?.navigate('OfferTengo')}
+        onPress={() => navigation.navigate('OfferTengo')}
         activeOpacity={0.8}
       >
         <Text style={styles.cardEmoji}>🚗</Text>

@@ -23,7 +23,6 @@ export function OfferTengoScreen() {
   const navigation = useNavigation<Nav>();
   const { session } = useAuth();
   const [list, setList] = useState<Record<string, unknown>[]>([]);
-  const parentNav = navigation.getParent() as { navigate: (a: string) => void } | undefined;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -68,7 +67,7 @@ export function OfferTengoScreen() {
     <View style={styles.container}>
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => parentNav?.navigate('OfferTengoNew')}
+        onPress={() => navigation.navigate('OfferTengoNew')}
       >
         <Text style={styles.fabText}>+ Publicar lugar</Text>
       </TouchableOpacity>

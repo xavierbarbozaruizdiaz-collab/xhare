@@ -1,7 +1,7 @@
 /**
  * Conductor: rutas con demanda agrupadas (grupos de pasajeros por ruta).
- * Lista desde GET /api/demand-routes; al refrescar llama sync y recarga. Tap → detalle con mapa → Publicar viaje.
- * Si la API no está configurada o no hay grupos, muestra solicitudes sueltas desde Supabase como fallback.
+ * Lista desde Supabase (demand_route_groups); al refrescar intenta sync por API y recarga. Tap → detalle → Publicar viaje.
+ * Si no hay grupos, muestra solicitudes sueltas (trip_requests) desde Supabase.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -54,14 +54,13 @@ export function DriverTripRequestsScreen() {
   const [fallbackRequests, setFallbackRequests] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [useApi, setUseApi] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const trace = (...args: unknown[]) => {
       if (__DEV__) console.log('[DriverTripRequests]', ...args);
     };
-    trace('load:start', { hasSessionId: Boolean(session?.id), useApi, hasApiBase: Boolean(env.apiBaseUrl?.trim()) });
+    trace('load:start', { hasSessionId: Boolean(session?.id), hasApiBase: Boolean(env.apiBaseUrl?.trim()) });
 
     if (!session?.id) {
       trace('load:abort no session.id');
@@ -74,18 +73,14 @@ export function DriverTripRequestsScreen() {
     setApiError(null);
 
     try {
-      if (env.apiBaseUrl?.trim() && useApi) {
-        trace('load:fetchDemandRoutes start');
-        const { groups: g, error } = await fetchDemandRoutes({ requested_date_from: today });
-        trace('load:fetchDemandRoutes done', { err: error ?? null, count: g?.length ?? 0 });
-        if (error) {
-          setApiError(error);
-          setGroups([]);
-        } else {
-          setGroups(g ?? []);
-        }
-      } else {
+      trace('load:fetchDemandRoutes start');
+      const { groups: g, error } = await fetchDemandRoutes({ requested_date_from: today });
+      trace('load:fetchDemandRoutes done', { err: error ?? null, count: g?.length ?? 0 });
+      if (error) {
+        setApiError(error);
         setGroups([]);
+      } else {
+        setGroups(g ?? []);
       }
 
       trace('load:supabase trip_requests start');
@@ -125,7 +120,7 @@ export function DriverTripRequestsScreen() {
       setRefreshing(false);
       trace('load:finally');
     }
-  }, [session?.id, useApi]);
+  }, [session?.id]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -141,8 +136,7 @@ export function DriverTripRequestsScreen() {
 
   const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
-  const hasApi = Boolean(env.apiBaseUrl?.trim());
-  const showGroups = hasApi && groups.length > 0;
+  const showGroups = groups.length > 0;
   const list = showGroups ? groups : fallbackRequests;
   const isGroupItem = showGroups;
 

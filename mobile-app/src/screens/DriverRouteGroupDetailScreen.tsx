@@ -88,7 +88,6 @@ export function DriverRouteGroupDetailScreen() {
     [detail?.base_polyline]
   );
 
-  const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
   const baseRequestId = detail?.base_trip_request_id ?? undefined;
 
   if (loading && !detail) {
@@ -156,7 +155,7 @@ export function DriverRouteGroupDetailScreen() {
       <TouchableOpacity
         style={styles.primaryBtn}
         onPress={() =>
-          parentNav?.navigate('PublishRide', {
+          navigation.navigate('PublishRide', {
             tripRequestId: baseRequestId ?? undefined,
             groupId: detail.id,
           })

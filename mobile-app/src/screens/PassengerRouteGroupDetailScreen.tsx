@@ -87,7 +87,6 @@ export function PassengerRouteGroupDetailScreen() {
     [detail?.base_polyline]
   );
 
-  const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
   if (loading && !detail) {
     return (
@@ -149,7 +148,7 @@ export function PassengerRouteGroupDetailScreen() {
 
       <TouchableOpacity
         style={styles.primaryBtn}
-        onPress={() => parentNav?.navigate('JoinGroupMap', { groupId: detail.id })}
+        onPress={() => navigation.navigate('JoinGroupMap', { groupId: detail.id })}
         accessibilityLabel="Unirme a esta ruta"
         accessibilityRole="button"
       >

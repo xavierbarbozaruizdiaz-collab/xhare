@@ -3,6 +3,7 @@
  * Drives navigation: no session → Login; session → Main (tabs).
  */
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { supabase } from '../backend/supabase';
 import { getSessionProfile, getSessionProfileFromSession, type SessionProfile } from './session';
 
@@ -96,6 +97,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       clearTimeout(timeoutId);
       subscription?.unsubscribe();
+    };
+  }, []);
+
+  /**
+   * React Native: el refresco de JWT por timer no es fiable en background.
+   * Con web u otra app en primer plano, la sesión móvil podía quedar “vieja” al volver.
+   * Supabase recomienda start/stop según AppState (una sola suscripción global).
+   */
+  useEffect(() => {
+    const onState = (next: AppStateStatus) => {
+      if (next === 'active') {
+        void supabase.auth.startAutoRefresh();
+      } else {
+        void supabase.auth.stopAutoRefresh();
+      }
+    };
+    const sub = AppState.addEventListener('change', onState);
+    if (AppState.currentState === 'active') {
+      void supabase.auth.startAutoRefresh();
+    }
+    return () => {
+      sub.remove();
+      void supabase.auth.stopAutoRefresh();
     };
   }, []);
 

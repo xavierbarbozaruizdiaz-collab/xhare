@@ -54,12 +54,10 @@ export function MessagesScreen() {
     }, [session?.id, load])
   );
 
-  const parentNav = navigation.getParent() as { navigate: (a: string, b: object) => void } | undefined;
-
   const renderItem = ({ item }: { item: ConversationRow }) => (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => parentNav?.navigate('Chat', { conversationId: item.conversation_id })}
+      onPress={() => navigation.navigate('Chat', { conversationId: item.conversation_id })}
       activeOpacity={0.7}
       accessibilityLabel={`Conversación con ${item.other_user_name || 'Usuario'}`}
       accessibilityHint="Toca para abrir el chat"

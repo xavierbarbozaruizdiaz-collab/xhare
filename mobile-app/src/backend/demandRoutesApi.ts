@@ -1,9 +1,12 @@
 /**
- * Rutas con demanda agrupadas: listado y detalle para conductor (y pasajero).
- * Llama a Next.js GET /api/demand-routes y GET /api/demand-routes/[id].
- * Sync: POST /api/demand-routes/sync (driver/admin) para recomputar grupos.
+ * Rutas con demanda agrupadas: listado y detalle para conductor y pasajero.
+ * Listado: lectura directa en Supabase (RLS permite SELECT en demand_route_groups).
+ * Detalle: intenta Next.js GET /api/demand-routes/[id] (todos los puntos vía service role);
+ * si falla la API, fallback en Supabase (RLS: conductores ven pending; pasajeros pueden ver subset).
+ * Sync: POST /api/demand-routes/sync (sigue requiriendo API + JWT válido).
  */
 import { apiGet, apiPost } from './api';
+import { supabase, isEnvConfigured } from './supabase';
 import { env } from '../core/env';
 
 function getBase(): string {
@@ -39,35 +42,122 @@ export type DemandRouteDetail = DemandRouteGroup & {
   }>;
 };
 
+function parsePolyline(raw: unknown): Array<{ lat: number; lng: number }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ lat: number; lng: number }> = [];
+  for (const p of raw) {
+    if (p && typeof p === 'object' && 'lat' in p && 'lng' in p) {
+      const lat = Number((p as { lat: unknown }).lat);
+      const lng = Number((p as { lng: unknown }).lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) out.push({ lat, lng });
+    }
+  }
+  return out;
+}
+
+function mapGroupRow(row: Record<string, unknown>): DemandRouteGroup {
+  return {
+    id: String(row.id),
+    base_trip_request_id: row.base_trip_request_id != null ? String(row.base_trip_request_id) : null,
+    base_polyline: parsePolyline(row.base_polyline),
+    base_length_km: Number(row.base_length_km ?? 0),
+    requested_date: String(row.requested_date ?? ''),
+    requested_time: String(row.requested_time ?? ''),
+    origin_city: row.origin_city != null ? String(row.origin_city) : null,
+    origin_barrio: row.origin_barrio != null ? String(row.origin_barrio) : null,
+    destination_city: row.destination_city != null ? String(row.destination_city) : null,
+    destination_barrio: row.destination_barrio != null ? String(row.destination_barrio) : null,
+    passenger_count: Number(row.passenger_count ?? 0),
+    created_at: row.created_at != null ? String(row.created_at) : undefined,
+  };
+}
+
 export async function fetchDemandRoutes(params?: {
   origin_city?: string;
   destination_city?: string;
   requested_date_from?: string;
   requested_date_to?: string;
 }): Promise<{ groups: DemandRouteGroup[]; error?: string }> {
-  const base = getBase();
-  if (!base) return { groups: [], error: 'EXPO_PUBLIC_API_BASE_URL no configurado' };
-  const sp = new URLSearchParams();
-  if (params?.origin_city) sp.set('origin_city', params.origin_city);
-  if (params?.destination_city) sp.set('destination_city', params.destination_city);
-  if (params?.requested_date_from) sp.set('requested_date_from', params.requested_date_from);
-  if (params?.requested_date_to) sp.set('requested_date_to', params.requested_date_to);
-  const qs = sp.toString();
-  const path = `/api/demand-routes${qs ? `?${qs}` : ''}`;
-  const res = await apiGet(path);
-  if (!res.ok) return { groups: [], error: res.error ?? 'Error al cargar rutas' };
-  const data = res.data as { groups?: DemandRouteGroup[] };
-  return { groups: data.groups ?? [] };
+  if (!isEnvConfigured()) {
+    return { groups: [], error: 'Supabase no configurado en la app' };
+  }
+
+  let q = supabase
+    .from('demand_route_groups')
+    .select(
+      'id, base_trip_request_id, base_polyline, base_length_km, requested_date, requested_time, origin_city, origin_barrio, destination_city, destination_barrio, passenger_count, created_at'
+    )
+    .order('requested_date', { ascending: true })
+    .order('requested_time', { ascending: true });
+
+  if (params?.origin_city) q = q.ilike('origin_city', `%${params.origin_city}%`);
+  if (params?.destination_city) q = q.ilike('destination_city', `%${params.destination_city}%`);
+  if (params?.requested_date_from) q = q.gte('requested_date', params.requested_date_from);
+  if (params?.requested_date_to) q = q.lte('requested_date', params.requested_date_to);
+
+  const { data, error } = await q;
+  if (error) return { groups: [], error: error.message };
+  return { groups: (data ?? []).map((row) => mapGroupRow(row as Record<string, unknown>)) };
+}
+
+async function fetchDemandRouteDetailFromSupabase(
+  groupId: string
+): Promise<{ detail: DemandRouteDetail | null; error?: string }> {
+  if (!isEnvConfigured()) {
+    return { detail: null, error: 'Supabase no configurado' };
+  }
+
+  const { data: row, error: gErr } = await supabase
+    .from('demand_route_groups')
+    .select(
+      'id, base_trip_request_id, base_polyline, base_length_km, requested_date, requested_time, origin_city, origin_barrio, destination_city, destination_barrio, passenger_count, created_at'
+    )
+    .eq('id', groupId)
+    .maybeSingle();
+
+  if (gErr) return { detail: null, error: gErr.message };
+  if (!row) return { detail: null, error: 'Grupo no encontrado' };
+
+  const { data: members, error: mErr } = await supabase
+    .from('demand_route_members')
+    .select('trip_request_id')
+    .eq('group_id', groupId);
+
+  if (mErr) return { detail: null, error: mErr.message };
+
+  const requestIds = (members ?? []).map((m) => m.trip_request_id).filter(Boolean) as string[];
+
+  let passengers: DemandRouteDetail['passengers'] = [];
+  if (requestIds.length > 0) {
+    const { data: reqs, error: rErr } = await supabase
+      .from('trip_requests')
+      .select('id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label')
+      .in('id', requestIds);
+
+    if (rErr) return { detail: null, error: rErr.message };
+    passengers = (reqs ?? []).map((r) => ({
+      trip_request_id: r.id,
+      origin_lat: Number(r.origin_lat),
+      origin_lng: Number(r.origin_lng),
+      origin_label: r.origin_label ?? null,
+      destination_lat: Number(r.destination_lat),
+      destination_lng: Number(r.destination_lng),
+      destination_label: r.destination_label ?? null,
+    }));
+  }
+
+  const base = mapGroupRow(row as Record<string, unknown>);
+  return { detail: { ...base, passengers } };
 }
 
 export async function fetchDemandRouteDetail(
   groupId: string
 ): Promise<{ detail: DemandRouteDetail | null; error?: string }> {
-  const base = getBase();
-  if (!base) return { detail: null, error: 'EXPO_PUBLIC_API_BASE_URL no configurado' };
-  const res = await apiGet(`/api/demand-routes/${groupId}`);
-  if (!res.ok) return { detail: null, error: res.error ?? 'Error al cargar detalle' };
-  return { detail: res.data as DemandRouteDetail };
+  if (getBase()) {
+    const res = await apiGet(`/api/demand-routes/${groupId}`);
+    if (res.ok) return { detail: res.data as DemandRouteDetail };
+  }
+  return fetchDemandRouteDetailFromSupabase(groupId);
 }
 
 export async function syncDemandRoutes(): Promise<{ ok: boolean; error?: string }> {

@@ -124,7 +124,6 @@ export function PublishRideScreen() {
   const [publishMapMode, setPublishMapMode] = useState<PublishMapMode>('origin');
   const [mapModalVisible, setMapModalVisible] = useState(false);
 
-  const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
   const mapPoints = useMemo(() => {
     const pts: Point[] = [...routePolyline];
@@ -700,7 +699,7 @@ export function PublishRideScreen() {
       if (stopsError) throw stopsError;
 
       Alert.alert('Listo', 'Tu viaje quedó publicado. También lo encontrás en Conductor → Mis viajes publicados o Inicio.', [
-        { text: 'Ver viaje', onPress: () => parentNav?.navigate('RideDetail', { rideId }) },
+        { text: 'Ver viaje', onPress: () => navigation.navigate('RideDetail', { rideId }) },
         { text: 'Cerrar', style: 'cancel', onPress: () => navigation.goBack() },
       ]);
     } catch (e) {

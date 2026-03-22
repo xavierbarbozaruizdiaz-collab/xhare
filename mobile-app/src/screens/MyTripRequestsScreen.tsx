@@ -156,12 +156,7 @@ export function MyTripRequestsScreen() {
             {status === 'accepted' && rideId && (
               <TouchableOpacity
                 style={styles.primaryBtn}
-                onPress={() =>
-                  (navigation.getParent() as { navigate: (a: string, b: { rideId: string }) => void })?.navigate(
-                    'RideDetail',
-                    { rideId }
-                  )
-                }
+                onPress={() => navigation.navigate('RideDetail', { rideId })}
               >
                 <Text style={styles.primaryBtnText}>Ver viaje y reservar</Text>
               </TouchableOpacity>

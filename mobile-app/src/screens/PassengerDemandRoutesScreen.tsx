@@ -1,5 +1,5 @@
 /**
- * Pasajero: listado de rutas con demanda (misma API que conductor).
+ * Pasajero: listado de rutas con demanda (lectura Supabase, misma fuente que conductor).
  * Tap → detalle → "Unirme a esta ruta" → marcar puntos en mapa.
  */
 import React, { useCallback, useEffect, useState } from 'react';
@@ -15,7 +15,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { fetchDemandRoutes, type DemandRouteGroup } from '../backend/demandRoutesApi';
-import { env } from '../core/env';
+import { isEnvConfigured } from '../backend/supabase';
 import type { MainStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'PassengerDemandRoutes'>;
@@ -45,9 +45,9 @@ export function PassengerDemandRoutesScreen() {
   const load = useCallback(async () => {
     setError(null);
     const today = new Date().toISOString().slice(0, 10);
-    if (!env.apiBaseUrl?.trim()) {
+    if (!isEnvConfigured()) {
       setGroups([]);
-      setError('API no configurada');
+      setError('Supabase no configurado en la app');
       setLoading(false);
       setRefreshing(false);
       return;

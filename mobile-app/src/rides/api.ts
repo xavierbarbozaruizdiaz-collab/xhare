@@ -174,6 +174,8 @@ export async function fetchRideForReserve(rideId: string): Promise<{
       id, driver_id, status, available_seats, total_seats, price_per_seat,
       origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label,
       departure_time, base_route_polyline, max_deviation_km,
+      description, estimated_duration_minutes, flexible_departure, started_at,
+      current_stop_index, awaiting_stop_confirmation,
       driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count),
       ride_stops(id, lat, lng, label, stop_order)
     `)

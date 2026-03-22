@@ -27,7 +27,6 @@ export function OfferBuscoScreen() {
   const navigation = useNavigation<Nav>();
   const { session } = useAuth();
   const [list, setList] = useState<Record<string, unknown>[]>([]);
-  const parentNav = navigation.getParent() as { navigate: (a: string) => void } | undefined;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -72,7 +71,7 @@ export function OfferBuscoScreen() {
     <View style={styles.container}>
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => parentNav?.navigate('OfferBuscoNew')}
+        onPress={() => navigation.navigate('OfferBuscoNew')}
       >
         <Text style={styles.fabText}>+ Nueva solicitud</Text>
       </TouchableOpacity>

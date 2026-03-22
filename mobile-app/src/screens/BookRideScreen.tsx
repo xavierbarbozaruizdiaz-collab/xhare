@@ -86,8 +86,6 @@ export function BookRideScreen() {
   const [effectivePricing, setEffectivePricing] = useState<EffectivePricing>(FALLBACK_PRICING);
   const [existingBooking, setExistingBooking] = useState(false);
 
-  const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
-
   const basePolyline = useMemo(() => (ride ? buildPolylineFromRide(ride as Parameters<typeof buildPolylineFromRide>[0]) : []), [ride]);
 
   const maxDeviationMeters = useMemo(() => {
@@ -402,7 +400,7 @@ export function BookRideScreen() {
       {existingBooking ? (
         <View style={styles.warnBox}>
           <Text style={styles.warnText}>Ya tenés una reserva en este viaje.</Text>
-          <TouchableOpacity onPress={() => parentNav?.navigate('RideDetail', { rideId })}>
+          <TouchableOpacity onPress={() => navigation.navigate('RideDetail', { rideId })}>
             <Text style={styles.link}>Ver detalle del viaje</Text>
           </TouchableOpacity>
         </View>
