@@ -21,6 +21,7 @@ import { fetchRideForReserve, type RideStopForReserve } from '../rides/api';
 import type { MainStackParamList } from '../navigation/types';
 import { rideStatusConfig, formatRideDate, formatRideTime } from '../ui/rideStatusConfig';
 import { openNavigation } from '../external-navigation';
+import { getNavigationPreference } from '../settings';
 import { RideDetailRouteMap } from '../components/RideDetailRouteMap';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'RideDetail'>;
@@ -251,9 +252,14 @@ export function RideDetailScreen() {
       Alert.alert('Navegación', 'Esta parada no tiene coordenadas.');
       return;
     }
-    const ok = await openNavigation(s.lat, s.lng);
+    const pref = await getNavigationPreference();
+    const ok = await openNavigation(s.lat, s.lng, pref);
     if (!ok) {
-      Alert.alert('Navegación', 'No se pudo abrir la app de mapas. Probá de nuevo o abrí Google Maps manualmente.');
+      const hint =
+        pref === 'waze'
+          ? 'No se pudo abrir Waze. Verificá que esté instalado o elegí otra app en Ajustes → Navegación externa.'
+          : 'No se pudo abrir la app de mapas. Probá de nuevo o abrí Google Maps manualmente.';
+      Alert.alert('Navegación', hint);
     }
   };
 

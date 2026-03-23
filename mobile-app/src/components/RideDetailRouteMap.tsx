@@ -3,6 +3,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import Constants from 'expo-constants';
 import MapView, { Polyline, Marker } from 'react-native-maps';
 import { androidMapProvider } from '../lib/androidMapProvider';
 import { type Point } from '../lib/geo';
@@ -37,6 +38,7 @@ export function RideDetailRouteMap({ ride, rideStops, height = 280 }: Props) {
   const [polyline, setPolyline] = useState<Point[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
+  const appFlavor = (Constants.expoConfig?.extra as { APP_FLAVOR?: string } | undefined)?.APP_FLAVOR;
 
   const sortedStops = useMemo(
     () => [...rideStops].sort((a, b) => a.stop_order - b.stop_order),
@@ -144,6 +146,12 @@ export function RideDetailRouteMap({ ride, rideStops, height = 280 }: Props) {
         ) : null}
       </View>
       {note ? <Text style={styles.note}>{note}</Text> : null}
+      {__DEV__ && Platform.OS === 'android' && appFlavor === 'driver' ? (
+        <Text style={styles.mapsKeyHint}>
+          Dev: mapa gris suele ser API key de Maps sin paquete{' '}
+          <Text style={styles.mapsKeyMono}>com.xhare.driver</Text> ni SHA correcto en Google Cloud.
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -171,6 +179,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
   note: { fontSize: 12, color: '#6b7280', marginTop: 8, lineHeight: 17 },
+  mapsKeyHint: { fontSize: 11, color: '#92400e', marginTop: 8, lineHeight: 16 },
+  mapsKeyMono: { fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }), fontSize: 11 },
   fallbackBox: {
     padding: 14,
     backgroundColor: '#f9fafb',
