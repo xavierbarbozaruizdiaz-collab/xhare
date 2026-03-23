@@ -1,7 +1,7 @@
 /**
- * Pasajero: reservar sobre la ruta publicada (mapa A/B + hasta 3 paradas, snap, OSRM → precio por tramo).
+ * Pasajero: reservar sobre la ruta publicada (corredor + mapa con OSRM por A/paradas/B conectado a la polyline del conductor; precio vía segment-stats).
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
-import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { CommonActions, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
@@ -22,7 +22,8 @@ import { reverseGeocodeStructured } from '../backend/geocodeApi';
 import { saveExtraStops } from '../backend/api';
 import { fetchRideForReserve } from '../rides/api';
 import { PickupDropoffMapView, type MapPoint, type ExtraStopPoint, type DriverStopMarker } from '../components/PickupDropoffMapView';
-import { buildPolylineFromRide, getPositionAlongPolyline, type Point } from '../lib/geo';
+import { getPositionAlongPolyline, type Point } from '../lib/geo';
+import { loadRidePolyline } from '../lib/resolveRidePolyline';
 import {
   loadActivePricingSettings,
   computeEffectivePricing,
@@ -34,6 +35,7 @@ import {
 } from '../lib/pricing/segment-fare';
 import { env } from '../core/env';
 import type { MainStackParamList } from '../navigation/types';
+import { buildPassengerMergedRoute, type PassengerMergedSegments } from '../lib/passengerMergedRoute';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'BookRide'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'BookRide'>;
@@ -85,8 +87,45 @@ export function BookRideScreen() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [effectivePricing, setEffectivePricing] = useState<EffectivePricing>(FALLBACK_PRICING);
   const [existingBooking, setExistingBooking] = useState(false);
+  const [resolvedRoute, setResolvedRoute] = useState<Point[]>([]);
+  const [routeResolving, setRouteResolving] = useState(false);
+  const [mergedPassengerRoute, setMergedPassengerRoute] = useState<PassengerMergedSegments | null>(null);
 
-  const basePolyline = useMemo(() => (ride ? buildPolylineFromRide(ride as Parameters<typeof buildPolylineFromRide>[0]) : []), [ride]);
+  const rideRef = useRef<Record<string, unknown> | null>(null);
+  const driverStopsRef = useRef(driverStops);
+  rideRef.current = ride;
+  driverStopsRef.current = driverStops;
+
+  const polyLen = ride
+    ? Array.isArray(ride.base_route_polyline)
+      ? (ride.base_route_polyline as unknown[]).length
+      : 0
+    : 0;
+  const stopsKey = useMemo(
+    () => driverStops.map((s) => `${s.lat},${s.lng},${s.stop_order}`).join('|'),
+    [driverStops]
+  );
+
+  useEffect(() => {
+    if (!rideId || !rideRef.current) {
+      setResolvedRoute([]);
+      setRouteResolving(false);
+      return;
+    }
+    let cancelled = false;
+    setRouteResolving(true);
+    void loadRidePolyline(rideRef.current, driverStopsRef.current)
+      .then((r) => {
+        if (cancelled) return;
+        setResolvedRoute(r.points);
+      })
+      .finally(() => {
+        if (!cancelled) setRouteResolving(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rideId, polyLen, stopsKey]);
 
   const maxDeviationMeters = useMemo(() => {
     const km = ride ? Number((ride as { max_deviation_km?: number }).max_deviation_km ?? 1) : 1;
@@ -94,6 +133,11 @@ export function BookRideScreen() {
   }, [ride]);
 
   const maxSeats = Math.max(0, Number(ride?.available_seats ?? 0));
+
+  const extraStopsKey = useMemo(
+    () => extraStops.map((s) => `${s.lat},${s.lng},${s.order}`).join('|'),
+    [extraStops]
+  );
 
   useEffect(() => {
     let c = false;
@@ -234,8 +278,8 @@ export function BookRideScreen() {
     let cancelled = false;
     setPriceLoading(true);
     const via =
-      basePolyline.length >= 2
-        ? sortExtrasBetween(pickup, dropoff, extraStops, basePolyline)
+      resolvedRoute.length >= 2
+        ? sortExtrasBetween(pickup, dropoff, extraStops, resolvedRoute)
         : [];
     fetchSegmentStats(
       { lat: pickup.lat, lng: pickup.lng },
@@ -254,7 +298,32 @@ export function BookRideScreen() {
     return () => {
       cancelled = true;
     };
-  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, extraStops, basePolyline]);
+  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, extraStops, resolvedRoute]);
+
+  useEffect(() => {
+    if (!pickup || !dropoff || resolvedRoute.length < 2 || !env.apiBaseUrl?.trim()) {
+      setMergedPassengerRoute(null);
+      return;
+    }
+    let cancelled = false;
+    const via = sortExtrasBetween(pickup, dropoff, extraStops, resolvedRoute);
+    const handle = setTimeout(() => {
+      void buildPassengerMergedRoute(resolvedRoute, pickup, dropoff, via).then((seg) => {
+        if (!cancelled) setMergedPassengerRoute(seg);
+      });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [
+    pickup?.lat,
+    pickup?.lng,
+    dropoff?.lat,
+    dropoff?.lng,
+    extraStopsKey,
+    resolvedRoute,
+  ]);
 
   const totalPrice =
     segmentBaseFare != null
@@ -271,7 +340,7 @@ export function BookRideScreen() {
       Alert.alert('Cupos', 'No hay asientos disponibles.');
       return;
     }
-    if (basePolyline.length >= 2 && (!pickup || !dropoff)) {
+    if (resolvedRoute.length >= 2 && (!pickup || !dropoff)) {
       Alert.alert('Mapa', 'Marcá subida (A) y bajada (B) en la ruta.');
       return;
     }
@@ -341,9 +410,16 @@ export function BookRideScreen() {
           order: i + 1,
         }))
       );
-      Alert.alert('Listo', 'Reserva creada.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      navigation.dispatch(
+        CommonActions.reset({
+          index: 1,
+          routes: [
+            { name: 'MainTabs' },
+            { name: 'RideDetail', params: { rideId } },
+          ],
+        })
+      );
+      Alert.alert('Listo', 'Reserva creada. Acá podés ver el detalle de tu reserva.');
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Error');
     } finally {
@@ -408,7 +484,10 @@ export function BookRideScreen() {
         <Text style={styles.muted}>No hay asientos disponibles.</Text>
       ) : (
         <>
-          {basePolyline.length >= 2 ? (
+          {routeResolving && resolvedRoute.length < 2 ? (
+            <ActivityIndicator style={{ marginVertical: 20 }} size="large" color="#166534" />
+          ) : null}
+          {resolvedRoute.length >= 2 ? (
             <>
               <Text style={styles.sectionTitle}>Tu tramo en la ruta</Text>
               {!env.apiBaseUrl?.trim() ? (
@@ -417,13 +496,13 @@ export function BookRideScreen() {
                 </Text>
               ) : null}
               <PickupDropoffMapView
-                baseRoute={basePolyline}
+                baseRoute={resolvedRoute}
+                resolvedPassengerRoute={mergedPassengerRoute}
                 pickup={pickup}
                 dropoff={dropoff}
                 onPickupChange={setPickup}
                 onDropoffChange={setDropoff}
                 maxDeviationMeters={maxDeviationMeters}
-                snapToRoute
                 extraStops={extraStops}
                 onExtraStopsChange={setExtraStops}
                 maxExtraStops={3}
@@ -448,7 +527,7 @@ export function BookRideScreen() {
           />
           <Text style={styles.hintSmall}>Disponibles: {maxSeats}</Text>
 
-          {basePolyline.length >= 2 && (!pickup || !dropoff) ? (
+          {resolvedRoute.length >= 2 && (!pickup || !dropoff) ? (
             <Text style={styles.muted}>Marcá A y B para ver el precio del tramo.</Text>
           ) : priceLoading ? (
             <Text style={styles.muted}>Calculando precio…</Text>

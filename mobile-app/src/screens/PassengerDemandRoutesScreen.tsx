@@ -71,31 +71,49 @@ export function PassengerDemandRoutesScreen() {
 
   const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
-  if (loading && groups.length === 0) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
+      <View style={styles.topActions}>
+        <TouchableOpacity
+          style={styles.btnOutline}
+          onPress={() => parentNav?.navigate('SearchPublishedRides')}
+          accessibilityRole="button"
+          accessibilityLabel="Buscar viajes con filtros"
+        >
+          <Text style={styles.btnOutlineText}>Buscar viajes</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.btnSolid}
+          onPress={() => parentNav?.navigate('AvailableRides')}
+          accessibilityRole="button"
+          accessibilityLabel="Ver viajes disponibles publicados hoy"
+        >
+          <Text style={styles.btnSolidText}>Viajes disponibles</Text>
+        </TouchableOpacity>
+      </View>
       <TouchableOpacity
-        style={styles.searchPublishedBtn}
-        onPress={() => parentNav?.navigate('SearchPublishedRides')}
+        style={styles.btnReservas}
+        onPress={() => parentNav?.navigate('MyBookings')}
         accessibilityRole="button"
-        accessibilityLabel="Buscar viajes ya publicados por conductores"
+        accessibilityLabel="Ver mis reservas"
       >
-        <Text style={styles.searchPublishedBtnText}>Buscar viajes publicados</Text>
+        <Text style={styles.btnReservasText}>Mis reservas</Text>
       </TouchableOpacity>
       <Text style={styles.intro}>
-        Rutas con demanda agrupadas. Tocá una para ver el mapa y unirte marcando tu subida y bajada.
+        Abajo: rutas con demanda (varios pasajeros con ruta parecida). Para viajes ya publicados usá los botones de
+        arriba: Viajes disponibles (lista de hoy) o Buscar viajes (más filtros).
       </Text>
       {error && <Text style={styles.apiError}>{error}</Text>}
-      {groups.length === 0 ? (
+      {loading && groups.length === 0 ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#166534" />
+        </View>
+      ) : groups.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>No hay rutas con demanda para mostrar.</Text>
+          <Text style={styles.emptySub}>
+            Eso no significa que no haya viajes: usá Viajes disponibles o Buscar viajes arriba para ver viajes publicados.
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -127,16 +145,36 @@ export function PassengerDemandRoutesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  searchPublishedBtn: {
-    backgroundColor: '#166534',
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 120 },
+  topActions: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  btnReservas: {
     paddingVertical: 12,
-    paddingHorizontal: 16,
     borderRadius: 10,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 2,
+    borderColor: '#166534',
     alignItems: 'center',
     marginBottom: 14,
   },
-  searchPublishedBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  btnReservasText: { color: '#14532d', fontWeight: '800', fontSize: 14 },
+  btnOutline: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#166534',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+  },
+  btnOutlineText: { color: '#166534', fontWeight: '700', fontSize: 14 },
+  btnSolid: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#166534',
+    alignItems: 'center',
+  },
+  btnSolidText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   intro: { fontSize: 14, color: '#6b7280', marginBottom: 16 },
   apiError: { fontSize: 13, color: '#b91c1c', marginBottom: 8 },
   listContent: { paddingBottom: 24 },
@@ -151,6 +189,14 @@ const styles = StyleSheet.create({
   origin: { fontSize: 15, fontWeight: '600', color: '#111' },
   meta: { fontSize: 13, color: '#6b7280', marginTop: 8 },
   hint: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
-  empty: { alignItems: 'center', paddingVertical: 32 },
-  emptyText: { fontSize: 16, color: '#6b7280' },
+  empty: { alignItems: 'center', paddingVertical: 24, paddingHorizontal: 8 },
+  emptyText: { fontSize: 16, color: '#6b7280', textAlign: 'center' },
+  emptySub: {
+    fontSize: 14,
+    color: '#9ca3af',
+    textAlign: 'center',
+    marginTop: 12,
+    lineHeight: 20,
+    paddingHorizontal: 8,
+  },
 });

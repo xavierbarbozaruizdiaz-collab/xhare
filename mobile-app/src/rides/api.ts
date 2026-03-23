@@ -44,15 +44,43 @@ export async function cancelBooking(bookingId: string, passengerId: string) {
   if (error) throw error;
 }
 
+/** YYYY-MM-DD → inicio y fin de ese día calendario en zona local (evita desfase UTC de `new Date("YYYY-MM-DD")`). */
+function localDayBounds(ymd: string): { start: Date; end: Date } | null {
+  const m = ymd.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const start = new Date(y, mo - 1, d, 0, 0, 0, 0);
+  const end = new Date(y, mo - 1, d, 23, 59, 59, 999);
+  if (start.getFullYear() !== y || start.getMonth() !== mo - 1 || start.getDate() !== d) return null;
+  return { start, end };
+}
+
+/** Si viene `HH:MM` (24 h), ajusta la hora de inicio del rango ese mismo día. Sin valor = desde 00:00. */
+function applyOptionalFromTime(dayStart: Date, fromTimeLocal?: string): Date {
+  const t = fromTimeLocal?.trim();
+  if (!t) return dayStart;
+  const p = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (!p) return dayStart;
+  const hh = Math.min(23, Math.max(0, parseInt(p[1], 10)));
+  const mm = Math.min(59, Math.max(0, parseInt(p[2], 10)));
+  const out = new Date(dayStart.getTime());
+  out.setHours(hh, mm, 0, 0);
+  return out;
+}
+
 /** Search published rides (passenger). Optional date, origin, destination (label match), seats, maxPrice. */
 export async function searchRides(options: {
   date?: string;
+  /** Solo con `date`. Hora local HH:MM desde la cual (hasta fin del día). Omitir = todo el día. */
+  fromTimeLocal?: string;
   origin?: string;
   destination?: string;
   seats?: number;
   maxPrice?: number | string;
 }) {
-  const { date, origin, destination, seats = 1, maxPrice } = options;
+  const { date, fromTimeLocal, origin, destination, seats = 1, maxPrice } = options;
   let query = supabase
     .from('rides')
     .select(`
@@ -63,14 +91,16 @@ export async function searchRides(options: {
     .eq('status', 'published');
 
   const now = new Date();
-  if (date) {
-    const start = new Date(date);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(date);
-    end.setHours(23, 59, 59, 999);
+  const bounds = date?.trim() ? localDayBounds(date) : null;
+  if (bounds) {
+    let rangeStart = applyOptionalFromTime(bounds.start, fromTimeLocal);
+    const rangeEnd = bounds.end;
+    if (rangeStart.getTime() > rangeEnd.getTime()) {
+      rangeStart = bounds.start;
+    }
     query = query
-      .gte('departure_time', start.toISOString())
-      .lte('departure_time', end.toISOString());
+      .gte('departure_time', rangeStart.toISOString())
+      .lte('departure_time', rangeEnd.toISOString());
   } else {
     const endDate = new Date(now);
     endDate.setDate(endDate.getDate() + 30);
@@ -174,7 +204,7 @@ export async function fetchRideForReserve(rideId: string): Promise<{
       id, driver_id, status, available_seats, total_seats, price_per_seat,
       origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label,
       departure_time, base_route_polyline, max_deviation_km,
-      description, estimated_duration_minutes, flexible_departure, started_at,
+      description, estimated_duration_minutes, flexible_departure, started_at, vehicle_info,
       current_stop_index, awaiting_stop_confirmation,
       driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count),
       ride_stops(id, lat, lng, label, stop_order)

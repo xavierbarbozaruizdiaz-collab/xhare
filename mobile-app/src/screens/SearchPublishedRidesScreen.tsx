@@ -21,6 +21,8 @@ type Nav = NativeStackNavigationProp<MainStackParamList, 'SearchPublishedRides'>
 export function SearchPublishedRidesScreen() {
   const navigation = useNavigation<Nav>();
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  /** HH:MM opcional; solo aplica si hay fecha válida. */
+  const [fromTime, setFromTime] = useState('');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
   const [loading, setLoading] = useState(true);
@@ -31,6 +33,7 @@ export function SearchPublishedRidesScreen() {
     try {
       const rows = await searchRides({
         date: date.trim() || undefined,
+        fromTimeLocal: date.trim() && fromTime.trim() ? fromTime.trim() : undefined,
         origin: origin.trim() || undefined,
         destination: destination.trim() || undefined,
         seats: 1,
@@ -41,7 +44,7 @@ export function SearchPublishedRidesScreen() {
     } finally {
       setLoading(false);
     }
-  }, [date, origin, destination]);
+  }, [date, fromTime, origin, destination]);
 
   useEffect(() => {
     load();
@@ -51,6 +54,14 @@ export function SearchPublishedRidesScreen() {
     <View style={styles.container}>
       <Text style={styles.label}>Fecha</Text>
       <TextInput style={styles.input} value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
+      <Text style={styles.label}>Hora desde (opcional, HH:MM)</Text>
+      <TextInput
+        style={styles.input}
+        value={fromTime}
+        onChangeText={setFromTime}
+        placeholder="Ej. 14:30 — vacío = todo el día"
+        placeholderTextColor="#9ca3af"
+      />
       <Text style={styles.label}>Origen (texto)</Text>
       <TextInput style={styles.input} value={origin} onChangeText={setOrigin} placeholder="Opcional" />
       <Text style={styles.label}>Destino (texto)</Text>

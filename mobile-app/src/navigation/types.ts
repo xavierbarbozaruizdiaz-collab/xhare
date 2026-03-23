@@ -18,8 +18,12 @@ export type MainStackParamList = {
   BookRide: { rideId: string };
   PublishRide: { fromRideId?: string; tripRequestId?: string; groupId?: string } | undefined;
   SearchPublishedRides: undefined;
+  /** Lista del día: viajes publicados con cupos (sin pantalla de filtros). */
+  AvailableRides: undefined;
   EditRide: { rideId: string };
   MyTripRequests: undefined;
+  /** Reservas del pasajero (viajes en los que reservó asiento). */
+  MyBookings: undefined;
   /** Viajes del conductor (publicados / con reservas / en ruta). */
   MyPublishedRides: undefined;
   DriverTripRequests: undefined;

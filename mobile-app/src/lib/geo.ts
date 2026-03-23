@@ -111,6 +111,95 @@ export function getPositionAlongPolyline(point: Point, polyline: Point[]): numbe
   return Math.max(0, Math.min(1, position / totalLength));
 }
 
+function polylineCumulative(polyline: Point[]): { cum: number[]; total: number } {
+  const n = polyline.length;
+  const cum: number[] = [0];
+  for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + distanceMeters(polyline[i - 1], polyline[i]);
+  return { cum, total: cum[n - 1] ?? 0 };
+}
+
+/** Punto sobre la polyline a `dist` metros desde el inicio (0 … total). */
+function pointAtDistanceAlongPolyline(polyline: Point[], dist: number): Point {
+  const n = polyline.length;
+  if (n < 1) return { lat: 0, lng: 0 };
+  if (n === 1) return { ...polyline[0] };
+  const { cum, total } = polylineCumulative(polyline);
+  if (total <= 0) return { ...polyline[0] };
+  const d = Math.max(0, Math.min(total, dist));
+  let idx = 0;
+  while (idx < n - 1 && cum[idx + 1] < d) idx++;
+  const seg0 = polyline[idx];
+  const seg1 = polyline[idx + 1];
+  const len = distanceMeters(seg0, seg1);
+  const along = d - cum[idx];
+  const u = len > 0 ? Math.max(0, Math.min(1, along / len)) : 0;
+  return {
+    lat: seg0.lat + u * (seg1.lat - seg0.lat),
+    lng: seg0.lng + u * (seg1.lng - seg0.lng),
+  };
+}
+
+/**
+ * Sub-polyline de la geometría base entre dos posiciones normalizadas (0–1) a lo largo del recorrido.
+ * No es un OSRM nuevo: solo recorta la ruta publicada.
+ */
+export function slicePolylineBetweenT(polyline: Point[], t0: number, t1: number): Point[] {
+  const n = polyline.length;
+  if (n < 2) return [];
+  const { cum, total } = polylineCumulative(polyline);
+  if (total <= 0) return [];
+
+  const lo = Math.max(0, Math.min(1, Math.min(t0, t1)));
+  const hi = Math.max(0, Math.min(1, Math.max(t0, t1)));
+  const d0 = lo * total;
+  const d1 = hi * total;
+  if (d1 - d0 < 0.5) return [];
+
+  const start = pointAtDistanceAlongPolyline(polyline, d0);
+  const end = pointAtDistanceAlongPolyline(polyline, d1);
+  const out: Point[] = [start];
+  for (let i = 1; i < n - 1; i++) {
+    if (cum[i] > d0 && cum[i] < d1) out.push({ ...polyline[i] });
+  }
+  if (distanceMeters(out[out.length - 1], end) > 2) out.push(end);
+  else out[out.length - 1] = end;
+  return out.length >= 2 ? out : [];
+}
+
+/**
+ * Tramo del pasajero (A → paradas → B) **sobre la misma polyline del conductor** (recorte + proyección al corredor).
+ */
+export function passengerSegmentAlongBaseRoute(
+  baseRoute: Point[],
+  pickup: Point,
+  dropoff: Point,
+  extraPoints: Point[] = []
+): Point[] {
+  if (baseRoute.length < 2) return [];
+  let t0 = getPositionAlongPolyline(pickup, baseRoute);
+  let t1 = getPositionAlongPolyline(dropoff, baseRoute);
+  if (t0 > t1) {
+    const tmp = t0;
+    t0 = t1;
+    t1 = tmp;
+  }
+
+  const innerT = extraPoints
+    .map((p) => getPositionAlongPolyline(p, baseRoute))
+    .filter((t) => t > t0 + 1e-8 && t < t1 - 1e-8)
+    .sort((a, b) => a - b);
+
+  const breaks = [t0, ...innerT, t1];
+  const out: Point[] = [];
+  for (let b = 0; b < breaks.length - 1; b++) {
+    const chunk = slicePolylineBetweenT(baseRoute, breaks[b], breaks[b + 1]);
+    if (chunk.length < 2) continue;
+    if (out.length === 0) out.push(...chunk);
+    else out.push(...chunk.slice(1));
+  }
+  return out.length >= 2 ? out : [];
+}
+
 const PROXIMITY_METERS = 2000;
 
 export function buildPolylineFromRide(ride: {
