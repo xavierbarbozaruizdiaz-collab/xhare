@@ -18,7 +18,7 @@
     "web": "expo start --web",
     "check": "npm run check:ts",
     "check:ts": "tsc --noEmit",
-    "build:android:release": "cd android && gradlew.bat clean && cd .. && npx expo run:android --variant release",
+    "build:android:release": "cd android && gradlew.bat clean && cd .. && npx expo run:android --variant release -p 8082",
     "build:android:cloud:apk:preview": "eas build --platform android --profile preview",
     "build:android:cloud:apk:production": "eas build --platform android --profile production"
   },
