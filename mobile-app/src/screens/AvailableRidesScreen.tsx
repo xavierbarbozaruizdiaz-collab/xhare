@@ -2,7 +2,7 @@
  * Pasajero: viajes publicados con cupos para un día (fecha editable, hora desde opcional).
  * Filtros completos → Buscar viajes.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -22,10 +22,6 @@ import { isEnvConfigured } from '../backend/supabase';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'AvailableRides'>;
 
-function todayYmd(): string {
-  return toYmdLocal(new Date());
-}
-
 function toYmdLocal(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -33,38 +29,33 @@ function toYmdLocal(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function formatDayLabel(ymd: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
-  return new Date(ymd + 'T12:00:00').toLocaleDateString('es-PY', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
-}
-
 export function AvailableRidesScreen() {
   const navigation = useNavigation<Nav>();
-  const [dateYmd, setDateYmd] = useState(todayYmd);
+  const [dateYmd, setDateYmd] = useState('');
   /** Vacío = sin filtro por hora (todo el día). */
   const [fromTimeHm, setFromTimeHm] = useState('');
+  const [rideKind, setRideKind] = useState<'all' | 'internal' | 'long_distance'>('all');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [list, setList] = useState<Record<string, unknown>[]>([]);
 
-  const dayLabel = useMemo(() => formatDayLabel(dateYmd), [dateYmd]);
   const timeLabel = fromTimeHm.trim() ? `desde las ${fromTimeHm.trim()}` : 'cualquier hora';
 
   const fetchRows = useCallback(async (): Promise<Record<string, unknown>[]> => {
     if (!isEnvConfigured()) return [];
-    const rows = await searchRides({
+    const rows = (await searchRides({
       date: dateYmd.trim(),
       fromTimeLocal: fromTimeHm.trim() || undefined,
       seats: 1,
+    })) as Record<string, unknown>[];
+    if (rideKind === 'all') return rows;
+    return rows.filter((r) => {
+      const hasDriverSeatPrice = Number(r.price_per_seat ?? 0) > 0;
+      return rideKind === 'long_distance' ? hasDriverSeatPrice : !hasDriverSeatPrice;
     });
-    return rows as Record<string, unknown>[];
-  }, [dateYmd, fromTimeHm]);
+  }, [dateYmd, fromTimeHm, rideKind]);
 
   useFocusEffect(
     useCallback(() => {
@@ -105,23 +96,26 @@ export function AvailableRidesScreen() {
 
   const header = (
     <View style={styles.headerBlock}>
-      <Text style={styles.subtitle}>
-        Viajes publicados con cupos para <Text style={styles.subtitleStrong}>{dayLabel}</Text>
-        {fromTimeHm.trim() ? (
-          <>
-            , <Text style={styles.subtitleStrong}>{fromTimeHm.trim()}</Text> en adelante
-          </>
-        ) : null}
-        . Actualizá tirando hacia abajo.
-      </Text>
-
       <Text style={styles.fieldLabel}>Fecha</Text>
       <TouchableOpacity style={styles.pickerRow} onPress={() => setShowDatePicker(true)} accessibilityRole="button">
-        <Text style={styles.pickerValue}>{dateYmd}</Text>
+        <Text style={dateYmd.trim() ? styles.pickerValue : styles.pickerPlaceholder}>
+          {dateYmd.trim() ? dateYmd : 'Sin filtro — mostrar todos los próximos viajes'}
+        </Text>
       </TouchableOpacity>
+      {dateYmd.trim() ? (
+        <TouchableOpacity
+          onPress={() => {
+            setDateYmd('');
+            setFromTimeHm('');
+          }}
+          accessibilityRole="button"
+        >
+          <Text style={styles.clearTime}>Quitar fecha (ver próximos viajes)</Text>
+        </TouchableOpacity>
+      ) : null}
       {showDatePicker ? (
         <DateTimePicker
-          value={new Date(dateYmd + 'T12:00:00')}
+          value={dateYmd.trim() ? new Date(dateYmd + 'T12:00:00') : new Date()}
           mode="date"
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={(ev, d) => {
@@ -169,6 +163,33 @@ export function AvailableRidesScreen() {
         />
       ) : null}
 
+      <Text style={styles.fieldLabel}>Tipo de viaje</Text>
+      <View style={styles.kindRow}>
+        <TouchableOpacity
+          style={[styles.kindChip, rideKind === 'all' && styles.kindChipActive]}
+          onPress={() => setRideKind('all')}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.kindChipText, rideKind === 'all' && styles.kindChipTextActive]}>Todos</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.kindChip, rideKind === 'internal' && styles.kindChipActive]}
+          onPress={() => setRideKind('internal')}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.kindChipText, rideKind === 'internal' && styles.kindChipTextActive]}>Interno</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.kindChip, rideKind === 'long_distance' && styles.kindChipActive]}
+          onPress={() => setRideKind('long_distance')}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.kindChipText, rideKind === 'long_distance' && styles.kindChipTextActive]}>
+            Larga distancia
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       <TouchableOpacity style={styles.linkSearch} onPress={() => navigation.navigate('SearchPublishedRides')}>
         <Text style={styles.linkSearchText}>Buscar con filtros (fecha, origen, destino)</Text>
       </TouchableOpacity>
@@ -194,7 +215,7 @@ export function AvailableRidesScreen() {
         ListEmptyComponent={
           loading ? null : (
             <Text style={styles.empty}>
-              No hay viajes disponibles para {dayLabel} ({timeLabel}) con los criterios actuales.
+              No hay viajes disponibles ({timeLabel}) con los criterios actuales.
             </Text>
           )
         }
@@ -221,8 +242,6 @@ export function AvailableRidesScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   headerBlock: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
-  subtitle: { fontSize: 14, color: '#6b7280', lineHeight: 20, marginBottom: 14 },
-  subtitleStrong: { fontWeight: '700', color: '#374151' },
   fieldLabel: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6 },
   pickerRow: {
     borderWidth: 1,
@@ -236,6 +255,21 @@ const styles = StyleSheet.create({
   pickerValue: { fontSize: 16, color: '#111' },
   pickerPlaceholder: { fontSize: 16, color: '#9ca3af' },
   clearTime: { fontSize: 13, color: '#166534', fontWeight: '600', marginBottom: 12 },
+  kindRow: { flexDirection: 'row', gap: 8, marginBottom: 12, flexWrap: 'wrap' },
+  kindChip: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+  },
+  kindChipActive: {
+    borderColor: '#166534',
+    backgroundColor: '#166534',
+  },
+  kindChipText: { fontSize: 13, color: '#374151', fontWeight: '600' },
+  kindChipTextActive: { color: '#fff' },
   linkSearch: { marginBottom: 8 },
   linkSearchText: { fontSize: 14, fontWeight: '600', color: '#166534' },
   configError: { fontSize: 13, color: '#b91c1c', marginBottom: 8 },

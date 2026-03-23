@@ -16,7 +16,14 @@ export type MainStackParamList = {
   MainTabs: undefined;
   RideDetail: { rideId: string };
   BookRide: { rideId: string };
-  PublishRide: { fromRideId?: string; tripRequestId?: string; groupId?: string } | undefined;
+  PublishRide:
+    | {
+        fromRideId?: string;
+        tripRequestId?: string;
+        groupId?: string;
+        publishKind?: 'internal' | 'long_distance';
+      }
+    | undefined;
   SearchPublishedRides: undefined;
   /** Lista del día: viajes publicados con cupos (sin pantalla de filtros). */
   AvailableRides: undefined;
@@ -34,11 +41,20 @@ export type MainStackParamList = {
   VehicleSetup: undefined;
   Messages: undefined;
   Chat: { conversationId: string };
-  Offer: undefined;
-  OfferBusco: undefined;
-  OfferTengo: undefined;
-  OfferBuscoNew: undefined;
-  OfferTengoNew: undefined;
+  /** Guardar solicitud de trayecto (trip_requests). Prefill desde Buscar viajes. */
+  SaveTripRequest:
+    | {
+        originLabel?: string;
+        destinationLabel?: string;
+        originLat?: number;
+        originLng?: number;
+        destinationLat?: number;
+        destinationLng?: number;
+        requestedDate?: string;
+        requestedTime?: string;
+        suggestedPricingKind?: 'internal' | 'long_distance';
+      }
+    | undefined;
 };
 
 export type MainTabParamList = {

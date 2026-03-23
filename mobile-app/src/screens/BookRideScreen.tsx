@@ -36,6 +36,10 @@ import {
 import { env } from '../core/env';
 import type { MainStackParamList } from '../navigation/types';
 import { buildPassengerMergedRoute, type PassengerMergedSegments } from '../lib/passengerMergedRoute';
+import {
+  driverIntermediateStopsBetween,
+  mergeOsrmWaypointsBetween,
+} from '../lib/passengerRouteWaypoints';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'BookRide'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'BookRide'>;
@@ -133,11 +137,29 @@ export function BookRideScreen() {
   }, [ride]);
 
   const maxSeats = Math.max(0, Number(ride?.available_seats ?? 0));
+  const fixedSeatPrice = Math.max(0, Number(ride?.price_per_seat ?? 0));
+  const usesDriverSeatPrice = fixedSeatPrice > 0;
 
   const extraStopsKey = useMemo(
     () => extraStops.map((s) => `${s.lat},${s.lng},${s.order}`).join('|'),
     [extraStops]
   );
+
+  /** OSRM entre A y B: paradas extra del pasajero + paradas intermedias del conductor en ese tramo. */
+  const waypointsBetween = useMemo(() => {
+    if (!pickup || !dropoff || resolvedRoute.length < 2) return [];
+    const extras = sortExtrasBetween(pickup, dropoff, extraStops, resolvedRoute);
+    const drv = driverIntermediateStopsBetween(resolvedRoute, pickup, dropoff, driverStops);
+    return mergeOsrmWaypointsBetween(resolvedRoute, pickup, dropoff, extras, drv);
+  }, [
+    pickup?.lat,
+    pickup?.lng,
+    dropoff?.lat,
+    dropoff?.lng,
+    extraStopsKey,
+    resolvedRoute,
+    stopsKey,
+  ]);
 
   useEffect(() => {
     let c = false;
@@ -271,20 +293,21 @@ export function BookRideScreen() {
   }, [segmentDistanceKm, effectivePricing]);
 
   useEffect(() => {
+    if (usesDriverSeatPrice) {
+      setSegmentDistanceKm(null);
+      setPriceLoading(false);
+      return;
+    }
     if (!pickup || !dropoff || !env.apiBaseUrl?.trim()) {
       setSegmentDistanceKm(null);
       return;
     }
     let cancelled = false;
     setPriceLoading(true);
-    const via =
-      resolvedRoute.length >= 2
-        ? sortExtrasBetween(pickup, dropoff, extraStops, resolvedRoute)
-        : [];
     fetchSegmentStats(
       { lat: pickup.lat, lng: pickup.lng },
       { lat: dropoff.lat, lng: dropoff.lng },
-      via
+      waypointsBetween
     ).then((res) => {
       if (cancelled) return;
       if (res.error || res.distanceKm == null) {
@@ -298,7 +321,7 @@ export function BookRideScreen() {
     return () => {
       cancelled = true;
     };
-  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, extraStops, resolvedRoute]);
+  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, waypointsBetween, usesDriverSeatPrice]);
 
   useEffect(() => {
     if (!pickup || !dropoff || resolvedRoute.length < 2 || !env.apiBaseUrl?.trim()) {
@@ -306,9 +329,8 @@ export function BookRideScreen() {
       return;
     }
     let cancelled = false;
-    const via = sortExtrasBetween(pickup, dropoff, extraStops, resolvedRoute);
     const handle = setTimeout(() => {
-      void buildPassengerMergedRoute(resolvedRoute, pickup, dropoff, via).then((seg) => {
+      void buildPassengerMergedRoute(resolvedRoute, pickup, dropoff, waypointsBetween).then((seg) => {
         if (!cancelled) setMergedPassengerRoute(seg);
       });
     }, 400);
@@ -316,18 +338,16 @@ export function BookRideScreen() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [
-    pickup?.lat,
-    pickup?.lng,
-    dropoff?.lat,
-    dropoff?.lng,
-    extraStopsKey,
-    resolvedRoute,
-  ]);
+  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, waypointsBetween, resolvedRoute]);
 
-  const totalPrice =
-    segmentBaseFare != null
-      ? totalFareFromBaseAndSeatsWithPricing(segmentBaseFare, Math.min(maxSeats, Math.max(1, seats)), effectivePricing)
+  const totalPrice = usesDriverSeatPrice
+    ? fixedSeatPrice * Math.min(maxSeats, Math.max(1, seats))
+    : segmentBaseFare != null
+      ? totalFareFromBaseAndSeatsWithPricing(
+          segmentBaseFare,
+          Math.min(maxSeats, Math.max(1, seats)),
+          effectivePricing
+        )
       : null;
 
   const handleSubmit = async () => {
@@ -348,8 +368,12 @@ export function BookRideScreen() {
     setError(null);
     try {
       const seatsToBook = Math.min(maxSeats, Math.max(1, seats));
-      const baseFare = segmentBaseFare ?? effectivePricing.minFarePyg;
-      const pricePaid = totalFareFromBaseAndSeatsWithPricing(baseFare, seatsToBook, effectivePricing);
+      const baseFare = usesDriverSeatPrice
+        ? fixedSeatPrice
+        : segmentBaseFare ?? effectivePricing.minFarePyg;
+      const pricePaid = usesDriverSeatPrice
+        ? fixedSeatPrice * seatsToBook
+        : totalFareFromBaseAndSeatsWithPricing(baseFare, seatsToBook, effectivePricing);
       const [puLabel, doLabel] = await Promise.all([
         pickup ? reverseGeocodeStructured(pickup.lat, pickup.lng) : Promise.resolve({ displayName: '' }),
         dropoff ? reverseGeocodeStructured(dropoff.lat, dropoff.lng) : Promise.resolve({ displayName: '' }),
@@ -363,10 +387,11 @@ export function BookRideScreen() {
           blockMultiplier: effectivePricing.blockMultiplier,
         },
         pricing_settings_id: effectivePricing.pricingSettingsId,
-        segment_distance_km: segmentDistanceKm ?? undefined,
+        segment_distance_km: usesDriverSeatPrice ? undefined : segmentDistanceKm ?? undefined,
         base_fare: baseFare,
         seats: seatsToBook,
         total: pricePaid,
+        pricing_mode: usesDriverSeatPrice ? 'driver_seat_price' : 'segment',
       };
       const payload = {
         ride_id: rideId,
@@ -384,7 +409,7 @@ export function BookRideScreen() {
         selected_seat_ids: null,
         pricing_snapshot: pricingSnapshot,
         pricing_settings_id: effectivePricing.pricingSettingsId,
-        segment_distance_km: segmentDistanceKm,
+        segment_distance_km: usesDriverSeatPrice ? null : segmentDistanceKm,
         base_fare: baseFare,
       };
       const { error: insErr } = await supabase.from('bookings').insert(payload);
@@ -490,9 +515,14 @@ export function BookRideScreen() {
           {resolvedRoute.length >= 2 ? (
             <>
               <Text style={styles.sectionTitle}>Tu tramo en la ruta</Text>
-              {!env.apiBaseUrl?.trim() ? (
+              {!usesDriverSeatPrice && !env.apiBaseUrl?.trim() ? (
                 <Text style={styles.warnBoxText}>
                   Configurá EXPO_PUBLIC_API_BASE_URL para calcular el precio con OSRM.
+                </Text>
+              ) : null}
+              {usesDriverSeatPrice ? (
+                <Text style={styles.warnBoxText}>
+                  Precio por asiento definido por el conductor: ₲ {fixedSeatPrice.toLocaleString('es-PY')}.
                 </Text>
               ) : null}
               <PickupDropoffMapView
@@ -529,14 +559,14 @@ export function BookRideScreen() {
 
           {resolvedRoute.length >= 2 && (!pickup || !dropoff) ? (
             <Text style={styles.muted}>Marcá A y B para ver el precio del tramo.</Text>
-          ) : priceLoading ? (
+          ) : !usesDriverSeatPrice && priceLoading ? (
             <Text style={styles.muted}>Calculando precio…</Text>
           ) : totalPrice != null ? (
             <View style={styles.priceBox}>
               <Text style={styles.priceLabel}>Total estimado</Text>
               <Text style={styles.priceValue}>
                 ₲ {totalPrice.toLocaleString('es-PY')}
-                {segmentDistanceKm != null ? ` · ~${segmentDistanceKm.toFixed(1)} km` : ''}
+                {!usesDriverSeatPrice && segmentDistanceKm != null ? ` · ~${segmentDistanceKm.toFixed(1)} km` : ''}
               </Text>
             </View>
           ) : (

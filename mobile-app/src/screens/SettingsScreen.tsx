@@ -1,5 +1,5 @@
 /**
- * Settings: account, navigation preference, permissions, Mensajes, Vehículo, Offer, sign out.
+ * Settings: account, navigation preference, permissions, Mensajes, Vehículo, Mis solicitudes, sign out.
  */
 import React, { useState } from 'react';
 import {
@@ -112,12 +112,12 @@ export function SettingsScreen() {
       </TouchableOpacity>
       <TouchableOpacity
         style={styles.linkRow}
-        onPress={() => parentNav?.navigate('Offer')}
-        accessibilityLabel="Viajes a oferta"
-        accessibilityHint="Busco viaje y Tengo lugar"
+        onPress={() => parentNav?.navigate('MyTripRequests')}
+        accessibilityLabel="Mis solicitudes de trayecto"
+        accessibilityHint="Solicitudes guardadas cuando no había viajes publicados"
         accessibilityRole="button"
       >
-        <Text style={styles.linkLabel}>Viajes a oferta</Text>
+        <Text style={styles.linkLabel}>Mis solicitudes</Text>
         <Text style={styles.linkArrow}>→</Text>
       </TouchableOpacity>
 

@@ -1,7 +1,7 @@
 /**
  * Detalle de viaje: pasajero ve conductor y puede reservar; conductor ve resumen tipo publicación e Iniciar/Finalizar viaje.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -22,7 +22,10 @@ import type { MainStackParamList } from '../navigation/types';
 import { rideStatusConfig, formatRideDate, formatRideTime } from '../ui/rideStatusConfig';
 import { openNavigation } from '../external-navigation';
 import { getNavigationPreference } from '../settings';
-import { RideDetailRouteMap } from '../components/RideDetailRouteMap';
+import { loadRidePolyline } from '../lib/resolveRidePolyline';
+import { passengerWaypointsBeforeDestination } from '../lib/driverNavWaypoints';
+import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
+import type { Point } from '../lib/geo';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'RideDetail'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'RideDetail'>;
@@ -35,6 +38,10 @@ type PassengerBookingSummary = {
   pickup_label: string | null;
   dropoff_label: string | null;
   payment_status: string | null;
+  pickup_lat: number | null;
+  pickup_lng: number | null;
+  dropoff_lat: number | null;
+  dropoff_lng: number | null;
 };
 
 function bookingStatusLabel(status: string): string {
@@ -84,15 +91,21 @@ export function RideDetailScreen() {
   const [rideStops, setRideStops] = useState<RideStopForReserve[]>([]);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [passengerBooking, setPassengerBooking] = useState<PassengerBookingSummary | null>(null);
+  const [passengerExtrasGeo, setPassengerExtrasGeo] = useState<Point[]>([]);
+  const [driverBookingPins, setDriverBookingPins] = useState<Array<{ pickup: Point; dropoff: Point }>>([]);
+  const [navBasePolyline, setNavBasePolyline] = useState<Point[]>([]);
 
   const loadPassengerBooking = useCallback(async () => {
     if (!session?.id) {
       setPassengerBooking(null);
+      setPassengerExtrasGeo([]);
       return;
     }
     const { data, error } = await supabase
       .from('bookings')
-      .select('id, status, seats_count, price_paid, pickup_label, dropoff_label, payment_status')
+      .select(
+        'id, status, seats_count, price_paid, pickup_label, dropoff_label, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
+      )
       .eq('ride_id', rideId)
       .eq('passenger_id', session.id)
       .neq('status', 'cancelled')
@@ -101,10 +114,12 @@ export function RideDetailScreen() {
       .maybeSingle();
     if (error) {
       setPassengerBooking(null);
+      setPassengerExtrasGeo([]);
       return;
     }
     if (!data) {
       setPassengerBooking(null);
+      setPassengerExtrasGeo([]);
       return;
     }
     setPassengerBooking({
@@ -115,8 +130,67 @@ export function RideDetailScreen() {
       pickup_label: data.pickup_label != null ? String(data.pickup_label) : null,
       dropoff_label: data.dropoff_label != null ? String(data.dropoff_label) : null,
       payment_status: data.payment_status != null ? String(data.payment_status) : null,
+      pickup_lat: data.pickup_lat != null ? Number(data.pickup_lat) : null,
+      pickup_lng: data.pickup_lng != null ? Number(data.pickup_lng) : null,
+      dropoff_lat: data.dropoff_lat != null ? Number(data.dropoff_lat) : null,
+      dropoff_lng: data.dropoff_lng != null ? Number(data.dropoff_lng) : null,
     });
+    const { data: pesRows } = await supabase
+      .from('passenger_extra_stops')
+      .select('lat, lng')
+      .eq('ride_id', rideId)
+      .eq('passenger_id', session.id)
+      .order('stop_order', { ascending: true });
+    setPassengerExtrasGeo(
+      (pesRows ?? [])
+        .filter((r: { lat?: number; lng?: number }) => Number.isFinite(r.lat) && Number.isFinite(r.lng))
+        .map((r: { lat: number; lng: number }) => ({ lat: r.lat, lng: r.lng }))
+    );
   }, [rideId, session?.id]);
+
+  const passengerMapGeo = useMemo((): PassengerBookingMapGeo | null => {
+    if (!passengerBooking) return null;
+    const plat = passengerBooking.pickup_lat;
+    const plng = passengerBooking.pickup_lng;
+    const dlat = passengerBooking.dropoff_lat;
+    const dlng = passengerBooking.dropoff_lng;
+    if (
+      plat == null ||
+      plng == null ||
+      dlat == null ||
+      dlng == null ||
+      ![plat, plng, dlat, dlng].every(Number.isFinite)
+    ) {
+      return null;
+    }
+    return {
+      pickup: { lat: plat, lng: plng },
+      dropoff: { lat: dlat, lng: dlng },
+      extras: passengerExtrasGeo.length > 0 ? passengerExtrasGeo : undefined,
+    };
+  }, [passengerBooking, passengerExtrasGeo]);
+
+  const refetchDriverBookingPins = useCallback(async () => {
+    if (!session?.id || !ride || String(ride.driver_id) !== String(session.id)) {
+      setDriverBookingPins([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('pickup_lat, pickup_lng, dropoff_lat, dropoff_lng')
+      .eq('ride_id', rideId)
+      .neq('status', 'cancelled');
+    if (error) return;
+    const pins = (data ?? [])
+      .map((row: { pickup_lat?: number; pickup_lng?: number; dropoff_lat?: number; dropoff_lng?: number }) => ({
+        pickup: { lat: Number(row.pickup_lat), lng: Number(row.pickup_lng) },
+        dropoff: { lat: Number(row.dropoff_lat), lng: Number(row.dropoff_lng) },
+      }))
+      .filter((x) =>
+        [x.pickup.lat, x.pickup.lng, x.dropoff.lat, x.dropoff.lng].every(Number.isFinite)
+      );
+    setDriverBookingPins(pins);
+  }, [rideId, session?.id, ride]);
 
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
     const quiet = Boolean(opts?.quiet);
@@ -145,11 +219,30 @@ export function RideDetailScreen() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    void refetchDriverBookingPins();
+  }, [refetchDriverBookingPins]);
+
   useFocusEffect(
     useCallback(() => {
       void loadPassengerBooking();
-    }, [loadPassengerBooking])
+      void refetchDriverBookingPins();
+    }, [loadPassengerBooking, refetchDriverBookingPins])
   );
+
+  useEffect(() => {
+    if (!ride) {
+      setNavBasePolyline([]);
+      return;
+    }
+    let alive = true;
+    void loadRidePolyline(ride, rideStops).then((res) => {
+      if (alive) setNavBasePolyline(res.points.length >= 2 ? res.points : []);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [ride, rideStops]);
 
   const runStatusUpdate = useCallback(
     (next: 'en_route' | 'completed') => {
@@ -252,8 +345,13 @@ export function RideDetailScreen() {
       Alert.alert('Navegación', 'Esta parada no tiene coordenadas.');
       return;
     }
+    const dest = { lat: s.lat, lng: s.lng };
+    const via =
+      driverBookingPins.length > 0 && navBasePolyline.length >= 2
+        ? passengerWaypointsBeforeDestination(navBasePolyline, driverBookingPins, dest)
+        : [];
     const pref = await getNavigationPreference();
-    const ok = await openNavigation(s.lat, s.lng, pref);
+    const ok = await openNavigation(s.lat, s.lng, pref, { via });
     if (!ok) {
       const hint =
         pref === 'waze'
@@ -276,7 +374,12 @@ export function RideDetailScreen() {
           <Text style={styles.title}>
             {String(ride.origin_label ?? 'Origen')} → {String(ride.destination_label ?? 'Destino')}
           </Text>
-          <RideDetailRouteMap ride={ride} rideStops={rideStops} height={300} />
+          <RideDetailRouteMap
+            ride={ride}
+            rideStops={rideStops}
+            height={300}
+            otherBookingsGeo={driverBookingPins}
+          />
           <Text style={styles.sectionLabel}>Salida</Text>
           <Text style={styles.bodyLine}>
             {formatRideDate(depIso)} · {formatRideTime(depIso)}
@@ -350,6 +453,12 @@ export function RideDetailScreen() {
                   <Text style={styles.navBtnTextOutline}>Ir a la siguiente parada</Text>
                 </TouchableOpacity>
               ) : null}
+              {driverBookingPins.length > 0 ? (
+                <Text style={styles.navHintMuted}>
+                  La ruta en el mapa externo sigue las subidas y bajadas de pasajeros que caen antes de esa parada;
+                  si hay varias, se abre Google Maps con paradas intermedias.
+                </Text>
+              ) : null}
             </>
           ) : null}
         </>
@@ -395,7 +504,12 @@ export function RideDetailScreen() {
           <Text style={styles.title}>
             {String(ride.origin_label ?? 'Origen')} → {String(ride.destination_label ?? 'Destino')}
           </Text>
-          <RideDetailRouteMap ride={ride} rideStops={rideStops} height={300} />
+          <RideDetailRouteMap
+            ride={ride}
+            rideStops={rideStops}
+            height={300}
+            passengerBookingGeo={passengerMapGeo}
+          />
           <Text style={styles.sectionLabel}>Salida</Text>
           <Text style={styles.bodyLine}>
             {formatRideDate(depIso)} · {formatRideTime(depIso)}
@@ -552,6 +666,12 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '700', color: '#111', lineHeight: 24 },
   bodyLine: { fontSize: 15, color: '#111', fontWeight: '500' },
   bodyMuted: { fontSize: 13, color: '#6b7280', marginTop: 4, lineHeight: 18 },
+  navHintMuted: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 10,
+    lineHeight: 17,
+  },
   description: { fontSize: 14, color: '#374151', lineHeight: 20 },
   stopRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 },
   stopOrder: { fontSize: 14, fontWeight: '700', color: '#166534', width: 22 },

@@ -4,6 +4,7 @@
   "main": "index.ts",
   "scripts": {
     "start": "node scripts/start-metro-android.cjs",
+    "start:clear": "node scripts/start-metro-android.cjs --clear",
     "start:lan": "expo start --lan",
     "start:tunnel": "expo start --tunnel",
     "start:passenger": "cross-env APP_FLAVOR=passenger node scripts/start-metro-android.cjs",
@@ -18,6 +19,7 @@
     "web": "expo start --web",
     "check": "npm run check:ts",
     "check:ts": "tsc --noEmit",
+    "icons:android": "cross-env APP_FLAVOR=passenger node scripts/sync-android-launcher-icons.cjs",
     "build:android:release": "cd android && gradlew.bat clean && cd .. && npx expo run:android --variant release -p 8082",
     "build:android:cloud:apk:preview": "eas build --platform android --profile preview",
     "build:android:cloud:apk:production": "eas build --platform android --profile production"

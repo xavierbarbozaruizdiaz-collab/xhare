@@ -198,6 +198,25 @@ android {
     }
 }
 
+// Si `android/` no está versionado o se clonó sin mipmaps, los XML en mipmap-anydpi-v26 apuntan a
+// @mipmap/ic_launcher_* inexistentes y el launcher muestra el ícono blueprint del sistema.
+def syncLauncherIconsScript = new File(projectRoot, "scripts/sync-android-launcher-icons.cjs")
+def launcherForegroundWebp = file("src/main/res/mipmap-mdpi/ic_launcher_foreground.webp")
+def splashLogoPng = file("src/main/res/drawable/splashscreen_logo.png")
+
+tasks.register("ensureLauncherMipmapsFromExpo", Exec) {
+    group = "build"
+    description = "Genera mipmaps del launcher y splash desde app.config.js + assets/ (solo si faltan)."
+    workingDir = file(projectRoot)
+    environment "APP_FLAVOR", "passenger"
+    commandLine "node", syncLauncherIconsScript.absolutePath
+    onlyIf {
+        syncLauncherIconsScript.exists() && (
+            !launcherForegroundWebp.exists() || !splashLogoPng.exists()
+        )
+    }
+}
+
 // Prepara recursos del launcher según el flavor (para que driver y passenger se vean distintos).
 // Nota: no dependemos del icon generado por Expo, porque en este proyecto los assets no se regeneran por flavor.
 def resRoot = file("src/main/res")
@@ -207,6 +226,7 @@ def assetsDir = new File(projectRoot, "../assets")
 def monoPngAsset = new File(assetsDir, "android-icon-monochrome.png")
 
 tasks.register("prepareLauncherResources") {
+    dependsOn("ensureLauncherMipmapsFromExpo")
     doLast {
         def isDriverBuild = appFlavor == 'driver'
         if (!isDriverBuild) return

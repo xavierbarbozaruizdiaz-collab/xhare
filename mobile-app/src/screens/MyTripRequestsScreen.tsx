@@ -151,6 +151,13 @@ export function MyTripRequestsScreen() {
           <Text style={styles.meta}>
             {formatDate(item.requested_date as string)} · {formatTime(item.requested_time as string)} ·{' '}
             {Number(item.seats ?? 1)} asiento(s)
+            {item.pricing_kind === 'long_distance' &&
+            item.passenger_desired_price_per_seat_gs != null &&
+            Number(item.passenger_desired_price_per_seat_gs) > 0
+              ? ` · Hasta ${Number(item.passenger_desired_price_per_seat_gs).toLocaleString('es-PY')} Gs/asiento`
+              : item.pricing_kind === 'internal'
+                ? ' · Interno (cotizado)'
+                : ''}
           </Text>
           <View style={styles.actions}>
             {status === 'accepted' && rideId && (
@@ -189,6 +196,14 @@ export function MyTripRequestsScreen() {
 
   return (
     <View style={styles.container}>
+      <TouchableOpacity
+        style={styles.newRequestBtn}
+        onPress={() => navigation.navigate('SaveTripRequest', undefined)}
+        accessibilityRole="button"
+        accessibilityLabel="Guardar nueva solicitud de trayecto"
+      >
+        <Text style={styles.newRequestBtnText}>+ Guardar nueva solicitud</Text>
+      </TouchableOpacity>
       <Text style={styles.intro}>
         Son trayectos que guardaste cuando no había viajes. Los conductores pueden ver las pendientes y publicar un
         viaje; si lo hacen, podés reservar.
@@ -216,6 +231,14 @@ export function MyTripRequestsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  newRequestBtn: {
+    backgroundColor: '#166534',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  newRequestBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   intro: {
     fontSize: 14,
     color: '#6b7280',

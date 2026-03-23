@@ -11,6 +11,10 @@ const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// `expo run` / scripts a veces exportan CI=1; Metro entonces avisa "CI mode, reloads disabled".
+// Este script es solo para desarrollo local: forzamos packager normal.
+delete process.env.CI;
+
 /** Evita que Expo pida “¿usar 8082?” en modo no interactivo si quedó un Metro viejo en 8081. */
 function freeWindowsPort8081() {
   if (process.platform !== 'win32') return;

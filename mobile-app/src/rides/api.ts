@@ -3,6 +3,7 @@
  * Aligned with web app Supabase queries and RPCs.
  */
 import { supabase } from '../backend/supabase';
+import { distanceMeters, type Point } from '../lib/geo';
 
 export async function fetchMyRides(driverId: string) {
   const { data, error } = await supabase
@@ -70,6 +71,8 @@ function applyOptionalFromTime(dayStart: Date, fromTimeLocal?: string): Date {
   return out;
 }
 
+export type NearPointFilter = { lat: number; lng: number; /** default 22 */ radiusKm?: number };
+
 /** Search published rides (passenger). Optional date, origin, destination (label match), seats, maxPrice. */
 export async function searchRides(options: {
   date?: string;
@@ -77,17 +80,18 @@ export async function searchRides(options: {
   fromTimeLocal?: string;
   origin?: string;
   destination?: string;
+  /** Si viene, filtra por proximidad al origen del viaje (metros); no combina con `origin` texto en el mismo eje. */
+  originNear?: NearPointFilter;
+  destinationNear?: NearPointFilter;
   seats?: number;
   maxPrice?: number | string;
 }) {
-  const { date, fromTimeLocal, origin, destination, seats = 1, maxPrice } = options;
+  const { date, fromTimeLocal, origin, destination, originNear, destinationNear, seats = 1, maxPrice } = options;
+  // Sin join a `profiles`: la policy solo permite ver otros perfiles a `authenticated`;
+  // con sesión anónima el embed falla y la query puede venir vacía o sin filas útiles.
   let query = supabase
     .from('rides')
-    .select(`
-      *,
-      driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count),
-      ride_stops(*)
-    `)
+    .select(`*, ride_stops(*)`)
     .eq('status', 'published');
 
   const now = new Date();
@@ -102,8 +106,9 @@ export async function searchRides(options: {
       .gte('departure_time', rangeStart.toISOString())
       .lte('departure_time', rangeEnd.toISOString());
   } else {
+    // Sin fecha: próximos viajes publicados (ventana amplia; el listado no debe quedar vacío por un tope corto).
     const endDate = new Date(now);
-    endDate.setDate(endDate.getDate() + 30);
+    endDate.setDate(endDate.getDate() + 365);
     endDate.setHours(23, 59, 59, 999);
     query = query
       .gte('departure_time', now.toISOString())
@@ -132,22 +137,50 @@ export async function searchRides(options: {
     Number(r.total_seats ?? r.available_seats ?? 15);
   list = list
     .map((r: Record<string, unknown> & { id: string }) => {
-      const booked = bookedByRide[r.id];
-      const remaining =
-        booked !== undefined
-          ? Math.max(0, totalSeats(r as { total_seats?: number; available_seats?: number }) - booked)
-          : Math.max(0, Number(r.available_seats ?? totalSeats(r as { total_seats?: number; available_seats?: number })));
+      const cap = totalSeats(r as { total_seats?: number; available_seats?: number });
+      // `get_ride_booked_seats` solo devuelve filas para rides con al menos una reserva;
+      // si no hay fila, los asientos reservados son 0 (no usar solo `available_seats` de la fila, puede estar en 0 por datos viejos).
+      const booked = bookedByRide[r.id] ?? 0;
+      const remaining = Math.max(0, cap - booked);
       return { ...r, available_seats: remaining };
     })
     .filter((r: { available_seats: number }) => r.available_seats >= seats);
 
-  if (origin?.trim()) {
+  const nearM = (a: Point, b: NearPointFilter) => {
+    const rM = Math.max(1, (b.radiusKm ?? 22) * 1000);
+    return distanceMeters(a, { lat: b.lat, lng: b.lng }) <= rM;
+  };
+
+  if (
+    originNear &&
+    Number.isFinite(originNear.lat) &&
+    Number.isFinite(originNear.lng)
+  ) {
+    list = list.filter((r: { origin_lat?: number; origin_lng?: number }) => {
+      const olat = Number(r.origin_lat);
+      const olng = Number(r.origin_lng);
+      if (!Number.isFinite(olat) || !Number.isFinite(olng)) return false;
+      return nearM({ lat: olat, lng: olng }, originNear);
+    });
+  } else if (origin?.trim()) {
     const o = origin.trim().toLowerCase();
     list = list.filter(
       (r: { origin_label?: string | null }) => (r.origin_label ?? '').toLowerCase().includes(o)
     );
   }
-  if (destination?.trim()) {
+
+  if (
+    destinationNear &&
+    Number.isFinite(destinationNear.lat) &&
+    Number.isFinite(destinationNear.lng)
+  ) {
+    list = list.filter((r: { destination_lat?: number; destination_lng?: number }) => {
+      const dlat = Number(r.destination_lat);
+      const dlng = Number(r.destination_lng);
+      if (!Number.isFinite(dlat) || !Number.isFinite(dlng)) return false;
+      return nearM({ lat: dlat, lng: dlng }, destinationNear);
+    });
+  } else if (destination?.trim()) {
     const d = destination.trim().toLowerCase();
     list = list.filter(
       (r: { destination_label?: string | null }) => (r.destination_label ?? '').toLowerCase().includes(d)
@@ -288,7 +321,11 @@ export async function saveTripRequest(params: {
   destinationBarrio?: string | null;
   routePolyline?: Array<{ lat: number; lng: number }> | null;
   routeLengthKm?: number | null;
+  pricingKind?: 'internal' | 'long_distance';
+  passengerDesiredPricePerSeatGs?: number | null;
+  internalQuoteAcknowledged?: boolean | null;
 }): Promise<{ ok: boolean; error?: string }> {
+  const kind = params.pricingKind === 'long_distance' ? 'long_distance' : 'internal';
   const row: Record<string, unknown> = {
     user_id: params.userId,
     origin_lat: params.originLat,
@@ -301,6 +338,7 @@ export async function saveTripRequest(params: {
     requested_time: params.requestedTime,
     seats: Math.max(1, Math.min(50, params.seats ?? 1)),
     status: 'pending',
+    pricing_kind: kind,
   };
   if (params.originCity != null) row.origin_city = params.originCity;
   if (params.originDepartment != null) row.origin_department = params.originDepartment;
@@ -310,6 +348,13 @@ export async function saveTripRequest(params: {
   if (params.destinationBarrio != null) row.destination_barrio = params.destinationBarrio;
   if (params.routePolyline != null && params.routePolyline.length > 0) row.route_polyline = params.routePolyline;
   if (params.routeLengthKm != null) row.route_length_km = params.routeLengthKm;
+  if (kind === 'long_distance' && params.passengerDesiredPricePerSeatGs != null) {
+    row.passenger_desired_price_per_seat_gs = Math.round(params.passengerDesiredPricePerSeatGs);
+    row.internal_quote_acknowledged = null;
+  } else {
+    row.passenger_desired_price_per_seat_gs = null;
+    row.internal_quote_acknowledged = params.internalQuoteAcknowledged === true ? true : null;
+  }
   const { error } = await supabase.from('trip_requests').insert(row);
   if (error) return { ok: false, error: error.message };
   return { ok: true };
@@ -319,7 +364,9 @@ export async function saveTripRequest(params: {
 export async function fetchMyTripRequests(userId: string) {
   const { data, error } = await supabase
     .from('trip_requests')
-    .select('id, origin_label, destination_label, requested_date, requested_time, seats, status, ride_id, created_at')
+    .select(
+      'id, origin_label, destination_label, requested_date, requested_time, seats, status, ride_id, created_at, pricing_kind, passenger_desired_price_per_seat_gs, internal_quote_acknowledged'
+    )
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(50);

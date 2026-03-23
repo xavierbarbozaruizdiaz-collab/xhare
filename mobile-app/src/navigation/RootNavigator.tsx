@@ -33,11 +33,7 @@ import { JoinGroupMapScreen } from '../screens/JoinGroupMapScreen';
 import { VehicleSetupScreen } from '../screens/VehicleSetupScreen';
 import { MessagesScreen } from '../screens/MessagesScreen';
 import { ChatScreen } from '../screens/ChatScreen';
-import { OfferScreen } from '../screens/OfferScreen';
-import { OfferBuscoScreen } from '../screens/OfferBuscoScreen';
-import { OfferTengoScreen } from '../screens/OfferTengoScreen';
-import { OfferBuscoNewScreen } from '../screens/OfferBuscoNewScreen';
-import { OfferTengoNewScreen } from '../screens/OfferTengoNewScreen';
+import { SaveTripRequestScreen } from '../screens/SaveTripRequestScreen';
 import type { RootStackParamList } from './types';
 import type { MainStackParamList } from './types';
 import type { MainTabParamList } from './types';
@@ -170,29 +166,9 @@ function MainStackNavigator() {
         options={{ title: 'Chat' }}
       />
       <MainStack.Screen
-        name="Offer"
-        component={OfferScreen}
-        options={{ title: 'Viajes a oferta' }}
-      />
-      <MainStack.Screen
-        name="OfferBusco"
-        component={OfferBuscoScreen}
-        options={{ title: 'Busco viaje' }}
-      />
-      <MainStack.Screen
-        name="OfferTengo"
-        component={OfferTengoScreen}
-        options={{ title: 'Tengo lugar' }}
-      />
-      <MainStack.Screen
-        name="OfferBuscoNew"
-        component={OfferBuscoNewScreen}
-        options={{ title: 'Nueva solicitud Busco viaje' }}
-      />
-      <MainStack.Screen
-        name="OfferTengoNew"
-        component={OfferTengoNewScreen}
-        options={{ title: 'Publicar Tengo lugar' }}
+        name="SaveTripRequest"
+        component={SaveTripRequestScreen}
+        options={{ title: 'Guardar solicitud' }}
       />
     </MainStack.Navigator>
   );

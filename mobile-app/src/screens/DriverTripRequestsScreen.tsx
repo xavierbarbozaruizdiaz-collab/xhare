@@ -86,7 +86,9 @@ export function DriverTripRequestsScreen() {
       trace('load:supabase trip_requests start');
       const sbQuery = supabase
         .from('trip_requests')
-        .select('id, origin_label, destination_label, requested_date, requested_time, seats, created_at')
+        .select(
+          'id, origin_label, destination_label, requested_date, requested_time, seats, created_at, pricing_kind, passenger_desired_price_per_seat_gs'
+        )
         .eq('status', 'pending')
         .gte('requested_date', today)
         .order('requested_date', { ascending: true })
@@ -166,7 +168,15 @@ export function DriverTripRequestsScreen() {
         <Text style={styles.origin} numberOfLines={1}>{shortLabel(r.origin_label as string)}</Text>
         <Text style={styles.destination} numberOfLines={1}>→ {shortLabel(r.destination_label as string)}</Text>
         <Text style={styles.meta}>
-          {formatDate(r.requested_date as string)} · {formatTime(r.requested_time as string)} · {Number(r.seats ?? 1)} asiento(s)
+          {formatDate(r.requested_date as string)} · {formatTime(r.requested_time as string)} · {Number(r.seats ?? 1)}{' '}
+          asiento(s)
+          {r.pricing_kind === 'long_distance' &&
+          r.passenger_desired_price_per_seat_gs != null &&
+          Number(r.passenger_desired_price_per_seat_gs) > 0
+            ? ` · Pasajero: hasta ${Number(r.passenger_desired_price_per_seat_gs).toLocaleString('es-PY')} Gs/asiento`
+            : r.pricing_kind === 'internal'
+              ? ' · Interno (cotizado)'
+              : ''}
         </Text>
         <TouchableOpacity
           style={styles.primaryBtn}
@@ -198,6 +208,22 @@ export function DriverTripRequestsScreen() {
       >
         <Text style={styles.myRidesBtnText}>Mis viajes publicados</Text>
       </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.publishLink, styles.publishLinkInternal]}
+        onPress={() => parentNav?.navigate('PublishRide', { publishKind: 'internal' })}
+        accessibilityRole="button"
+        accessibilityLabel="Publicar viaje interno"
+      >
+        <Text style={styles.publishLinkText}>Publicar viaje interno</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.publishLink, styles.publishLinkLongDistance]}
+        onPress={() => parentNav?.navigate('PublishRide', { publishKind: 'long_distance' })}
+        accessibilityRole="button"
+        accessibilityLabel="Publicar viaje larga distancia"
+      >
+        <Text style={styles.publishLinkText}>Publicar viaje larga distancia</Text>
+      </TouchableOpacity>
       <Text style={styles.intro}>
         {showGroups
           ? 'Rutas con demanda agrupadas. Actualizá para recalcular grupos; tocá una ruta para ver el mapa y publicar un viaje.'
@@ -211,9 +237,6 @@ export function DriverTripRequestsScreen() {
           <Text style={styles.emptyText}>
             {showGroups ? 'No hay rutas con demanda.' : 'No hay solicitudes pendientes.'}
           </Text>
-          <TouchableOpacity style={styles.publishLink} onPress={() => parentNav?.navigate('PublishRide', {})}>
-            <Text style={styles.publishLinkText}>Publicar un viaje</Text>
-          </TouchableOpacity>
         </View>
       ) : (
         <FlatList
@@ -268,6 +291,16 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
   empty: { alignItems: 'center', paddingVertical: 32 },
   emptyText: { fontSize: 16, color: '#6b7280', marginBottom: 16 },
-  publishLink: { backgroundColor: '#166534', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
+  publishLink: {
+    backgroundColor: '#166534',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    minWidth: 250,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  publishLinkInternal: { backgroundColor: '#166534' },
+  publishLinkLongDistance: { backgroundColor: '#0f766e' },
   publishLinkText: { color: '#fff', fontWeight: '600', fontSize: 15 },
 });

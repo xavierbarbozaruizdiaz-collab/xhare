@@ -1,22 +1,42 @@
 /**
- * Mapa de solo lectura: polyline del viaje (OSRM guardada o recalculada vía API) y marcadores de paradas del conductor.
+ * Mapa de solo lectura: ruta del conductor + opcional ruta del pasajero (reserva) y pins de otras reservas (conductor).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
-import Constants from 'expo-constants';
 import MapView, { Polyline, Marker } from 'react-native-maps';
 import { androidMapProvider } from '../lib/androidMapProvider';
 import { type Point } from '../lib/geo';
 import { loadRidePolyline, captionForPolylineSource } from '../lib/resolveRidePolyline';
 import type { RideStopForReserve } from '../rides/api';
+import {
+  buildPassengerMergedRoute,
+  buildDriverMergedRouteThroughBookings,
+  concatPassengerMergedParts,
+} from '../lib/passengerMergedRoute';
+import {
+  driverIntermediateStopsBetween,
+  mergeOsrmWaypointsBetween,
+} from '../lib/passengerRouteWaypoints';
 
 const GREEN = '#166534';
+const SLATE = '#64748b';
+const PASSENGER_AB = '#2563eb';
+const PASSENGER_EXTRA = '#0891b2';
+
+export type PassengerBookingMapGeo = {
+  pickup: Point;
+  dropoff: Point;
+  extras?: Point[];
+};
 
 type Props = {
   ride: Record<string, unknown>;
   rideStops: RideStopForReserve[];
-  /** Altura del mapa en px */
   height?: number;
+  /** Pasajero con reserva: A/B, paradas extra y misma OSRM que al reservar (respeta paradas del conductor en el tramo). */
+  passengerBookingGeo?: PassengerBookingMapGeo | null;
+  /** Conductor: subidas/bajadas de todas las reservas no canceladas. */
+  otherBookingsGeo?: Array<{ pickup: Point; dropoff: Point }>;
 };
 
 function regionForPoints(pts: Point[]) {
@@ -34,11 +54,26 @@ function regionForPoints(pts: Point[]) {
   };
 }
 
-export function RideDetailRouteMap({ ride, rideStops, height = 280 }: Props) {
+function bookingGeoKey(g: PassengerBookingMapGeo | null | undefined): string {
+  if (!g) return '';
+  const ex = (g.extras ?? []).map((p) => `${p.lat},${p.lng}`).join(';');
+  return `${g.pickup.lat},${g.pickup.lng}|${g.dropoff.lat},${g.dropoff.lng}|${ex}`;
+}
+
+export function RideDetailRouteMap({
+  ride,
+  rideStops,
+  height = 280,
+  passengerBookingGeo = null,
+  otherBookingsGeo = [],
+}: Props) {
   const [polyline, setPolyline] = useState<Point[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
-  const appFlavor = (Constants.expoConfig?.extra as { APP_FLAVOR?: string } | undefined)?.APP_FLAVOR;
+  const [passengerLine, setPassengerLine] = useState<Point[]>([]);
+  const [passengerLineLoading, setPassengerLineLoading] = useState(false);
+  const [driverBookingsLine, setDriverBookingsLine] = useState<Point[]>([]);
+  const [driverBookingsLineLoading, setDriverBookingsLineLoading] = useState(false);
 
   const sortedStops = useMemo(
     () => [...rideStops].sort((a, b) => a.stop_order - b.stop_order),
@@ -52,6 +87,16 @@ export function RideDetailRouteMap({ ride, rideStops, height = 280 }: Props) {
   const stopsRef = useRef(sortedStops);
   rideRef.current = ride;
   stopsRef.current = sortedStops;
+
+  const pbKey = useMemo(() => bookingGeoKey(passengerBookingGeo), [passengerBookingGeo]);
+
+  const obKey = useMemo(
+    () =>
+      otherBookingsGeo
+        .map((b) => `${b.pickup.lat},${b.pickup.lng}|${b.dropoff.lat},${b.dropoff.lng}`)
+        .join(';'),
+    [otherBookingsGeo]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -73,14 +118,65 @@ export function RideDetailRouteMap({ ride, rideStops, height = 280 }: Props) {
     };
   }, [rideId, polyLen, stopsKey]);
 
+  useEffect(() => {
+    if (!passengerBookingGeo || polyline.length < 2) {
+      setPassengerLine([]);
+      setPassengerLineLoading(false);
+      return;
+    }
+    const { pickup, dropoff, extras = [] } = passengerBookingGeo;
+    let cancelled = false;
+    setPassengerLineLoading(true);
+    const drv = driverIntermediateStopsBetween(polyline, pickup, dropoff, sortedStops);
+    const wp = mergeOsrmWaypointsBetween(polyline, pickup, dropoff, extras, drv);
+    void buildPassengerMergedRoute(polyline, pickup, dropoff, wp).then((seg) => {
+      if (cancelled) return;
+      if (seg) setPassengerLine(concatPassengerMergedParts(seg));
+      else setPassengerLine([]);
+      setPassengerLineLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pbKey, polyline, stopsKey, sortedStops]);
+
+  useEffect(() => {
+    if (passengerBookingGeo != null || otherBookingsGeo.length === 0 || polyline.length < 2) {
+      setDriverBookingsLine([]);
+      setDriverBookingsLineLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDriverBookingsLineLoading(true);
+    void buildDriverMergedRouteThroughBookings(polyline, sortedStops, otherBookingsGeo).then((pts) => {
+      if (cancelled) return;
+      setDriverBookingsLine(pts ?? []);
+      setDriverBookingsLineLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [obKey, polyline, stopsKey, passengerBookingGeo, sortedStops]);
+
   const markerCoords: Point[] = useMemo(() => {
     return sortedStops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng)).map((s) => ({ lat: s.lat, lng: s.lng }));
   }, [sortedStops]);
 
   const regionPts = useMemo(() => {
+    const pts: Point[] = [...polyline, ...passengerLine, ...driverBookingsLine];
+    if (passengerBookingGeo) {
+      pts.push(passengerBookingGeo.pickup, passengerBookingGeo.dropoff);
+      (passengerBookingGeo.extras ?? []).forEach((p) => pts.push(p));
+    }
+    otherBookingsGeo.forEach((b) => {
+      pts.push(b.pickup, b.dropoff);
+    });
+    if (pts.length >= 2) return pts;
     if (polyline.length >= 2) return polyline;
+    if (passengerLine.length >= 2) return passengerLine;
+    if (driverBookingsLine.length >= 2) return driverBookingsLine;
     return markerCoords;
-  }, [polyline, markerCoords]);
+  }, [polyline, passengerLine, driverBookingsLine, passengerBookingGeo, otherBookingsGeo, markerCoords]);
 
   const region = useMemo(() => regionForPoints(regionPts), [regionPts]);
 
@@ -89,11 +185,31 @@ export function RideDetailRouteMap({ ride, rideStops, height = 280 }: Props) {
     [polyline]
   );
 
+  const passengerLineCoords = useMemo(
+    () => passengerLine.map((p) => ({ latitude: p.lat, longitude: p.lng })),
+    [passengerLine]
+  );
+
+  const driverBookingsLineCoords = useMemo(
+    () => driverBookingsLine.map((p) => ({ latitude: p.lat, longitude: p.lng })),
+    [driverBookingsLine]
+  );
+
+  const overlayLineCoords = passengerLineCoords.length >= 2 ? passengerLineCoords : driverBookingsLineCoords;
+
+  const emphasizePassenger = Boolean(passengerBookingGeo);
+  const showOtherPins = otherBookingsGeo.length > 0;
+  /** Una sola ruta “principal”: si el merge con reservas existe, no duplicar la polyline publicada. */
+  const hideBaseUnderDriverMerged =
+    showOtherPins && !passengerBookingGeo && driverBookingsLine.length >= 2;
+  const driverLineColor = emphasizePassenger || showOtherPins ? SLATE : GREEN;
+  const driverLineWidth = emphasizePassenger || showOtherPins ? 3 : 4;
+
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
     return null;
   }
 
-  if (markerCoords.length === 0 && polyline.length < 2) {
+  if (markerCoords.length === 0 && polyline.length < 2 && overlayLineCoords.length < 2) {
     return (
       <View style={[styles.fallbackBox, { minHeight: height * 0.35 }]}>
         <Text style={styles.fallbackText}>Este viaje no tiene coordenadas de ruta para mostrar en el mapa.</Text>
@@ -113,8 +229,11 @@ export function RideDetailRouteMap({ ride, rideStops, height = 280 }: Props) {
           zoomEnabled
           rotateEnabled={false}
         >
-          {polylineCoords.length >= 2 && (
-            <Polyline coordinates={polylineCoords} strokeColor={GREEN} strokeWidth={4} />
+          {polylineCoords.length >= 2 && !hideBaseUnderDriverMerged ? (
+            <Polyline coordinates={polylineCoords} strokeColor={driverLineColor} strokeWidth={driverLineWidth} />
+          ) : null}
+          {overlayLineCoords.length >= 2 && (
+            <Polyline coordinates={overlayLineCoords} strokeColor={GREEN} strokeWidth={5} />
           )}
           {sortedStops.map((s, i) => {
             if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return null;
@@ -138,18 +257,79 @@ export function RideDetailRouteMap({ ride, rideStops, height = 280 }: Props) {
               </Marker>
             );
           })}
+          {passengerBookingGeo ? (
+            <>
+              <Marker
+                coordinate={{
+                  latitude: passengerBookingGeo.pickup.lat,
+                  longitude: passengerBookingGeo.pickup.lng,
+                }}
+                anchor={{ x: 0.5, y: 0.5 }}
+                tracksViewChanges={Platform.OS === 'android'}
+                title="Tu subida"
+              >
+                <View style={[styles.routeStopDot, styles.passengerPickupDot]} collapsable={false} />
+              </Marker>
+              <Marker
+                coordinate={{
+                  latitude: passengerBookingGeo.dropoff.lat,
+                  longitude: passengerBookingGeo.dropoff.lng,
+                }}
+                anchor={{ x: 0.5, y: 0.5 }}
+                tracksViewChanges={Platform.OS === 'android'}
+                title="Tu bajada"
+              >
+                <View style={[styles.routeStopDot, styles.passengerDropDot]} collapsable={false} />
+              </Marker>
+              {(passengerBookingGeo.extras ?? []).map((p, i) => (
+                <Marker
+                  key={`pex-${i}`}
+                  coordinate={{ latitude: p.lat, longitude: p.lng }}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                  tracksViewChanges={Platform.OS === 'android'}
+                  title={`Tu parada ${i + 1}`}
+                >
+                  <View style={[styles.routeStopDot, styles.passengerExtraDot]} collapsable={false} />
+                </Marker>
+              ))}
+            </>
+          ) : null}
+          {otherBookingsGeo.map((b, i) => (
+            <React.Fragment key={`ob-${i}`}>
+              <Marker
+                coordinate={{ latitude: b.pickup.lat, longitude: b.pickup.lng }}
+                anchor={{ x: 0.5, y: 0.5 }}
+                tracksViewChanges={Platform.OS === 'android'}
+                title={`Subida pasajero ${i + 1}`}
+              >
+                <View style={[styles.smallPin, styles.otherPickup]} collapsable={false} />
+              </Marker>
+              <Marker
+                coordinate={{ latitude: b.dropoff.lat, longitude: b.dropoff.lng }}
+                anchor={{ x: 0.5, y: 0.5 }}
+                tracksViewChanges={Platform.OS === 'android'}
+                title={`Bajada pasajero ${i + 1}`}
+              >
+                <View style={[styles.smallPin, styles.otherDropoff]} collapsable={false} />
+              </Marker>
+            </React.Fragment>
+          ))}
         </MapView>
-        {fetching ? (
+        {fetching || passengerLineLoading || driverBookingsLineLoading ? (
           <View style={styles.loadingOverlay} pointerEvents="none">
             <ActivityIndicator size="large" color={GREEN} />
           </View>
         ) : null}
       </View>
       {note ? <Text style={styles.note}>{note}</Text> : null}
-      {__DEV__ && Platform.OS === 'android' && appFlavor === 'driver' ? (
-        <Text style={styles.mapsKeyHint}>
-          Dev: mapa gris suele ser API key de Maps sin paquete{' '}
-          <Text style={styles.mapsKeyMono}>com.xhare.driver</Text> ni SHA correcto en Google Cloud.
+      {passengerBookingGeo && passengerLine.length < 2 && !passengerLineLoading ? (
+        <Text style={styles.noteMuted}>
+          Tu tramo por calles no pudo calcularse ahora; igual ves subida y bajada en el mapa.
+        </Text>
+      ) : null}
+      {showOtherPins && !passengerBookingGeo && driverBookingsLine.length < 2 && !driverBookingsLineLoading ? (
+        <Text style={styles.noteMuted}>
+          La ruta ajustada por las reservas no pudo calcularse ahora; ves la ruta publicada y los puntos de subida/bajada.
         </Text>
       ) : null}
     </View>
@@ -179,8 +359,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
   note: { fontSize: 12, color: '#6b7280', marginTop: 8, lineHeight: 17 },
-  mapsKeyHint: { fontSize: 11, color: '#92400e', marginTop: 8, lineHeight: 16 },
-  mapsKeyMono: { fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }), fontSize: 11 },
+  noteMuted: { fontSize: 11, color: '#9ca3af', marginTop: 6, lineHeight: 16 },
   fallbackBox: {
     padding: 14,
     backgroundColor: '#f9fafb',
@@ -207,6 +386,19 @@ const styles = StyleSheet.create({
       android: { elevation: 3 },
     }),
   },
+  passengerPickupDot: { backgroundColor: PASSENGER_AB, width: 18, height: 18, borderRadius: 9 },
+  passengerDropDot: { backgroundColor: '#7c3aed', width: 18, height: 18, borderRadius: 9 },
+  passengerExtraDot: { backgroundColor: PASSENGER_EXTRA, width: 15, height: 15, borderRadius: 8 },
+  smallPin: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#fff',
+    ...Platform.select({ android: { elevation: 2 } }),
+  },
+  otherPickup: { backgroundColor: '#0ea5e9' },
+  otherDropoff: { backgroundColor: '#f97316' },
   routeStopStart: { backgroundColor: '#15803d' },
   routeStopMid: { backgroundColor: '#d97706' },
   routeStopEnd: { backgroundColor: '#b91c1c' },

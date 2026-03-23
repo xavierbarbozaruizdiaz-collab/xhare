@@ -1,5 +1,5 @@
 /**
- * Home base: welcome, role banners (driver_pending, admin), short links (Mensajes, Viajes a oferta).
+ * Home base: welcome, role banners (driver_pending, admin), short links (Mensajes, Mis solicitudes).
  */
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
@@ -17,6 +17,7 @@ export function HomeScreen() {
   const firstName = session?.full_name?.trim()?.split(/\s+/)[0];
   const role = session?.role;
   const flavor = getAppFlavor();
+  const isPassengerFlavor = flavor !== 'driver';
   const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
   return (
@@ -44,7 +45,7 @@ export function HomeScreen() {
             ? 'En la pestaña Conductor tenés solicitudes y el botón Mis viajes publicados para ver lo que publicaste.'
             : 'En Pasajero podés unirte a rutas con demanda. Para viajes ya publicados: Viajes disponibles (lista de hoy) o Buscar viajes (fecha, origen y destino).'}
         </Text>
-        {flavor !== 'driver' ? (
+        {isPassengerFlavor ? (
           <View style={styles.passengerRideActions}>
             <TouchableOpacity
               style={styles.linkBtnOutline}
@@ -64,7 +65,7 @@ export function HomeScreen() {
             </TouchableOpacity>
           </View>
         ) : null}
-        {session ? (
+        {isPassengerFlavor && session ? (
           <TouchableOpacity
             style={styles.linkBtnReservas}
             onPress={() => parentNav?.navigate('MyBookings')}
@@ -78,8 +79,8 @@ export function HomeScreen() {
           <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('Messages')}>
             <Text style={styles.linkBtnText}>Mensajes</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('Offer')}>
-            <Text style={styles.linkBtnText}>Viajes a oferta</Text>
+          <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('MyTripRequests')}>
+            <Text style={styles.linkBtnText}>Mis solicitudes</Text>
           </TouchableOpacity>
         </View>
         {flavor === 'driver' ? (

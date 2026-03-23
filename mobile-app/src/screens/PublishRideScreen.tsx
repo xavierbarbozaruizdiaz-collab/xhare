@@ -32,6 +32,7 @@ import type { MainStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'PublishRide'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'PublishRide'>;
+type PublishKind = 'internal' | 'long_distance';
 
 type Point = { lat: number; lng: number; label?: string };
 
@@ -88,6 +89,8 @@ export function PublishRideScreen() {
   const route = useRoute<ScreenRoute>();
   const { session } = useAuth();
   const params = route.params ?? {};
+  const publishKind: PublishKind = params.publishKind === 'long_distance' ? 'long_distance' : 'internal';
+  const isLongDistance = publishKind === 'long_distance';
 
   const tripRequestIdParam = params.tripRequestId;
   const fromRideIdParam = params.fromRideId;
@@ -114,6 +117,7 @@ export function PublishRideScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [departureFlexibility, setDepartureFlexibility] = useState<'strict_5' | 'flexible_30'>('strict_5');
   const [description, setDescription] = useState('');
+  const [manualSeatPriceInput, setManualSeatPriceInput] = useState('');
   const [routePolyline, setRoutePolyline] = useState<Point[]>([]);
   const [durationMin, setDurationMin] = useState(60);
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
@@ -564,6 +568,14 @@ export function PublishRideScreen() {
       Alert.alert('Fecha', 'La salida debe ser en el futuro.');
       return;
     }
+    const manualSeatPrice =
+      isLongDistance
+        ? Math.max(0, parseInt(manualSeatPriceInput.replace(/\D/g, ''), 10) || 0)
+        : 0;
+    if (isLongDistance && manualSeatPrice < 1000) {
+      Alert.alert('Precio por asiento', 'Para viaje larga distancia, definí un precio por asiento válido.');
+      return;
+    }
 
     setSubmitting(true);
     setFormError(null);
@@ -599,7 +611,7 @@ export function PublishRideScreen() {
         destination_label: destination.label ?? null,
         departure_time: departureDateTime.toISOString(),
         estimated_duration_minutes: dur,
-        price_per_seat: 0,
+        price_per_seat: manualSeatPrice,
         total_seats: userProfile.vehicle_seat_count,
         available_seats: userProfile.vehicle_seat_count,
         capacity: userProfile.vehicle_seat_count,
@@ -733,6 +745,16 @@ export function PublishRideScreen() {
           Configurá EXPO_PUBLIC_API_BASE_URL para ver sugerencias de dirección y la ruta en el mapa.
         </Text>
       )}
+      <View style={[styles.kindBanner, isLongDistance ? styles.kindBannerLong : styles.kindBannerInternal]}>
+        <Text style={styles.kindBannerTitle}>
+          {isLongDistance ? 'Publicando: viaje larga distancia' : 'Publicando: viaje interno'}
+        </Text>
+        <Text style={styles.kindBannerText}>
+          {isLongDistance
+            ? 'Solo en esta modalidad el conductor define el precio por asiento.'
+            : 'El precio final lo define el tramo elegido por el pasajero al reservar.'}
+        </Text>
+      </View>
 
       {distanceKm != null && (
         <Text style={styles.metaLine}>
@@ -1012,9 +1034,26 @@ export function PublishRideScreen() {
         <Text style={styles.seatsHint}>(según tu vehículo, no editable)</Text>
       </Text>
 
-      <Text style={styles.priceNote}>
-        El precio lo define el tramo del pasajero (origen–destino o paradas), no el conductor.
-      </Text>
+      {isLongDistance ? (
+        <>
+          <Text style={styles.label}>Precio por asiento (larga distancia)</Text>
+          <TextInput
+            style={styles.input}
+            value={manualSeatPriceInput}
+            onChangeText={(t) => setManualSeatPriceInput(t.replace(/[^\d]/g, ''))}
+            keyboardType="number-pad"
+            placeholder="Ej. 25000"
+            placeholderTextColor="#9ca3af"
+          />
+          <Text style={styles.priceNote}>
+            Este valor lo define el conductor y se usa como precio por asiento para la reserva.
+          </Text>
+        </>
+      ) : (
+        <Text style={styles.priceNote}>
+          Viaje interno: el precio lo define el tramo del pasajero (origen–destino o paradas).
+        </Text>
+      )}
 
       <Text style={styles.label}>Descripción (opcional)</Text>
       <TextInput
@@ -1036,7 +1075,9 @@ export function PublishRideScreen() {
         {submitting ? (
           <ActivityIndicator color="#fff" />
         ) : (
-          <Text style={styles.primaryBtnText}>Publicar viaje</Text>
+          <Text style={styles.primaryBtnText}>
+            {isLongDistance ? 'Publicar viaje larga distancia' : 'Publicar viaje interno'}
+          </Text>
         )}
       </TouchableOpacity>
 
@@ -1064,6 +1105,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   metaLine: { fontSize: 14, color: GREEN, fontWeight: '600', marginBottom: 8 },
+  kindBanner: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 10,
+    marginBottom: 10,
+  },
+  kindBannerInternal: { backgroundColor: '#f0fdf4', borderColor: '#86efac' },
+  kindBannerLong: { backgroundColor: '#ecfeff', borderColor: '#67e8f9' },
+  kindBannerTitle: { fontSize: 13, fontWeight: '700', color: '#14532d' },
+  kindBannerText: { fontSize: 12, color: '#4b5563', marginTop: 4, lineHeight: 17 },
   mapWrap: {
     height: 200,
     borderRadius: 12,

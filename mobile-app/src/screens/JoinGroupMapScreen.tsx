@@ -105,6 +105,8 @@ export function JoinGroupMapScreen() {
         destinationBarrio: destPlace.barrio ?? null,
         routePolyline: routePolyline ?? null,
         routeLengthKm: routeLengthKm ?? null,
+        pricingKind: 'internal',
+        internalQuoteAcknowledged: true,
       });
       if (result.ok) setDone(true);
       else setError(result.error ?? 'No se pudo guardar.');
