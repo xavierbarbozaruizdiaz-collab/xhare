@@ -5,7 +5,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { supabase } from '../backend/supabase';
+import { raceWithTimeout } from '../backend/withTimeout';
 import { getSessionProfile, getSessionProfileFromSession, type SessionProfile } from './session';
+
+const GET_SESSION_TIMEOUT_MS = 12_000;
 
 type AuthContextValue = {
   session: SessionProfile | null;
@@ -46,7 +49,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const {
           data: { session },
-        } = await supabase.auth.getSession();
+        } = await raceWithTimeout(supabase.auth.getSession(), GET_SESSION_TIMEOUT_MS, () => ({
+          data: { session: null },
+          error: null,
+        }));
         const profile = await getSessionProfileFromSession(session);
         if (!cancelled) {
           clearTimeout(timeoutId);

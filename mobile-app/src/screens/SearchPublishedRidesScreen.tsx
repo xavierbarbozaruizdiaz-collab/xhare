@@ -40,6 +40,13 @@ function applyRideKindFilter(
   });
 }
 
+/** Radio en mapa según tipo: internos = pocos km; larga distancia = corredor amplio. */
+function mapSearchRadiusKmForRideKind(rideKind: 'all' | 'internal' | 'long_distance'): number {
+  if (rideKind === 'internal') return 1;
+  if (rideKind === 'long_distance') return 50;
+  return 10;
+}
+
 type BuscoFromSearchPayload = {
   originLabel: string;
   destinationLabel: string;
@@ -95,7 +102,7 @@ function SearchEmptyResults({
             </Text>
           ))}
           <Text style={styles.emptyMuted}>
-            El mapa usa un radio aproximado de 22 km por punto; fecha y hora acotan al día elegido.
+            Con Interno el mapa usa ~1 km por punto; con Larga distancia ~50 km; con Todos ~10 km. Coincide con origen/destino del viaje o con su ruta; fecha y hora acotan el día.
           </Text>
         </View>
       ) : null}
@@ -166,16 +173,17 @@ export function SearchPublishedRidesScreen() {
     setLoading(true);
     setList([]);
     try {
+      const mapKm = mapSearchRadiusKmForRideKind(rideKind);
       const rows = (await searchRides({
         date: date.trim() || undefined,
         fromTimeLocal: date.trim() && fromTime.trim() ? fromTime.trim() : undefined,
         origin: originGeo ? undefined : origin.trim() || undefined,
         destination: destGeo ? undefined : destination.trim() || undefined,
         originNear: originGeo
-          ? { lat: originGeo.lat, lng: originGeo.lng, radiusKm: 22 }
+          ? { lat: originGeo.lat, lng: originGeo.lng, radiusKm: mapKm }
           : undefined,
         destinationNear: destGeo
-          ? { lat: destGeo.lat, lng: destGeo.lng, radiusKm: 22 }
+          ? { lat: destGeo.lat, lng: destGeo.lng, radiusKm: mapKm }
           : undefined,
         seats: 1,
       })) as Record<string, unknown>[];
@@ -210,9 +218,17 @@ export function SearchPublishedRidesScreen() {
     if (date.trim()) {
       parts.push(`Fecha: ${date.trim()}${fromTime.trim() ? `, desde ${fromTime.trim()}` : ''}`);
     }
-    if (originGeo) parts.push('Origen: punto en mapa (~22 km alrededor)');
+    if (originGeo) {
+      const km = mapSearchRadiusKmForRideKind(rideKind);
+      parts.push(
+        `Origen: mapa (~${km} km según tipo de viaje; origen del viaje o su ruta)`
+      );
+    }
     else if (origin.trim()) parts.push(`Origen: texto “${origin.trim().slice(0, 48)}${origin.trim().length > 48 ? '…' : ''}”`);
-    if (destGeo) parts.push('Destino: punto en mapa (~22 km alrededor)');
+    if (destGeo) {
+      const km = mapSearchRadiusKmForRideKind(rideKind);
+      parts.push(`Destino: mapa (~${km} km según tipo de viaje; destino del viaje o su ruta)`);
+    }
     else if (destination.trim()) {
       parts.push(
         `Destino: texto “${destination.trim().slice(0, 48)}${destination.trim().length > 48 ? '…' : ''}”`
@@ -339,6 +355,7 @@ export function SearchPublishedRidesScreen() {
         onDestinationChange={setDestGeo}
         onOriginLabelResolved={setOrigin}
         onDestinationLabelResolved={setDestination}
+        proximityRadiusKm={mapSearchRadiusKmForRideKind(rideKind)}
         height={240}
       />
 

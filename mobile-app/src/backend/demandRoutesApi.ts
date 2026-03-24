@@ -8,6 +8,9 @@
 import { apiGet, apiPost } from './api';
 import { supabase, isEnvConfigured } from './supabase';
 import { env } from '../core/env';
+import { raceWithTimeout } from './withTimeout';
+
+const SUPABASE_QUERY_TIMEOUT_MS = 28_000;
 
 function getBase(): string {
   const base = env.apiBaseUrl?.trim();
@@ -95,7 +98,19 @@ export async function fetchDemandRoutes(params?: {
   if (params?.requested_date_from) q = q.gte('requested_date', params.requested_date_from);
   if (params?.requested_date_to) q = q.lte('requested_date', params.requested_date_to);
 
-  const { data, error } = await q;
+  const groupsQuery = q;
+  const { data, error } = await raceWithTimeout(
+    groupsQuery,
+    SUPABASE_QUERY_TIMEOUT_MS,
+    () =>
+      ({
+        data: null,
+        error: {
+          message:
+            'Tiempo de espera al cargar rutas con demanda. Revisá conexión, VPN o que Supabase responda.',
+        },
+      }) as Awaited<typeof groupsQuery>
+  );
   if (error) return { groups: [], error: error.message };
   return { groups: (data ?? []).map((row) => mapGroupRow(row as Record<string, unknown>)) };
 }
@@ -107,6 +122,8 @@ async function fetchDemandRouteDetailFromSupabase(
     return { detail: null, error: 'Supabase no configurado' };
   }
 
+  return raceWithTimeout(
+    (async (): Promise<{ detail: DemandRouteDetail | null; error?: string }> => {
   const { data: row, error: gErr } = await supabase
     .from('demand_route_groups')
     .select(
@@ -148,6 +165,14 @@ async function fetchDemandRouteDetailFromSupabase(
 
   const base = mapGroupRow(row as Record<string, unknown>);
   return { detail: { ...base, passengers } };
+    })(),
+    SUPABASE_QUERY_TIMEOUT_MS,
+    () => ({
+      detail: null,
+      error:
+        'Tiempo de espera al cargar el detalle de la ruta. Revisá conexión o intentá de nuevo.',
+    })
+  );
 }
 
 export async function fetchDemandRouteDetail(

@@ -67,6 +67,8 @@ type Props = {
   onDestinationChange: (p: Point | null) => void;
   onOriginLabelResolved?: (label: string) => void;
   onDestinationLabelResolved?: (label: string) => void;
+  /** Radio de búsqueda alrededor del pin (según tipo de viaje en la pantalla de búsqueda). */
+  proximityRadiusKm?: number;
   height?: number;
 };
 
@@ -110,6 +112,7 @@ export function SearchOriginDestinationMap({
   onDestinationChange,
   onOriginLabelResolved,
   onDestinationLabelResolved,
+  proximityRadiusKm = 10,
   height = 220,
 }: Props) {
   const mapRef = useRef<MapView>(null);
@@ -274,8 +277,9 @@ export function SearchOriginDestinationMap({
     <View style={styles.wrap}>
       <Text style={styles.sectionLabel}>Mapa (opcional)</Text>
       <Text style={styles.hint}>
-        Tocá un botón de modo o el mapa para abrir pantalla completa. Ahí tocás el mapa para fijar origen o destino
-        (≈22 km de filtro). Podés usar solo texto arriba si preferís.
+        Tocá un botón de modo o el mapa para abrir pantalla completa. Ahí tocás el mapa para fijar origen o destino (en
+        esta búsqueda ~{proximityRadiusKm} km alrededor del pin, según si elegiste Interno / Todos / Larga distancia; se
+        priorizan viajes cuya ruta pasa cerca). Podés usar solo texto arriba si preferís.
       </Text>
 
       <ModeChipRow

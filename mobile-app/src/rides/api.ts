@@ -3,7 +3,85 @@
  * Aligned with web app Supabase queries and RPCs.
  */
 import { supabase } from '../backend/supabase';
-import { distanceMeters, type Point } from '../lib/geo';
+import { raceWithTimeout } from '../backend/withTimeout';
+import { distanceMeters, distancePointToPolylineMeters, type Point } from '../lib/geo';
+
+const SUPABASE_QUERY_TIMEOUT_MS = 28_000;
+
+function normalizeSearchText(s: string): string {
+  return String(s ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+/** Coincidencia más estricta: frase completa o ≥70% de palabras significativas (≥3 letras). */
+function labelMatchesSearchText(label: string, query: string): boolean {
+  const l = normalizeSearchText(label);
+  const qRaw = normalizeSearchText(query);
+  if (!qRaw) return true;
+  if (l.includes(qRaw)) return true;
+  const tokens = qRaw.split(/\s+/).filter((t) => t.length >= 2);
+  const sig = tokens.filter((t) => t.length >= 3);
+  if (sig.length === 0) return l.includes(qRaw);
+  const matched = sig.filter((t) => l.includes(t)).length;
+  return matched >= Math.max(1, Math.ceil(sig.length * 0.7));
+}
+
+function textMatchStrength(label: string, query: string): number {
+  const l = normalizeSearchText(label);
+  const qRaw = normalizeSearchText(query);
+  if (!qRaw) return 0;
+  let score = l.includes(qRaw) ? 1000 : 0;
+  const tokens = qRaw.split(/\s+/).filter((t) => t.length >= 3);
+  for (const t of tokens) {
+    if (l.includes(t)) score += 100;
+    const idx = l.indexOf(t);
+    if (idx >= 0) score += Math.max(0, 50 - idx);
+  }
+  return score;
+}
+
+function parseRideBasePolyline(ride: Record<string, unknown>): Point[] {
+  const raw = ride.base_route_polyline;
+  if (!Array.isArray(raw)) return [];
+  const out: Point[] = [];
+  for (const p of raw) {
+    if (p && typeof p === 'object' && 'lat' in p && 'lng' in p) {
+      const lat = Number((p as { lat: unknown }).lat);
+      const lng = Number((p as { lng: unknown }).lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) out.push({ lat, lng });
+    }
+  }
+  return out;
+}
+
+/** Distancia del punto del usuario al “donde podría subir”: min(origen publicado, corredor de la ruta). */
+function metersUserToRidePickupRegion(ride: Record<string, unknown>, user: Point): number {
+  const poly = parseRideBasePolyline(ride);
+  const olat = Number(ride.origin_lat);
+  const olng = Number(ride.origin_lng);
+  const toOrigin =
+    Number.isFinite(olat) && Number.isFinite(olng) ? distanceMeters(user, { lat: olat, lng: olng }) : Infinity;
+  if (poly.length >= 2) {
+    return Math.min(toOrigin, distancePointToPolylineMeters(user, poly));
+  }
+  return toOrigin;
+}
+
+/** Distancia del punto del usuario al “donde podría bajar”: min(destino publicado, corredor de la ruta). */
+function metersUserToRideDropoffRegion(ride: Record<string, unknown>, user: Point): number {
+  const poly = parseRideBasePolyline(ride);
+  const dlat = Number(ride.destination_lat);
+  const dlng = Number(ride.destination_lng);
+  const toDest =
+    Number.isFinite(dlat) && Number.isFinite(dlng) ? distanceMeters(user, { lat: dlat, lng: dlng }) : Infinity;
+  if (poly.length >= 2) {
+    return Math.min(toDest, distancePointToPolylineMeters(user, poly));
+  }
+  return toDest;
+}
 
 export async function fetchMyRides(driverId: string) {
   const { data, error } = await supabase
@@ -115,7 +193,17 @@ export async function searchRides(options: {
       .lte('departure_time', endDate.toISOString());
   }
 
-  const { data, error } = await query.order('departure_time', { ascending: true }).limit(150);
+  const ridesListQuery = query.order('departure_time', { ascending: true }).limit(220);
+  const { data, error } = await raceWithTimeout(
+    ridesListQuery,
+    SUPABASE_QUERY_TIMEOUT_MS,
+    () =>
+      ({
+        data: null,
+        error: { message: 'SUPABASE_QUERY_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+      }) as Awaited<typeof ridesListQuery>
+  );
+  if (error?.message === 'SUPABASE_QUERY_TIMEOUT') return [];
   if (error) throw error;
   let list = (data ?? []).filter(
     (r: { status: string; departure_time?: string }) =>
@@ -125,7 +213,11 @@ export async function searchRides(options: {
   const rideIds = list.map((r: { id: string }) => r.id);
   const bookedByRide: Record<string, number> = {};
   if (rideIds.length > 0) {
-    const { data: seatData } = await supabase.rpc('get_ride_booked_seats', { ride_ids: rideIds });
+    const rpcCall = supabase.rpc('get_ride_booked_seats', { ride_ids: rideIds });
+    const { data: seatData } = await raceWithTimeout(rpcCall, 18_000, () => ({
+      data: null,
+      error: null,
+    }) as Awaited<typeof rpcCall>);
     if (Array.isArray(seatData)) {
       seatData.forEach((row: { ride_id: string; booked_seats?: number }) => {
         bookedByRide[row.ride_id] = Number(row.booked_seats ?? 0);
@@ -146,50 +238,78 @@ export async function searchRides(options: {
     })
     .filter((r: { available_seats: number }) => r.available_seats >= seats);
 
-  const nearM = (a: Point, b: NearPointFilter) => {
-    const rM = Math.max(1, (b.radiusKm ?? 22) * 1000);
-    return distanceMeters(a, { lat: b.lat, lng: b.lng }) <= rM;
-  };
+  const originRadiusM =
+    originNear && Number.isFinite(originNear.lat) && Number.isFinite(originNear.lng)
+      ? Math.max(1, (originNear.radiusKm ?? 10) * 1000)
+      : null;
+  const destRadiusM =
+    destinationNear && Number.isFinite(destinationNear.lat) && Number.isFinite(destinationNear.lng)
+      ? Math.max(1, (destinationNear.radiusKm ?? 10) * 1000)
+      : null;
 
-  if (
-    originNear &&
-    Number.isFinite(originNear.lat) &&
-    Number.isFinite(originNear.lng)
-  ) {
-    list = list.filter((r: { origin_lat?: number; origin_lng?: number }) => {
-      const olat = Number(r.origin_lat);
-      const olng = Number(r.origin_lng);
-      if (!Number.isFinite(olat) || !Number.isFinite(olng)) return false;
-      return nearM({ lat: olat, lng: olng }, originNear);
+  const userOriginPoint: Point | null =
+    originNear && Number.isFinite(originNear.lat) && Number.isFinite(originNear.lng)
+      ? { lat: originNear.lat, lng: originNear.lng }
+      : null;
+  const userDestPoint: Point | null =
+    destinationNear && Number.isFinite(destinationNear.lat) && Number.isFinite(destinationNear.lng)
+      ? { lat: destinationNear.lat, lng: destinationNear.lng }
+      : null;
+
+  if (userOriginPoint && originRadiusM != null) {
+    list = list.filter((r) => {
+      const d = metersUserToRidePickupRegion(r as Record<string, unknown>, userOriginPoint);
+      return Number.isFinite(d) && d <= originRadiusM;
     });
   } else if (origin?.trim()) {
-    const o = origin.trim().toLowerCase();
-    list = list.filter(
-      (r: { origin_label?: string | null }) => (r.origin_label ?? '').toLowerCase().includes(o)
+    list = list.filter((r: { origin_label?: string | null }) =>
+      labelMatchesSearchText(r.origin_label ?? '', origin)
     );
   }
 
-  if (
-    destinationNear &&
-    Number.isFinite(destinationNear.lat) &&
-    Number.isFinite(destinationNear.lng)
-  ) {
-    list = list.filter((r: { destination_lat?: number; destination_lng?: number }) => {
-      const dlat = Number(r.destination_lat);
-      const dlng = Number(r.destination_lng);
-      if (!Number.isFinite(dlat) || !Number.isFinite(dlng)) return false;
-      return nearM({ lat: dlat, lng: dlng }, destinationNear);
+  if (userDestPoint && destRadiusM != null) {
+    list = list.filter((r) => {
+      const d = metersUserToRideDropoffRegion(r as Record<string, unknown>, userDestPoint);
+      return Number.isFinite(d) && d <= destRadiusM;
     });
   } else if (destination?.trim()) {
-    const d = destination.trim().toLowerCase();
-    list = list.filter(
-      (r: { destination_label?: string | null }) => (r.destination_label ?? '').toLowerCase().includes(d)
+    list = list.filter((r: { destination_label?: string | null }) =>
+      labelMatchesSearchText(r.destination_label ?? '', destination)
     );
   }
 
   const max = typeof maxPrice === 'string' ? parseFloat(maxPrice) : maxPrice;
   if (typeof max === 'number' && !Number.isNaN(max) && max > 0) {
     list = list.filter((r: { price_per_seat?: number | null }) => Number(r.price_per_seat ?? 0) <= max);
+  }
+
+  const depTime = (r: { departure_time?: string }) =>
+    new Date(String(r.departure_time ?? 0)).getTime();
+
+  if (userOriginPoint || userDestPoint) {
+    list.sort((a, b) => {
+      const ra = (userOriginPoint ? metersUserToRidePickupRegion(a as Record<string, unknown>, userOriginPoint) : 0) +
+        (userDestPoint ? metersUserToRideDropoffRegion(a as Record<string, unknown>, userDestPoint) : 0);
+      const rb = (userOriginPoint ? metersUserToRidePickupRegion(b as Record<string, unknown>, userOriginPoint) : 0) +
+        (userDestPoint ? metersUserToRideDropoffRegion(b as Record<string, unknown>, userDestPoint) : 0);
+      if (ra !== rb) return ra - rb;
+      return depTime(a as { departure_time?: string }) - depTime(b as { departure_time?: string });
+    });
+  } else if (origin?.trim() || destination?.trim()) {
+    list.sort((a, b) => {
+      let sa = 0;
+      let sb = 0;
+      if (origin?.trim()) {
+        sa += textMatchStrength(String((a as { origin_label?: string }).origin_label ?? ''), origin);
+        sb += textMatchStrength(String((b as { origin_label?: string }).origin_label ?? ''), origin);
+      }
+      if (destination?.trim()) {
+        sa += textMatchStrength(String((a as { destination_label?: string }).destination_label ?? ''), destination);
+        sb += textMatchStrength(String((b as { destination_label?: string }).destination_label ?? ''), destination);
+      }
+      if (sa !== sb) return sb - sa;
+      return depTime(a as { departure_time?: string }) - depTime(b as { departure_time?: string });
+    });
   }
 
   return list;
@@ -362,7 +482,7 @@ export async function saveTripRequest(params: {
 
 /** My trip requests (passenger). */
 export async function fetchMyTripRequests(userId: string) {
-  const { data, error } = await supabase
+  const trQuery = supabase
     .from('trip_requests')
     .select(
       'id, origin_label, destination_label, requested_date, requested_time, seats, status, ride_id, created_at, pricing_kind, passenger_desired_price_per_seat_gs, internal_quote_acknowledged'
@@ -370,6 +490,16 @@ export async function fetchMyTripRequests(userId: string) {
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(50);
+  const { data, error } = await raceWithTimeout(
+    trQuery,
+    SUPABASE_QUERY_TIMEOUT_MS,
+    () =>
+      ({
+        data: null,
+        error: { message: 'SUPABASE_QUERY_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+      }) as Awaited<typeof trQuery>
+  );
+  if (error?.message === 'SUPABASE_QUERY_TIMEOUT') return [];
   if (error) throw error;
   return data ?? [];
 }
