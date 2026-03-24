@@ -3,10 +3,14 @@
  * Aligned with web app Supabase queries and RPCs.
  */
 import { supabase } from '../backend/supabase';
+import { env } from '../core/env';
 import { raceWithTimeout } from '../backend/withTimeout';
 import { distanceMeters, distancePointToPolylineMeters, type Point } from '../lib/geo';
 
 const SUPABASE_QUERY_TIMEOUT_MS = 28_000;
+const SAVE_TRIP_REQUEST_INSERT_TIMEOUT_MS = 22_000;
+/** Guardar vía Next (misma URL que geocode/OSRM): en emulador Android suele ser más fiable que REST directo a Supabase. */
+const SAVE_TRIP_REQUEST_API_TIMEOUT_MS = 28_000;
 
 function normalizeSearchText(s: string): string {
   return String(s ?? '')
@@ -421,8 +425,7 @@ export async function fetchRidePublicInfo(rideId: string) {
   return row as { booked_seats: number; pickups?: Array<{ lat: number; lng: number; label?: string }>; dropoffs?: Array<{ lat: number; lng: number; label?: string }> } | null;
 }
 
-/** Save trip request (passenger): when no rides match, save origin/destination/date for drivers to see. */
-export async function saveTripRequest(params: {
+function buildTripRequestRow(params: {
   userId: string;
   originLat: number;
   originLng: number;
@@ -444,7 +447,7 @@ export async function saveTripRequest(params: {
   pricingKind?: 'internal' | 'long_distance';
   passengerDesiredPricePerSeatGs?: number | null;
   internalQuoteAcknowledged?: boolean | null;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Record<string, unknown> {
   const kind = params.pricingKind === 'long_distance' ? 'long_distance' : 'internal';
   const row: Record<string, unknown> = {
     user_id: params.userId,
@@ -475,8 +478,194 @@ export async function saveTripRequest(params: {
     row.passenger_desired_price_per_seat_gs = null;
     row.internal_quote_acknowledged = params.internalQuoteAcknowledged === true ? true : null;
   }
-  const { error } = await supabase.from('trip_requests').insert(row);
+  return row;
+}
+
+/** Save trip request (passenger): when no rides match, save origin/destination/date for drivers to see. */
+export async function saveTripRequest(params: {
+  accessToken: string;
+  userId: string;
+  originLat: number;
+  originLng: number;
+  originLabel: string;
+  destinationLat: number;
+  destinationLng: number;
+  destinationLabel: string;
+  requestedDate: string;
+  requestedTime: string;
+  seats?: number;
+  originCity?: string | null;
+  originDepartment?: string | null;
+  originBarrio?: string | null;
+  destinationCity?: string | null;
+  destinationDepartment?: string | null;
+  destinationBarrio?: string | null;
+  routePolyline?: Array<{ lat: number; lng: number }> | null;
+  routeLengthKm?: number | null;
+  pricingKind?: 'internal' | 'long_distance';
+  passengerDesiredPricePerSeatGs?: number | null;
+  internalQuoteAcknowledged?: boolean | null;
+}): Promise<{ ok: boolean; error?: string }> {
+  const row = buildTripRequestRow(params);
+  const base = env.apiBaseUrl?.trim().replace(/\/$/, '');
+  const token = params.accessToken?.trim();
+
+  if (base && token) {
+    const raw = { ...row };
+    delete raw.user_id;
+    const apiBody: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (v === undefined || v === null) continue;
+      apiBody[k] = v;
+    }
+    const pk = apiBody.pricing_kind;
+    const pp = apiBody.passenger_desired_price_per_seat_gs;
+    if (pk === 'long_distance' && typeof pp === 'number' && Number.isFinite(pp)) {
+      apiBody.passenger_desired_price_per_seat_gs = Math.round(pp);
+    }
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), SAVE_TRIP_REQUEST_API_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${base}/api/trip-requests`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(apiBody),
+        signal: controller.signal,
+      });
+      // RN/Hermes: a veces `res.json()` puede colgarse; leer texto y parsear es más fiable.
+      const text = await res.text();
+      let data: { error?: string } = {};
+      if (text.trim()) {
+        try {
+          data = JSON.parse(text) as { error?: string };
+        } catch {
+          data = {};
+        }
+      }
+      if (res.ok) return { ok: true };
+      if (res.status === 401) {
+        return { ok: false, error: 'Sesión expirada. Volvé a iniciar sesión.' };
+      }
+      if (res.status !== 404) {
+        return { ok: false, error: data.error ?? 'No se pudo guardar la solicitud.' };
+      }
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        return {
+          ok: false,
+          error: 'Tardó demasiado al guardar. Revisá tu conexión e intentá de nuevo.',
+        };
+      }
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  const insertBuilder = supabase.from('trip_requests').insert(row);
+  const { error } = await raceWithTimeout(
+    insertBuilder,
+    SAVE_TRIP_REQUEST_INSERT_TIMEOUT_MS,
+    () =>
+      ({
+        data: null,
+        error: { message: 'SUPABASE_INSERT_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+      }) as Awaited<typeof insertBuilder>
+  );
+  if (error?.message === 'SUPABASE_INSERT_TIMEOUT') {
+    return {
+      ok: false,
+      error: 'Tardó demasiado al guardar. Revisá tu conexión e intentá de nuevo.',
+    };
+  }
   if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+const OFFER_QUERY_TIMEOUT_MS = 20_000;
+
+/** PostgREST cuando la tabla aún no existe en el proyecto remoto (migración no aplicada). */
+function mapTripRequestDriverOffersError(message: string | undefined): string {
+  const raw = String(message ?? '');
+  const m = raw.toLowerCase();
+  if (
+    m.includes('schema cache') ||
+    (m.includes('could not find') && m.includes('trip_request_driver_offers'))
+  ) {
+    return (
+      'En tu proyecto Supabase falta la tabla de ofertas. Ejecutá el SQL de supabase/migrations/049_trip_request_driver_offers.sql ' +
+      '(SQL Editor del panel o supabase db push con el repo enlazado).'
+    );
+  }
+  return raw;
+}
+
+export type TripRequestDriverOfferRow = {
+  id: string;
+  driver_id: string;
+  proposed_price_per_seat_gs: number;
+  created_at: string;
+  status: string;
+};
+
+/** Ofertas pendientes de otros conductores (y la propia) para una trip_request larga distancia. */
+export async function fetchPendingTripRequestOffers(
+  tripRequestId: string
+): Promise<{ offers: TripRequestDriverOfferRow[]; error?: string }> {
+  const q = supabase
+    .from('trip_request_driver_offers')
+    .select('id, driver_id, proposed_price_per_seat_gs, created_at, status')
+    .eq('trip_request_id', tripRequestId)
+    .eq('status', 'pending')
+    .order('proposed_price_per_seat_gs', { ascending: true });
+  const { data, error } = await raceWithTimeout(
+    q,
+    OFFER_QUERY_TIMEOUT_MS,
+    () =>
+      ({
+        data: null,
+        error: { message: 'TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+      }) as Awaited<typeof q>
+  );
+  if (error?.message === 'TIMEOUT') return { offers: [], error: 'Tiempo de espera al cargar ofertas.' };
+  if (error) return { offers: [], error: mapTripRequestDriverOffersError(error.message) };
+  return { offers: (data ?? []) as TripRequestDriverOfferRow[] };
+}
+
+export async function fetchProfileDisplayNamesByIds(ids: string[]): Promise<Record<string, string>> {
+  const uniq = [...new Set(ids)].filter(Boolean);
+  if (uniq.length === 0) return {};
+  const { data, error } = await supabase.from('profiles').select('id, full_name').in('id', uniq);
+  if (error || !data) return {};
+  const out: Record<string, string> = {};
+  for (const r of data as { id: string; full_name: string | null }[]) {
+    out[r.id] = r.full_name?.trim() ? String(r.full_name).trim() : 'Conductor';
+  }
+  return out;
+}
+
+export async function upsertMyTripRequestDriverOffer(params: {
+  tripRequestId: string;
+  driverId: string;
+  pricePerSeatGs: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  const n = Math.round(params.pricePerSeatGs);
+  if (!Number.isFinite(n) || n < 1000) {
+    return { ok: false, error: 'Indicá un precio válido por asiento (mín. 1.000 Gs).' };
+  }
+  const row = {
+    trip_request_id: params.tripRequestId,
+    driver_id: params.driverId,
+    proposed_price_per_seat_gs: n,
+    status: 'pending' as const,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from('trip_request_driver_offers').upsert(row, {
+    onConflict: 'trip_request_id,driver_id',
+  });
+  if (error) return { ok: false, error: mapTripRequestDriverOffersError(error.message) };
   return { ok: true };
 }
 

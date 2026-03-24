@@ -95,6 +95,10 @@ export function PublishRideScreen() {
   const tripRequestIdParam = params.tripRequestId;
   const fromRideIdParam = params.fromRideId;
   const groupIdParam = params.groupId;
+  const suggestedSeatPriceGsParam =
+    params.suggestedSeatPriceGs != null && Number.isFinite(params.suggestedSeatPriceGs)
+      ? Math.round(Number(params.suggestedSeatPriceGs))
+      : null;
 
   const [gateLoading, setGateLoading] = useState(true);
   const [prefillLoading, setPrefillLoading] = useState(false);
@@ -345,11 +349,25 @@ export function PublishRideScreen() {
         const { data: rows } = await supabase
           .from('trip_requests')
           .select(
-            'id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_date, requested_time'
+            'id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_date, requested_time, pricing_kind, passenger_desired_price_per_seat_gs'
           )
           .eq('id', tripRequestIdParam)
           .eq('status', 'pending');
-        const first = rows?.[0];
+        const first = rows?.[0] as
+          | {
+              id: string;
+              origin_lat: number;
+              origin_lng: number;
+              origin_label: string | null;
+              destination_lat: number;
+              destination_lng: number;
+              destination_label: string | null;
+              requested_date: string;
+              requested_time: string | null;
+              pricing_kind?: string | null;
+              passenger_desired_price_per_seat_gs?: number | null;
+            }
+          | undefined;
         if (first) {
           setOrigin({
             lat: first.origin_lat,
@@ -366,6 +384,14 @@ export function PublishRideScreen() {
           if (first.requested_date) setDepartureDate(first.requested_date);
           setDepartureTime(formatTimeHhMm(first.requested_time as string | null));
           setTripRequestIdsToLink([first.id]);
+          if (
+            isLongDistance &&
+            suggestedSeatPriceGsParam == null &&
+            first.passenger_desired_price_per_seat_gs != null &&
+            Number(first.passenger_desired_price_per_seat_gs) >= 1000
+          ) {
+            setManualSeatPriceInput(String(Math.round(Number(first.passenger_desired_price_per_seat_gs))));
+          }
         } else {
           setTripRequestIdsToLink([]);
         }
@@ -376,11 +402,29 @@ export function PublishRideScreen() {
     } finally {
       setPrefillLoading(false);
     }
-  }, [session?.id, userProfile, fromRideIdParam, groupIdParam, tripRequestIdParam]);
+  }, [
+    session?.id,
+    userProfile,
+    fromRideIdParam,
+    groupIdParam,
+    tripRequestIdParam,
+    isLongDistance,
+    suggestedSeatPriceGsParam,
+  ]);
 
   useEffect(() => {
     if (userProfile) applyPrefill();
   }, [userProfile, applyPrefill]);
+
+  useEffect(() => {
+    if (
+      suggestedSeatPriceGsParam != null &&
+      suggestedSeatPriceGsParam >= 1000 &&
+      isLongDistance
+    ) {
+      setManualSeatPriceInput(String(suggestedSeatPriceGsParam));
+    }
+  }, [suggestedSeatPriceGsParam, isLongDistance]);
 
   useEffect(() => {
     if (!origin || !destination) setWaypoints([]);

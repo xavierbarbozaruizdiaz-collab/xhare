@@ -53,6 +53,8 @@ module.exports = {
       },
       // Para poder instalar "driver" y "pasajero" simultáneamente en el emulador.
       package: isDriver ? 'com.xhare.driver' : 'com.xhare.app',
+      // Evita que herramientas intenten abrir placeholders literales (${mainActivityClass}).
+      mainActivity: '.MainActivity',
       // Mapa en Reservar (react-native-maps): en Android hace falta API key de Google Maps
       // Crear en Google Cloud Console, activar "Maps SDK for Android", y poner la key en .env o EAS secrets.
       ...(process.env.GOOGLE_MAPS_ANDROID_API_KEY && {

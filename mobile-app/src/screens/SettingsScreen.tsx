@@ -1,5 +1,5 @@
 /**
- * Settings: account, navigation preference, permissions, Mensajes, Vehículo, Mis solicitudes, sign out.
+ * Settings: cuenta, navegación, permisos, Mensajes, vehículo; Mis solicitudes (pasajero) o Solicitudes de viaje (conductor), cerrar sesión.
  */
 import React, { useState } from 'react';
 import {
@@ -18,6 +18,7 @@ import { getNavigationPreference, setNavigationPreference, type NavPreference } 
 import { requestLocationPermission, getLocationPermissionStatus } from '../permissions';
 import { useEffect } from 'react';
 import type { MainStackParamList } from '../navigation/types';
+import { getAppFlavor } from '../core/flavor';
 
 const NAV_OPTIONS: { value: NavPreference; label: string }[] = [
   { value: 'google_maps', label: 'Google Maps' },
@@ -29,6 +30,7 @@ type Nav = NativeStackNavigationProp<MainStackParamList, 'MainTabs'>;
 
 export function SettingsScreen() {
   const navigation = useNavigation<Nav>();
+  const flavor = getAppFlavor();
   const { session, signOut } = useAuth();
   const [navPref, setNavPref] = useState<NavPreference>('google_maps');
   const [locationStatus, setLocationStatus] = useState<string>('');
@@ -110,16 +112,28 @@ export function SettingsScreen() {
         <Text style={styles.linkLabel}>Configurar vehículo</Text>
         <Text style={styles.linkArrow}>→</Text>
       </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.linkRow}
-        onPress={() => parentNav?.navigate('MyTripRequests')}
-        accessibilityLabel="Mis solicitudes de trayecto"
-        accessibilityHint="Solicitudes guardadas cuando no había viajes publicados"
-        accessibilityRole="button"
-      >
-        <Text style={styles.linkLabel}>Mis solicitudes</Text>
-        <Text style={styles.linkArrow}>→</Text>
-      </TouchableOpacity>
+      {flavor === 'driver' ? (
+        <TouchableOpacity
+          style={styles.linkRow}
+          onPress={() => parentNav?.navigate('DriverTripRequests')}
+          accessibilityLabel="Solicitudes de viaje de pasajeros"
+          accessibilityRole="button"
+        >
+          <Text style={styles.linkLabel}>Solicitudes de viaje</Text>
+          <Text style={styles.linkArrow}>→</Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          style={styles.linkRow}
+          onPress={() => parentNav?.navigate('MyTripRequests')}
+          accessibilityLabel="Mis solicitudes de trayecto"
+          accessibilityHint="Solicitudes guardadas cuando no había viajes publicados"
+          accessibilityRole="button"
+        >
+          <Text style={styles.linkLabel}>Mis solicitudes</Text>
+          <Text style={styles.linkArrow}>→</Text>
+        </TouchableOpacity>
+      )}
 
       <TouchableOpacity
         style={[styles.button, signingOut && styles.buttonDisabled]}

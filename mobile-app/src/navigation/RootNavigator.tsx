@@ -26,6 +26,7 @@ import { MyTripRequestsScreen } from '../screens/MyTripRequestsScreen';
 import { MyBookingsScreen } from '../screens/MyBookingsScreen';
 import { MyPublishedRidesScreen } from '../screens/MyPublishedRidesScreen';
 import { DriverTripRequestsScreen } from '../screens/DriverTripRequestsScreen';
+import { TripRequestLongDistanceOfferScreen } from '../screens/TripRequestLongDistanceOfferScreen';
 import { DriverRouteGroupDetailScreen } from '../screens/DriverRouteGroupDetailScreen';
 import { PassengerDemandRoutesScreen } from '../screens/PassengerDemandRoutesScreen';
 import { PassengerRouteGroupDetailScreen } from '../screens/PassengerRouteGroupDetailScreen';
@@ -67,7 +68,14 @@ function MainTabs() {
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ title: 'Inicio' }} />
       {flavor === 'driver' ? (
-        <Tab.Screen name="Driver" component={DriverScreen} options={{ title: 'Conductor' }} />
+        <Tab.Screen
+          name="Driver"
+          component={DriverScreen}
+          options={{
+            title: 'Solicitudes de viaje',
+            tabBarLabel: 'Solicitudes',
+          }}
+        />
       ) : (
         <Tab.Screen name="Passenger" component={PassengerScreen} options={{ title: 'Pasajero' }} />
       )}
@@ -128,7 +136,12 @@ function MainStackNavigator() {
       <MainStack.Screen
         name="DriverTripRequests"
         component={DriverTripRequestsScreen}
-        options={{ title: 'Solicitudes de trayecto' }}
+        options={{ title: 'Solicitudes de viaje' }}
+      />
+      <MainStack.Screen
+        name="TripRequestLongDistanceOffer"
+        component={TripRequestLongDistanceOfferScreen}
+        options={{ title: 'Larga distancia — ofertas' }}
       />
       <MainStack.Screen
         name="DriverRouteGroupDetail"

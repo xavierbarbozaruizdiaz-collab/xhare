@@ -22,6 +22,8 @@ export type MainStackParamList = {
         tripRequestId?: string;
         groupId?: string;
         publishKind?: 'internal' | 'long_distance';
+        /** Prellenar precio manual (larga distancia). */
+        suggestedSeatPriceGs?: number;
       }
     | undefined;
   SearchPublishedRides: undefined;
@@ -34,6 +36,8 @@ export type MainStackParamList = {
   /** Viajes del conductor (publicados / con reservas / en ruta). */
   MyPublishedRides: undefined;
   DriverTripRequests: undefined;
+  /** Conductor: contraoferta y listado de precios (trip_request larga distancia). */
+  TripRequestLongDistanceOffer: { tripRequestId: string };
   DriverRouteGroupDetail: { groupId: string };
   PassengerDemandRoutes: undefined;
   PassengerRouteGroupDetail: { groupId: string };

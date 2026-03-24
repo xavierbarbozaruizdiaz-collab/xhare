@@ -87,32 +87,10 @@ function SearchEmptyResults({
 
   return (
     <View style={styles.emptyBlock}>
-      <Text style={styles.emptyTitle}>No hay viajes publicados con estos criterios</Text>
+      <Text style={styles.emptyTitle}>No se encontraron viajes</Text>
       <Text style={styles.emptyLead}>
-        No es un error de la app: simplemente nadie coincide con la búsqueda en este momento, o los filtros quedaron
-        muy específicos.
+        Guardá tu solicitud de trayecto para que los conductores la vean y puedan publicar un viaje para vos.
       </Text>
-
-      {activeFilterLabels.length > 0 ? (
-        <View style={styles.emptySection}>
-          <Text style={styles.emptySectionTitle}>Filtros activos</Text>
-          {activeFilterLabels.map((line, i) => (
-            <Text key={`filter-${i}`} style={styles.emptyBullet}>
-              · {line}
-            </Text>
-          ))}
-          <Text style={styles.emptyMuted}>
-            Con Interno el mapa usa ~1 km por punto; con Larga distancia ~50 km; con Todos ~10 km. Coincide con origen/destino del viaje o con su ruta; fecha y hora acotan el día.
-          </Text>
-        </View>
-      ) : null}
-
-      <View style={styles.emptySection}>
-        <Text style={styles.emptySectionTitle}>Qué podés probar</Text>
-        <Text style={styles.emptyBullet}>· Quitar fecha u hora y volver a buscar.</Text>
-        <Text style={styles.emptyBullet}>· Quitar origen o destino del mapa, o buscar solo por texto (o al revés).</Text>
-        <Text style={styles.emptyBullet}>· Cambiar tipo de viaje a “Todos” si estaba restringido.</Text>
-      </View>
 
       <View style={styles.emptySection}>
         <Text style={styles.emptySectionTitle}>Otras opciones</Text>

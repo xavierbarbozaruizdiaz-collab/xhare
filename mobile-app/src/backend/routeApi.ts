@@ -6,9 +6,22 @@ import { env } from '../core/env';
 
 type Point = { lat: number; lng: number };
 
+/** Evita `fetch` colgado sin respuesta (deja spinners infinitos en la app). */
+const ROUTE_API_FETCH_TIMEOUT_MS = 18_000;
+
 function getApiBase(): string {
   const base = env.apiBaseUrl?.trim();
   return base ? base.replace(/\/$/, '') : '';
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ROUTE_API_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 export type RouteResult = {
@@ -27,7 +40,7 @@ export async function fetchRoute(
   if (!base) return { error: 'EXPO_PUBLIC_API_BASE_URL no configurado' };
   const url = `${base}/api/route/polyline`;
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ origin, destination, waypoints }),
@@ -40,6 +53,9 @@ export async function fetchRoute(
       distanceKm: (data as { distanceKm?: number }).distanceKm,
     };
   } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      return { error: 'Tiempo agotado al calcular la ruta' };
+    }
     return { error: e instanceof Error ? e.message : 'Error de conexión' };
   }
 }
@@ -59,7 +75,7 @@ export async function fetchSegmentStats(
   const base = getApiBase();
   if (!base) return { error: 'EXPO_PUBLIC_API_BASE_URL no configurado' };
   try {
-    const res = await fetch(`${base}/api/route/segment-stats`, {
+    const res = await fetchWithTimeout(`${base}/api/route/segment-stats`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -75,6 +91,9 @@ export async function fetchSegmentStats(
       durationMinutes: (data as { durationMinutes?: number }).durationMinutes,
     };
   } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      return { error: 'Tiempo agotado al calcular el tramo' };
+    }
     return { error: e instanceof Error ? e.message : 'Error de conexión' };
   }
 }

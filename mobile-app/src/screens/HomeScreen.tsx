@@ -1,18 +1,19 @@
 /**
- * Home base: welcome, role banners (driver_pending, admin), short links (Mensajes, Mis solicitudes).
+ * Home base: welcome, role banners (driver_pending, admin), short links.
+ * Flavor conductor: sin "Mis solicitudes" (pasajero); acceso a pestaña Solicitudes.
  */
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useAuth } from '../auth/AuthContext';
-import type { MainStackParamList } from '../navigation/types';
+import type { MainTabParamList } from '../navigation/types';
 import { getAppFlavor } from '../core/flavor';
 
-type Nav = NativeStackNavigationProp<MainStackParamList, 'MainTabs'>;
+type HomeTabNav = BottomTabNavigationProp<MainTabParamList, 'Home'>;
 
 export function HomeScreen() {
-  const navigation = useNavigation<Nav>();
+  const navigation = useNavigation<HomeTabNav>();
   const { session } = useAuth();
   const firstName = session?.full_name?.trim()?.split(/\s+/)[0];
   const role = session?.role;
@@ -42,7 +43,7 @@ export function HomeScreen() {
         {session?.email && !firstName ? <Text style={styles.emailHint}>{session.email}</Text> : null}
         <Text style={styles.hint}>
           {flavor === 'driver'
-            ? 'En la pestaña Conductor tenés solicitudes y el botón Mis viajes publicados para ver lo que publicaste.'
+            ? 'En la pestaña Solicitudes ves las solicitudes de viaje que dejaron los pasajeros (y rutas con demanda). Con Mis viajes publicados revisá lo que ya publicaste.'
             : 'En Pasajero podés unirte a rutas con demanda. Para viajes ya publicados: Viajes disponibles (lista de hoy) o Buscar viajes (fecha, origen y destino).'}
         </Text>
         {isPassengerFlavor ? (
@@ -75,14 +76,25 @@ export function HomeScreen() {
             <Text style={styles.linkBtnReservasText}>Mis reservas</Text>
           </TouchableOpacity>
         ) : null}
-        <View style={styles.links}>
-          <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('Messages')}>
-            <Text style={styles.linkBtnText}>Mensajes</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('MyTripRequests')}>
-            <Text style={styles.linkBtnText}>Mis solicitudes</Text>
-          </TouchableOpacity>
-        </View>
+        {flavor === 'driver' ? (
+          <View style={styles.links}>
+            <TouchableOpacity style={styles.linkBtn} onPress={() => navigation.navigate('Driver')}>
+              <Text style={styles.linkBtnText}>Solicitudes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('Messages')}>
+              <Text style={styles.linkBtnText}>Mensajes</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.links}>
+            <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('Messages')}>
+              <Text style={styles.linkBtnText}>Mensajes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('MyTripRequests')}>
+              <Text style={styles.linkBtnText}>Mis solicitudes</Text>
+            </TouchableOpacity>
+          </View>
+        )}
         {flavor === 'driver' ? (
           <TouchableOpacity
             style={styles.linkBtnFull}

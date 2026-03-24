@@ -54,7 +54,7 @@ export function JoinGroupMapScreen() {
   const baseRoute = (detail?.base_polyline ?? []) as Array<{ lat: number; lng: number }>;
 
   const onConfirm = useCallback(async () => {
-    if (!session?.id || !detail || !pickup || !dropoff) return;
+    if (!session?.id || !session.access_token || !detail || !pickup || !dropoff) return;
     if (baseRoute.length < 2) {
       Alert.alert('Error', 'No hay ruta base para validar.');
       return;
@@ -87,6 +87,7 @@ export function JoinGroupMapScreen() {
       const routeLengthKm = routeResult.distanceKm ?? null;
 
       const result = await saveTripRequest({
+        accessToken: session.access_token,
         userId: session.id,
         originLat: pickup.lat,
         originLng: pickup.lng,
@@ -115,7 +116,7 @@ export function JoinGroupMapScreen() {
     } finally {
       setSaving(false);
     }
-  }, [session?.id, detail, pickup, dropoff, baseRoute]);
+  }, [session?.id, session?.access_token, detail, pickup, dropoff, baseRoute]);
 
   if (loading && !detail) {
     return (

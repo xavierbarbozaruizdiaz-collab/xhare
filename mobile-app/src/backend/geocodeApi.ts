@@ -16,15 +16,37 @@ function getApiBase(): string {
   return base ? base.replace(/\/$/, '') : '';
 }
 
+const GEOCODE_FETCH_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), GEOCODE_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export async function searchAddresses(query: string, limit = 5): Promise<GeocodeSuggestion[]> {
   const base = getApiBase();
   if (!base || query.trim().length < 2) return [];
   const url = `${base}/api/geocode/search?q=${encodeURIComponent(query.trim())}&limit=${limit}&countrycodes=py`;
   try {
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     if (!res.ok) return [];
     const data = await res.json();
-    return Array.isArray(data) ? data : [];
+    if (!Array.isArray(data)) return [];
+    const seen = new Set<string>();
+    const deduped: GeocodeSuggestion[] = [];
+    for (const raw of data as GeocodeSuggestion[]) {
+      const key = `${raw.place_id ?? ''}|${String(raw.lat)}|${String(raw.lon)}|${String(raw.display_name ?? '').trim().toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(raw);
+      if (deduped.length >= limit) break;
+    }
+    return deduped;
   } catch {
     return [];
   }
@@ -49,7 +71,9 @@ export async function reverseGeocodeStructured(lat: number, lng: number): Promis
   const fallback = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   if (!base) return { displayName: fallback };
   try {
-    const res = await fetch(`${base}/api/geocode/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
+    const res = await fetchWithTimeout(
+      `${base}/api/geocode/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`
+    );
     if (!res.ok) return { displayName: fallback };
     const data = await res.json();
     const addr = data.address as Record<string, string> | undefined;
@@ -63,6 +87,6 @@ export async function reverseGeocodeStructured(lat: number, lng: number): Promis
       barrio: barrio ?? null,
     };
   } catch {
-    return { displayName: fallback };
+    return { displayName: fallback, city: null, department: null, barrio: null };
   }
 }

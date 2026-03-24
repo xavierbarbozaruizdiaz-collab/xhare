@@ -12,21 +12,48 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  Switch,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { FlatList } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
-import { searchAddresses, reverseGeocodeStructured } from '../backend/geocodeApi';
+import {
+  searchAddresses,
+  reverseGeocodeStructured,
+  type ReverseGeocodeResult,
+} from '../backend/geocodeApi';
+import { fetchRoute } from '../backend/routeApi';
+import { raceWithTimeout } from '../backend/withTimeout';
+import { distanceMeters } from '../lib/geo';
 import type { GeocodeSuggestion } from '../backend/geocodeApi';
 import type { MainStackParamList } from '../navigation/types';
 import { saveTripRequest } from '../rides/api';
+import {
+  loadActivePricingSettings,
+  computeEffectivePricing,
+  type EffectivePricing,
+} from '../lib/pricing/runtime-pricing';
+import {
+  baseFareFromDistanceKmWithPricing,
+  totalFareFromBaseAndSeatsWithPricing,
+} from '../lib/pricing/segment-fare';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'SaveTripRequest'>;
 
 type PricingKind = 'internal' | 'long_distance';
+const FALLBACK_PRICING: EffectivePricing = {
+  minFarePyg: 7140,
+  pygPerKm: 2780,
+  roundTo: 100,
+  blockSize: 4,
+  blockMultiplier: 1.5,
+  pricingSettingsId: null,
+};
+
+const PRICING_LOAD_TIMEOUT_MS = 12_000;
+/** No bloquear el guardado esperando Nominatim: tras esto se guarda sin ciudad/barrio extra. */
+const GEOCODE_ENRICH_ON_SAVE_MS = 5500;
 
 export function SaveTripRequestScreen() {
   const navigation = useNavigation<Nav>();
@@ -59,7 +86,6 @@ export function SaveTripRequestScreen() {
   const [pricingKind, setPricingKind] = useState<PricingKind>(
     suggested === 'long_distance' || suggested === 'internal' ? suggested : 'internal'
   );
-  const [internalAck, setInternalAck] = useState(false);
   const [desiredPriceGs, setDesiredPriceGs] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
@@ -68,8 +94,19 @@ export function SaveTripRequestScreen() {
   const [showOriginSuggestions, setShowOriginSuggestions] = useState(false);
   const [showDestinationSuggestions, setShowDestinationSuggestions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [internalEstimateLoading, setInternalEstimateLoading] = useState(false);
+  const [internalDistanceKm, setInternalDistanceKm] = useState<number | null>(null);
+  const [internalPerSeatCost, setInternalPerSeatCost] = useState<number | null>(null);
+  const [internalTotalCost, setInternalTotalCost] = useState<number | null>(null);
+  /** true cuando la distancia viene del backend de ruta; false si es aproximación por recta. */
+  const [internalDistanceFromRoute, setInternalDistanceFromRoute] = useState(true);
 
   useEffect(() => {
+    if (originLat != null && originLng != null) {
+      setOriginSuggestions([]);
+      setShowOriginSuggestions(false);
+      return;
+    }
     if (originLabel.length < 3) {
       setOriginSuggestions([]);
       return;
@@ -80,9 +117,14 @@ export function SaveTripRequestScreen() {
       setShowOriginSuggestions(list.length > 0);
     }, 400);
     return () => clearTimeout(t);
-  }, [originLabel]);
+  }, [originLabel, originLat, originLng]);
 
   useEffect(() => {
+    if (destinationLat != null && destinationLng != null) {
+      setDestinationSuggestions([]);
+      setShowDestinationSuggestions(false);
+      return;
+    }
     if (destinationLabel.length < 3) {
       setDestinationSuggestions([]);
       return;
@@ -93,7 +135,7 @@ export function SaveTripRequestScreen() {
       setShowDestinationSuggestions(list.length > 0);
     }, 400);
     return () => clearTimeout(t);
-  }, [destinationLabel]);
+  }, [destinationLabel, destinationLat, destinationLng]);
 
   const selectOrigin = useCallback((s: GeocodeSuggestion) => {
     setOriginLat(parseFloat(s.lat));
@@ -109,20 +151,70 @@ export function SaveTripRequestScreen() {
     setShowDestinationSuggestions(false);
   }, []);
 
+  useEffect(() => {
+    if (
+      pricingKind !== 'internal' ||
+      originLat == null ||
+      originLng == null ||
+      destinationLat == null ||
+      destinationLng == null
+    ) {
+      setInternalDistanceKm(null);
+      setInternalPerSeatCost(null);
+      setInternalTotalCost(null);
+      setInternalDistanceFromRoute(true);
+      setInternalEstimateLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setInternalEstimateLoading(true);
+    void (async () => {
+      try {
+        const straightKm =
+          distanceMeters(
+            { lat: originLat, lng: originLng },
+            { lat: destinationLat, lng: destinationLng }
+          ) / 1000;
+        const [routeRes, pricingRow] = await Promise.all([
+          fetchRoute({ lat: originLat, lng: originLng }, { lat: destinationLat, lng: destinationLng }, []),
+          raceWithTimeout(loadActivePricingSettings(), PRICING_LOAD_TIMEOUT_MS, () => null),
+        ]);
+        if (cancelled) return;
+        const routeKm = Number(routeRes.distanceKm ?? 0);
+        const fromRoute = Number.isFinite(routeKm) && routeKm > 0 && !routeRes.error;
+        const distanceKm = fromRoute ? routeKm : straightKm * 1.2;
+        if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
+          setInternalDistanceKm(null);
+          setInternalPerSeatCost(null);
+          setInternalTotalCost(null);
+          setInternalDistanceFromRoute(true);
+          return;
+        }
+        const pricing = pricingRow ? computeEffectivePricing(pricingRow) : FALLBACK_PRICING;
+        const baseFare = baseFareFromDistanceKmWithPricing(distanceKm, pricing);
+        const totalFare = totalFareFromBaseAndSeatsWithPricing(baseFare, Math.max(1, seats), pricing);
+        const perSeatRaw = totalFare / Math.max(1, seats);
+        const perSeatRounded = Math.round(perSeatRaw / pricing.roundTo) * pricing.roundTo;
+        setInternalDistanceKm(distanceKm);
+        setInternalPerSeatCost(perSeatRounded);
+        setInternalTotalCost(totalFare);
+        setInternalDistanceFromRoute(fromRoute);
+      } finally {
+        if (!cancelled) setInternalEstimateLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pricingKind, originLat, originLng, destinationLat, destinationLng, seats]);
+
   const submit = useCallback(async () => {
-    if (!session?.id) {
+    if (!session?.id || !session.access_token) {
       Alert.alert('Sesión', 'Iniciá sesión para guardar la solicitud.');
       return;
     }
     if (originLat == null || originLng == null || destinationLat == null || destinationLng == null || !requestedDate.trim()) {
       Alert.alert('Faltan datos', 'Completá origen, destino y fecha (elegí direcciones de la lista si faltan coordenadas).');
-      return;
-    }
-    if (pricingKind === 'internal' && !internalAck) {
-      Alert.alert(
-        'Confirmación',
-        'Para viaje interno tenés que confirmar que ya recibiste la cotización del costo.'
-      );
       return;
     }
     if (pricingKind === 'long_distance') {
@@ -139,10 +231,17 @@ export function SaveTripRequestScreen() {
       const oLab = (originLabel.trim() || 'Ubicación en mapa').slice(0, 500);
       const dLab = (destinationLabel.trim() || 'Ubicación en mapa').slice(0, 500);
 
-      const [oRev, dRev] = await Promise.all([
-        reverseGeocodeStructured(originLat, originLng),
-        reverseGeocodeStructured(destinationLat, destinationLng),
-      ]);
+      const [oRev, dRev] = await raceWithTimeout(
+        Promise.all([
+          reverseGeocodeStructured(originLat, originLng),
+          reverseGeocodeStructured(destinationLat, destinationLng),
+        ]),
+        GEOCODE_ENRICH_ON_SAVE_MS,
+        (): [ReverseGeocodeResult, ReverseGeocodeResult] => [
+          { displayName: oLab, city: null, department: null, barrio: null },
+          { displayName: dLab, city: null, department: null, barrio: null },
+        ]
+      );
 
       const desiredGs =
         pricingKind === 'long_distance'
@@ -150,6 +249,7 @@ export function SaveTripRequestScreen() {
           : null;
 
       const res = await saveTripRequest({
+        accessToken: session.access_token,
         userId: session.id,
         originLat,
         originLng,
@@ -183,6 +283,7 @@ export function SaveTripRequestScreen() {
     }
   }, [
     session?.id,
+    session?.access_token,
     originLat,
     originLng,
     destinationLat,
@@ -193,7 +294,6 @@ export function SaveTripRequestScreen() {
     requestedTime,
     seats,
     pricingKind,
-    internalAck,
     desiredPriceGs,
     navigation,
   ]);
@@ -209,7 +309,11 @@ export function SaveTripRequestScreen() {
       <TextInput
         style={styles.input}
         value={originLabel}
-        onChangeText={setOriginLabel}
+        onChangeText={(t) => {
+          setOriginLabel(t);
+          setOriginLat(null);
+          setOriginLng(null);
+        }}
         placeholder="Dirección o lugar"
         placeholderTextColor="#9ca3af"
       />
@@ -234,7 +338,11 @@ export function SaveTripRequestScreen() {
       <TextInput
         style={styles.input}
         value={destinationLabel}
-        onChangeText={setDestinationLabel}
+        onChangeText={(t) => {
+          setDestinationLabel(t);
+          setDestinationLat(null);
+          setDestinationLng(null);
+        }}
         placeholder="Dirección o lugar"
         placeholderTextColor="#9ca3af"
       />
@@ -336,10 +444,29 @@ export function SaveTripRequestScreen() {
             Viaje interno: el precio lo define la cotización que ya recibiste (plataforma o conductor). No usamos este
             dato para negociar acá.
           </Text>
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>Ya recibí la cotización del costo</Text>
-            <Switch value={internalAck} onValueChange={setInternalAck} trackColor={{ true: '#86efac' }} />
-          </View>
+          {internalEstimateLoading ? (
+            <Text style={styles.internalEstimate}>( calculando costo estimado)</Text>
+          ) : internalPerSeatCost != null ? (
+            <>
+              <Text style={styles.internalEstimate}>
+                Costo estimado por asiento: {internalPerSeatCost.toLocaleString('es-PY')} Gs
+              </Text>
+              {internalTotalCost != null && (
+                <Text style={styles.internalEstimateMuted}>
+                  Total estimado ({seats} asiento{seats > 1 ? 's' : ''}): {internalTotalCost.toLocaleString('es-PY')} Gs
+                  {internalDistanceKm != null
+                    ? ` · Distancia estimada: ${internalDistanceKm.toFixed(1)} km${
+                        internalDistanceFromRoute ? '' : ' (aprox., línea recta)'
+                      }`
+                    : ''}
+                </Text>
+              )}
+            </>
+          ) : (
+            <Text style={styles.internalEstimateMuted}>
+              Seleccioná origen y destino válidos para ver el costo estimado por asiento.
+            </Text>
+          )}
         </View>
       ) : (
         <View style={styles.internalBox}>
@@ -427,14 +554,8 @@ const styles = StyleSheet.create({
   kindChipText: { fontSize: 14, fontWeight: '600', color: '#374151' },
   kindChipTextActive: { color: '#fff' },
   internalBox: { marginBottom: 16 },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 8,
-  },
-  switchLabel: { flex: 1, fontSize: 15, color: '#111', fontWeight: '500' },
+  internalEstimate: { fontSize: 14, color: '#14532d', fontWeight: '700', marginBottom: 6 },
+  internalEstimateMuted: { fontSize: 13, color: '#6b7280', lineHeight: 18 },
   submitBtn: { backgroundColor: '#166534', paddingVertical: 14, borderRadius: 8, alignItems: 'center' },
   submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },

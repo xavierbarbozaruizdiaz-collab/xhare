@@ -1,7 +1,6 @@
 /**
- * Conductor: rutas con demanda agrupadas (grupos de pasajeros por ruta).
- * Lista desde Supabase (demand_route_groups); al refrescar intenta sync por API y recarga. Tap → detalle → Publicar viaje.
- * Si no hay grupos, muestra solicitudes sueltas (trip_requests) desde Supabase.
+ * Solicitudes de viaje (conductor): rutas con demanda agrupadas y, si no hay grupos, trip_requests sueltas.
+ * Lista desde Supabase (demand_route_groups); al refrescar intenta sync por API. Tap → detalle → Publicar viaje.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -114,7 +113,7 @@ export function DriverTripRequestsScreen() {
       }
     } catch (e) {
       trace('load:catch', e);
-      setApiError(e instanceof Error ? e.message : 'Error al cargar la pantalla Conductor');
+      setApiError(e instanceof Error ? e.message : 'Error al cargar solicitudes');
       setGroups([]);
       setFallbackRequests([]);
     } finally {
@@ -163,29 +162,51 @@ export function DriverTripRequestsScreen() {
       );
     }
     const r = item as Record<string, unknown>;
+    const kind = r.pricing_kind === 'long_distance' ? 'long_distance' : 'internal';
+    const reqId = r.id as string;
     return (
       <View style={styles.card}>
-        <Text style={styles.origin} numberOfLines={1}>{shortLabel(r.origin_label as string)}</Text>
-        <Text style={styles.destination} numberOfLines={1}>→ {shortLabel(r.destination_label as string)}</Text>
+        <View style={styles.kindBadgeRow}>
+          <Text style={[styles.kindBadge, kind === 'internal' ? styles.kindBadgeInternal : styles.kindBadgeLong]}>
+            {kind === 'internal' ? 'Interno' : 'Larga distancia'}
+          </Text>
+        </View>
+        <Text style={styles.origin} numberOfLines={1}>
+          {shortLabel(r.origin_label as string)}
+        </Text>
+        <Text style={styles.destination} numberOfLines={1}>
+          → {shortLabel(r.destination_label as string)}
+        </Text>
         <Text style={styles.meta}>
           {formatDate(r.requested_date as string)} · {formatTime(r.requested_time as string)} · {Number(r.seats ?? 1)}{' '}
           asiento(s)
-          {r.pricing_kind === 'long_distance' &&
+          {kind === 'long_distance' &&
           r.passenger_desired_price_per_seat_gs != null &&
           Number(r.passenger_desired_price_per_seat_gs) > 0
             ? ` · Pasajero: hasta ${Number(r.passenger_desired_price_per_seat_gs).toLocaleString('es-PY')} Gs/asiento`
-            : r.pricing_kind === 'internal'
-              ? ' · Interno (cotizado)'
-              : ''}
+            : null}
         </Text>
-        <TouchableOpacity
-          style={styles.primaryBtn}
-          onPress={() => parentNav?.navigate('PublishRide', { tripRequestId: r.id as string })}
-          accessibilityLabel="Publicar viaje para esta solicitud"
-          accessibilityRole="button"
-        >
-          <Text style={styles.primaryBtnText}>Publicar viaje para esta</Text>
-        </TouchableOpacity>
+        {kind === 'internal' ? (
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() =>
+              parentNav?.navigate('PublishRide', { tripRequestId: reqId, publishKind: 'internal' })
+            }
+            accessibilityLabel="Crear ruta para solicitud interna"
+            accessibilityRole="button"
+          >
+            <Text style={styles.primaryBtnText}>Crear ruta (interno)</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.longDistBtn}
+            onPress={() => parentNav?.navigate('TripRequestLongDistanceOffer', { tripRequestId: reqId })}
+            accessibilityLabel="Contraoferta y precios de otros conductores"
+            accessibilityRole="button"
+          >
+            <Text style={styles.longDistBtnText}>Contraoferta y precios de otros</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -208,26 +229,10 @@ export function DriverTripRequestsScreen() {
       >
         <Text style={styles.myRidesBtnText}>Mis viajes publicados</Text>
       </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.publishLink, styles.publishLinkInternal]}
-        onPress={() => parentNav?.navigate('PublishRide', { publishKind: 'internal' })}
-        accessibilityRole="button"
-        accessibilityLabel="Publicar viaje interno"
-      >
-        <Text style={styles.publishLinkText}>Publicar viaje interno</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.publishLink, styles.publishLinkLongDistance]}
-        onPress={() => parentNav?.navigate('PublishRide', { publishKind: 'long_distance' })}
-        accessibilityRole="button"
-        accessibilityLabel="Publicar viaje larga distancia"
-      >
-        <Text style={styles.publishLinkText}>Publicar viaje larga distancia</Text>
-      </TouchableOpacity>
       <Text style={styles.intro}>
         {showGroups
           ? 'Rutas con demanda agrupadas. Actualizá para recalcular grupos; tocá una ruta para ver el mapa y publicar un viaje.'
-          : 'Solicitudes de pasajeros que no encontraron viajes. Creá un viaje para una solicitud y se vinculará automáticamente.'}
+          : 'Solicitudes sueltas: interno → creá la ruta con tarifa según plataforma; larga distancia → ofertá precio y mirá lo que ofrecieron otros conductores.'}
       </Text>
       {apiError && (
         <Text style={styles.apiError}>{apiError}</Text>
@@ -289,18 +294,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  longDistBtn: {
+    backgroundColor: '#0f766e',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  longDistBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  kindBadgeRow: { marginBottom: 8 },
+  kindBadge: {
+    alignSelf: 'flex-start',
+    fontSize: 11,
+    fontWeight: '800',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  kindBadgeInternal: { backgroundColor: '#dcfce7', color: '#14532d' },
+  kindBadgeLong: { backgroundColor: '#ccfbf1', color: '#115e59' },
   empty: { alignItems: 'center', paddingVertical: 32 },
   emptyText: { fontSize: 16, color: '#6b7280', marginBottom: 16 },
-  publishLink: {
-    backgroundColor: '#166534',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    minWidth: 250,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  publishLinkInternal: { backgroundColor: '#166534' },
-  publishLinkLongDistance: { backgroundColor: '#0f766e' },
-  publishLinkText: { color: '#fff', fontWeight: '600', fontSize: 15 },
 });
