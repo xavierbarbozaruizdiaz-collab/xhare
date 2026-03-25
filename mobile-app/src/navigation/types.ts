@@ -42,7 +42,6 @@ export type MainStackParamList = {
   PassengerDemandRoutes: undefined;
   PassengerRouteGroupDetail: { groupId: string };
   JoinGroupMap: { groupId: string };
-  VehicleSetup: undefined;
   Messages: undefined;
   Chat: { conversationId: string };
   /** Guardar solicitud de trayecto (trip_requests). Prefill desde Buscar viajes. */

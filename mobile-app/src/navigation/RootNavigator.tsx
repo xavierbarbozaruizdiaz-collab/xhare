@@ -31,7 +31,6 @@ import { DriverRouteGroupDetailScreen } from '../screens/DriverRouteGroupDetailS
 import { PassengerDemandRoutesScreen } from '../screens/PassengerDemandRoutesScreen';
 import { PassengerRouteGroupDetailScreen } from '../screens/PassengerRouteGroupDetailScreen';
 import { JoinGroupMapScreen } from '../screens/JoinGroupMapScreen';
-import { VehicleSetupScreen } from '../screens/VehicleSetupScreen';
 import { MessagesScreen } from '../screens/MessagesScreen';
 import { ChatScreen } from '../screens/ChatScreen';
 import { SaveTripRequestScreen } from '../screens/SaveTripRequestScreen';
@@ -162,11 +161,6 @@ function MainStackNavigator() {
         name="JoinGroupMap"
         component={JoinGroupMapScreen}
         options={{ title: 'Unirme a la ruta' }}
-      />
-      <MainStack.Screen
-        name="VehicleSetup"
-        component={VehicleSetupScreen}
-        options={{ title: 'Configurar vehículo' }}
       />
       <MainStack.Screen
         name="Messages"

@@ -17,7 +17,6 @@ import {
 } from 'react-native';
 import { supabase, isEnvConfigured } from '../backend/supabase';
 import { useAuth } from '../auth/AuthContext';
-import { raceWithTimeout } from '../backend/withTimeout';
 
 export function LoginScreen() {
   const { refreshSession } = useAuth();
@@ -59,17 +58,10 @@ export function LoginScreen() {
         if (typeof (authAny?.signInWithPassword) !== 'function') {
           throw new Error('Supabase auth no tiene signInWithPassword');
         }
-        // En algunos dispositivos (sobre todo tras "app cerrada" mucho tiempo) el primer login
-        // puede quedar colgado si el fetch subyacente no resuelve. Evitamos spinner infinito.
-        const { data, error } = await raceWithTimeout(
-          supabase.auth.signInWithPassword({ email, password }),
-          15_000,
-          () =>
-            ({
-              data: { session: null, user: null },
-              error: { message: 'TIMEOUT' } as any,
-            }) as any
-        );
+        // No usar `raceWithTimeout` corto aquí: si el POST tarda (red móvil) devolvíamos TIMEOUT
+        // aunque Supabase igual persistía la sesión → error en pantalla pero al reabrir ya entraba.
+        // El tope real lo pone la carga de `profiles` en `getSessionProfileFromSession` (timeout + perfil mínimo).
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         console.log('MOBILE signInWithPassword result:', !!data?.session, error);
         if (error) throw error;
         await refreshSession((data as any)?.session ?? null);

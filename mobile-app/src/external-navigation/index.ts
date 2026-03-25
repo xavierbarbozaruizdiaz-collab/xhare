@@ -1,6 +1,6 @@
 /**
- * External navigation: open Maps, Waze, or browser.
- * First-class citizen: no custom native plugins; use expo-linking.
+ * External navigation: open Maps, Waze, or browser via expo-linking.
+ * Sin módulos nativos extra: evita crash si el APK no incluye p. ej. ExpoIntentLauncher.
  */
 import * as Linking from 'expo-linking';
 import { Platform } from 'react-native';
@@ -40,15 +40,17 @@ async function tryOpenUrl(url: string): Promise<boolean> {
   }
 }
 
-async function tryOpenSchemeUrl(url: string): Promise<boolean> {
-  try {
-    const can = await Linking.canOpenURL(url);
-    if (!can) return false;
-    await Linking.openURL(url);
-    return true;
-  } catch {
-    return false;
-  }
+/** URL Waze alineada con la doc oficial: `ll` codificado y `navigate=yes` (+ zoom para fijar destino). */
+function wazeNavigateUrls(lat: number, lng: number): string[] {
+  const pair = `${lat},${lng}`;
+  const https = new URL('https://www.waze.com/ul');
+  https.searchParams.set('ll', pair);
+  https.searchParams.set('navigate', 'yes');
+  https.searchParams.set('zoom', '17');
+  const httpsStr = https.toString();
+  // Scheme: valor de `ll` codificado para que la coma no la parta otro parser.
+  const scheme = `waze://?ll=${encodeURIComponent(pair)}&navigate=yes`;
+  return [scheme, httpsStr];
 }
 
 /**
@@ -63,6 +65,7 @@ export async function openNavigation(
   options?: { via?: NavViaPoint[] }
 ): Promise<boolean> {
   const dest = normalizeLatLng(lat, lng);
+  if (!Number.isFinite(dest.lat) || !Number.isFinite(dest.lng)) return false;
   const via = (options?.via ?? [])
     .map((p) => normalizeLatLng(p.lat, p.lng))
     .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
@@ -73,14 +76,11 @@ export async function openNavigation(
     if (hasVia) {
       return tryOpenUrl(mapsDirUrl);
     }
-    // En Android/iOS preferimos el scheme para evitar el diálogo "Abrir con".
-    const schemeUrl = `waze://?ll=${dest.lat},${dest.lng}&navigate=yes`;
-    if (await tryOpenSchemeUrl(schemeUrl)) return true;
-    const httpsUrl =
-      Platform.OS === 'android'
-        ? `https://waze.com/ul?ll=${dest.lat},${dest.lng}&navigate=yes`
-        : `https://www.waze.com/ul?ll=${dest.lat},${dest.lng}&navigate=yes`;
-    return tryOpenUrl(httpsUrl);
+    const [schemeUrl, httpsUrl] = wazeNavigateUrls(dest.lat, dest.lng);
+    for (const url of [schemeUrl, httpsUrl]) {
+      if (await tryOpenUrl(url)) return true;
+    }
+    return false;
   }
 
   if (app === 'browser') {
@@ -96,7 +96,6 @@ export async function openNavigation(
   // google_maps
   const urls: string[] = [];
   if (Platform.OS === 'android' && !hasVia) {
-    // `google.navigation:` abre directo en Google Maps si está instalado.
     urls.push(`google.navigation:q=${dest.lat},${dest.lng}`);
   }
   urls.push(mapsDirUrl);
@@ -114,5 +113,9 @@ export function getGoogleMapsUrl(lat: number, lng: number, via: NavViaPoint[] = 
 
 export function getWazeUrl(lat: number, lng: number): string {
   const dest = normalizeLatLng(lat, lng);
-  return `${WAZE_PREFIX}?ll=${dest.lat},${dest.lng}&navigate=yes`;
+  const u = new URL(WAZE_PREFIX);
+  u.searchParams.set('ll', `${dest.lat},${dest.lng}`);
+  u.searchParams.set('navigate', 'yes');
+  u.searchParams.set('zoom', '17');
+  return u.toString();
 }

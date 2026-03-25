@@ -88,12 +88,24 @@ function metersUserToRideDropoffRegion(ride: Record<string, unknown>, user: Poin
 }
 
 export async function fetchMyRides(driverId: string) {
-  const { data, error } = await supabase
+  const q = supabase
     .from('rides')
     .select('*')
     .eq('driver_id', driverId)
     .order('departure_time', { ascending: false })
     .limit(100);
+  const { data, error } = await raceWithTimeout(
+    q,
+    SUPABASE_QUERY_TIMEOUT_MS,
+    () =>
+      ({
+        data: null,
+        error: { message: 'SUPABASE_QUERY_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+      }) as Awaited<typeof q>
+  );
+  if (error?.message === 'SUPABASE_QUERY_TIMEOUT') {
+    throw new Error('Tiempo de espera al cargar tus viajes. Revisá la conexión.');
+  }
   if (error) throw error;
   return data ?? [];
 }
@@ -101,11 +113,23 @@ export async function fetchMyRides(driverId: string) {
 /** Reserved seats and total amount per ride (for driver list). */
 export async function fetchBookingsAggregate(rideIds: string[]) {
   if (rideIds.length === 0) return { reservedByRide: {} as Record<string, number>, amountByRide: {} as Record<string, number> };
-  const { data, error } = await supabase
+  const q = supabase
     .from('bookings')
     .select('ride_id, seats_count, price_paid')
     .in('ride_id', rideIds)
     .neq('status', 'cancelled');
+  const { data, error } = await raceWithTimeout(
+    q,
+    SUPABASE_QUERY_TIMEOUT_MS,
+    () =>
+      ({
+        data: null,
+        error: { message: 'SUPABASE_QUERY_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+      }) as Awaited<typeof q>
+  );
+  if (error?.message === 'SUPABASE_QUERY_TIMEOUT') {
+    throw new Error('Tiempo de espera al cargar reservas. Revisá la conexión.');
+  }
   if (error) throw error;
   const reservedByRide: Record<string, number> = {};
   const amountByRide: Record<string, number> = {};

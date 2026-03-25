@@ -88,13 +88,21 @@ freeWindowsPort8081();
 
 const adb = findAdb();
 const serial = pickDeviceSerial(adb);
-try {
+function adbReverse(port) {
   const args = serial
-    ? ['-s', serial, 'reverse', 'tcp:8081', 'tcp:8081']
-    : ['reverse', 'tcp:8081', 'tcp:8081'];
+    ? ['-s', serial, 'reverse', `tcp:${port}`, `tcp:${port}`]
+    : ['reverse', `tcp:${port}`, `tcp:${port}`];
   execFileSync(adb, args, { stdio: 'inherit' });
+}
+try {
+  adbReverse(8081);
+  try {
+    adbReverse(8082);
+  } catch {
+    /* 8082 opcional */
+  }
   console.log(
-    '[metro-android] adb reverse tcp:8081 → ok',
+    '[metro-android] adb reverse 8081 (y 8082 si aplica) → ok',
     serial ? `(dispositivo ${serial})` : ''
   );
 } catch {
@@ -105,7 +113,8 @@ try {
 
 const expoCli = require.resolve('expo/bin/cli');
 const userArgs = process.argv.slice(2);
-const child = spawn(process.execPath, [expoCli, 'start', '--host', 'lan', ...userArgs], {
+// Puerto fijo 8081: si Metro salta a 8082, el binario debug suele seguir pidiendo 8081 → "Unable to load script".
+const child = spawn(process.execPath, [expoCli, 'start', '--host', 'lan', '-p', '8081', ...userArgs], {
   stdio: 'inherit',
   cwd: path.join(__dirname, '..'),
   env: {

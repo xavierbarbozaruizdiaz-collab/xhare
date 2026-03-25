@@ -117,18 +117,23 @@ export function MyPublishedRidesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { isActive?: () => boolean }) => {
+    const alive = () => opts?.isActive?.() ?? true;
     if (!session?.id) {
-      setLoading(false);
-      setRows([]);
+      if (alive()) {
+        setLoading(false);
+        setRows([]);
+      }
       return;
     }
-    setError(null);
+    if (alive()) setError(null);
     try {
       const list = await fetchMyRides(session.id);
+      if (!alive()) return;
       const all = list as RideRow[];
       const ids = all.map((r) => r.id);
       const { reservedByRide } = await fetchBookingsAggregate(ids);
+      if (!alive()) return;
       setRows(
         all.map((r) => ({
           ...r,
@@ -136,18 +141,25 @@ export function MyPublishedRidesScreen() {
         }))
       );
     } catch (e) {
+      if (!alive()) return;
       setError(e instanceof Error ? e.message : 'No se pudieron cargar tus viajes');
       setRows([]);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (alive()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [session?.id]);
 
   useFocusEffect(
     useCallback(() => {
+      let active = true;
       setLoading(true);
-      void load();
+      void load({ isActive: () => active });
+      return () => {
+        active = false;
+      };
     }, [load])
   );
 

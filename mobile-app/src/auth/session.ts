@@ -3,6 +3,8 @@ import { supabase } from '../backend/supabase';
 import { raceWithTimeout } from '../backend/withTimeout';
 
 const GET_SESSION_TIMEOUT_MS = 12_000;
+/** Sin tope, PostgREST puede no resolver y `refreshSession` tras login queda colgado para siempre. */
+const PROFILE_FETCH_TIMEOUT_MS = 12_000;
 
 // En este proyecto no hay un `src/types.ts` estable.
 // Definimos el shape mínimo que usa la app (role/id) + campos extra.
@@ -28,7 +30,7 @@ export async function getSessionProfileFromSession(session: Session | null): Pro
     const access_token = pickAccessToken(session);
     if (!access_token) return null;
 
-    const { data: profile, error } = await supabase
+    const profileQuery = supabase
       .from('profiles')
       .select(
         `
@@ -51,6 +53,19 @@ export async function getSessionProfileFromSession(session: Session | null): Pro
       .eq('id', userId)
       .maybeSingle();
 
+    const { data: profile, error } = await raceWithTimeout(
+      profileQuery,
+      PROFILE_FETCH_TIMEOUT_MS,
+      () =>
+        ({
+          data: null,
+          error: { message: 'PROFILE_FETCH_TIMEOUT', code: 'TIMEOUT', details: '', hint: '' },
+        }) as Awaited<typeof profileQuery>
+    );
+
+    if (error && (error as { message?: string }).message === 'PROFILE_FETCH_TIMEOUT') {
+      return null;
+    }
     if (error || !profile) return null;
 
     return {

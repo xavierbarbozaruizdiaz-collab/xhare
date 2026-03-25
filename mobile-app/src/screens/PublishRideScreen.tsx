@@ -193,10 +193,11 @@ export function PublishRideScreen() {
     }
 
     if (profile.vehicle_seat_count == null || !String(profile.vehicle_model ?? '').trim() || profile.vehicle_year == null) {
-      Alert.alert('Vehículo', 'Completá los datos de tu vehículo antes de publicar.', [
-        { text: 'Ir', onPress: () => navigation.navigate('VehicleSetup') },
-        { text: 'Volver', style: 'cancel', onPress: () => navigation.goBack() },
-      ]);
+      Alert.alert(
+        'Vehículo',
+        'Tu vehículo aún no está cargado en la plataforma. Un administrador debe registrar o actualizar modelo, año y asientos desde el panel web.',
+        [{ text: 'Volver', onPress: () => navigation.goBack() }]
+      );
       setGateLoading(false);
       return;
     }

@@ -1,5 +1,6 @@
 /**
- * Settings: cuenta, navegación, permisos, Mensajes, vehículo; Mis solicitudes (pasajero) o Solicitudes de viaje (conductor), cerrar sesión.
+ * Settings: cuenta, navegación, permisos, Mensajes; Mis solicitudes (pasajero) o Solicitudes de viaje (conductor), cerrar sesión.
+ * Vehículo: solo administración web.
  */
 import React, { useState } from 'react';
 import {
@@ -100,16 +101,6 @@ export function SettingsScreen() {
         accessibilityRole="button"
       >
         <Text style={styles.linkLabel}>Mensajes</Text>
-        <Text style={styles.linkArrow}>→</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.linkRow}
-        onPress={() => parentNav?.navigate('VehicleSetup')}
-        accessibilityLabel="Configurar vehículo"
-        accessibilityHint="Modelo, año y cantidad de asientos"
-        accessibilityRole="button"
-      >
-        <Text style={styles.linkLabel}>Configurar vehículo</Text>
         <Text style={styles.linkArrow}>→</Text>
       </TouchableOpacity>
       {flavor === 'driver' ? (
