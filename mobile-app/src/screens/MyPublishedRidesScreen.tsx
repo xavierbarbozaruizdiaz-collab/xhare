@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { CommonActions, useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { fetchMyRides, fetchBookingsAggregate } from '../rides/api';
@@ -280,7 +280,14 @@ export function MyPublishedRidesScreen() {
       {!hasAnyRide ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>Todavía no tenés viajes registrados.</Text>
-          <TouchableOpacity style={styles.linkBtn} onPress={() => navigation.navigate('PublishRide', {})}>
+          <TouchableOpacity
+            style={styles.linkBtn}
+            onPress={() =>
+              navigation.dispatch(
+                CommonActions.navigate({ name: 'PublishRide', params: {}, merge: false })
+              )
+            }
+          >
             <Text style={styles.linkBtnText}>Publicar un viaje</Text>
           </TouchableOpacity>
         </View>

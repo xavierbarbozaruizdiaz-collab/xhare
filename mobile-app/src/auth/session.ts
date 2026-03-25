@@ -1,5 +1,8 @@
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../backend/supabase';
+import { raceWithTimeout } from '../backend/withTimeout';
+
+const GET_SESSION_TIMEOUT_MS = 12_000;
 
 // En este proyecto no hay un `src/types.ts` estable.
 // Definimos el shape mínimo que usa la app (role/id) + campos extra.
@@ -61,7 +64,12 @@ export async function getSessionProfileFromSession(session: Session | null): Pro
 }
 
 export async function getSessionProfile(): Promise<SessionProfile | null> {
-  const { data: { session } } = await supabase.auth.getSession();
+  const {
+    data: { session },
+  } = await raceWithTimeout(supabase.auth.getSession(), GET_SESSION_TIMEOUT_MS, () => ({
+    data: { session: null },
+    error: null,
+  }));
   return getSessionProfileFromSession(session);
 }
 

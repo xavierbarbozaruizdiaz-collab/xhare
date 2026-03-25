@@ -135,8 +135,6 @@ export function DriverTripRequestsScreen() {
     load();
   }, [load]);
 
-  const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
-
   const showGroups = groups.length > 0;
   const list = showGroups ? groups : fallbackRequests;
   const isGroupItem = showGroups;
@@ -147,7 +145,7 @@ export function DriverTripRequestsScreen() {
       return (
         <TouchableOpacity
           style={styles.card}
-          onPress={() => parentNav?.navigate('DriverRouteGroupDetail', { groupId: g.id })}
+          onPress={() => navigation.navigate('DriverRouteGroupDetail', { groupId: g.id })}
           accessibilityLabel={`Ruta ${g.origin_city ?? 'Origen'} a ${g.destination_city ?? 'Destino'}, ${g.passenger_count} pasajeros`}
           accessibilityRole="button"
         >
@@ -190,7 +188,7 @@ export function DriverTripRequestsScreen() {
           <TouchableOpacity
             style={styles.primaryBtn}
             onPress={() =>
-              parentNav?.navigate('PublishRide', { tripRequestId: reqId, publishKind: 'internal' })
+              navigation.navigate('PublishRide', { tripRequestId: reqId, publishKind: 'internal' })
             }
             accessibilityLabel="Crear ruta para solicitud interna"
             accessibilityRole="button"
@@ -200,7 +198,9 @@ export function DriverTripRequestsScreen() {
         ) : (
           <TouchableOpacity
             style={styles.longDistBtn}
-            onPress={() => parentNav?.navigate('TripRequestLongDistanceOffer', { tripRequestId: reqId })}
+            onPress={() =>
+              navigation.navigate('TripRequestLongDistanceOffer', { tripRequestId: reqId })
+            }
             accessibilityLabel="Contraoferta y precios de otros conductores"
             accessibilityRole="button"
           >
@@ -223,7 +223,7 @@ export function DriverTripRequestsScreen() {
     <View style={styles.container}>
       <TouchableOpacity
         style={styles.myRidesBtn}
-        onPress={() => parentNav?.navigate('MyPublishedRides')}
+        onPress={() => navigation.navigate('MyPublishedRides')}
         accessibilityRole="button"
         accessibilityLabel="Ver mis viajes publicados"
       >

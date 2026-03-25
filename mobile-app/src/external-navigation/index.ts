@@ -11,6 +11,15 @@ const WAZE_PREFIX = 'https://waze.com/ul';
 
 export type NavViaPoint = { lat: number; lng: number };
 
+function normalizeLatLng(lat: number, lng: number): { lat: number; lng: number } {
+  const a = Number(lat);
+  const b = Number(lng);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return { lat: a, lng: b };
+  // Heurística: si lat queda fuera de rango típico y lng no, asumimos swap.
+  if (Math.abs(a) > 90 && Math.abs(b) <= 90) return { lat: b, lng: a };
+  return { lat: a, lng: b };
+}
+
 function googleMapsDirectionsUrl(destLat: number, destLng: number, via: NavViaPoint[]): string {
   const u = new URL('https://www.google.com/maps/dir/');
   u.searchParams.set('api', '1');
@@ -31,6 +40,17 @@ async function tryOpenUrl(url: string): Promise<boolean> {
   }
 }
 
+async function tryOpenSchemeUrl(url: string): Promise<boolean> {
+  try {
+    const can = await Linking.canOpenURL(url);
+    if (!can) return false;
+    await Linking.openURL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Open navigation to a destination. Uses saved preference from settings (caller should pass it).
  * `via`: paradas intermedias (p. ej. subidas/bajadas de pasajeros). Solo Google Maps soporta varias en un enlace;
@@ -42,22 +62,25 @@ export async function openNavigation(
   app: NavApp = 'google_maps',
   options?: { via?: NavViaPoint[] }
 ): Promise<boolean> {
-  const via = (options?.via ?? []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  const dest = normalizeLatLng(lat, lng);
+  const via = (options?.via ?? [])
+    .map((p) => normalizeLatLng(p.lat, p.lng))
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
   const hasVia = via.length > 0;
-  const mapsDirUrl = googleMapsDirectionsUrl(lat, lng, via);
+  const mapsDirUrl = googleMapsDirectionsUrl(dest.lat, dest.lng, via);
 
   if (app === 'waze') {
     if (hasVia) {
       return tryOpenUrl(mapsDirUrl);
     }
-    const wazeUrls =
+    // En Android/iOS preferimos el scheme para evitar el diálogo "Abrir con".
+    const schemeUrl = `waze://?ll=${dest.lat},${dest.lng}&navigate=yes`;
+    if (await tryOpenSchemeUrl(schemeUrl)) return true;
+    const httpsUrl =
       Platform.OS === 'android'
-        ? [`waze://?ll=${lat},${lng}&navigate=yes`, `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`]
-        : [`waze://?ll=${lat},${lng}&navigate=yes`, `https://www.waze.com/ul?ll=${lat},${lng}&navigate=yes`];
-    for (const url of wazeUrls) {
-      if (await tryOpenUrl(url)) return true;
-    }
-    return false;
+        ? `https://waze.com/ul?ll=${dest.lat},${dest.lng}&navigate=yes`
+        : `https://www.waze.com/ul?ll=${dest.lat},${dest.lng}&navigate=yes`;
+    return tryOpenUrl(httpsUrl);
   }
 
   if (app === 'browser') {
@@ -73,7 +96,8 @@ export async function openNavigation(
   // google_maps
   const urls: string[] = [];
   if (Platform.OS === 'android' && !hasVia) {
-    urls.push(`google.navigation:q=${lat},${lng}`);
+    // `google.navigation:` abre directo en Google Maps si está instalado.
+    urls.push(`google.navigation:q=${dest.lat},${dest.lng}`);
   }
   urls.push(mapsDirUrl);
   for (const url of urls) {
@@ -83,9 +107,12 @@ export async function openNavigation(
 }
 
 export function getGoogleMapsUrl(lat: number, lng: number, via: NavViaPoint[] = []): string {
-  return googleMapsDirectionsUrl(lat, lng, via);
+  const dest = normalizeLatLng(lat, lng);
+  const cleanVia = via.map((p) => normalizeLatLng(p.lat, p.lng));
+  return googleMapsDirectionsUrl(dest.lat, dest.lng, cleanVia);
 }
 
 export function getWazeUrl(lat: number, lng: number): string {
-  return `${WAZE_PREFIX}&ll=${lat},${lng}&navigate=yes`;
+  const dest = normalizeLatLng(lat, lng);
+  return `${WAZE_PREFIX}?ll=${dest.lat},${dest.lng}&navigate=yes`;
 }

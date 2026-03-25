@@ -1,6 +1,6 @@
 /**
  * Home base: welcome, role banners (driver_pending, admin), short links.
- * Flavor conductor: sin "Mis solicitudes" (pasajero); acceso a pestaña Solicitudes.
+ * Flavor conductor: acceso rápido a Solicitudes de viaje desde Inicio; pestaña Conductor = hub publicar/solicitudes.
  */
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
@@ -43,7 +43,7 @@ export function HomeScreen() {
         {session?.email && !firstName ? <Text style={styles.emailHint}>{session.email}</Text> : null}
         <Text style={styles.hint}>
           {flavor === 'driver'
-            ? 'En la pestaña Solicitudes ves las solicitudes de viaje que dejaron los pasajeros (y rutas con demanda). Con Mis viajes publicados revisá lo que ya publicaste.'
+            ? 'Tocá Solicitudes para ver pedidos de pasajeros y rutas con demanda. En la pestaña Conductor podés publicar un viaje. Con Mis viajes publicados revisá lo que ya publicaste.'
             : 'En Pasajero podés unirte a rutas con demanda. Para viajes ya publicados: Viajes disponibles (lista de hoy) o Buscar viajes (fecha, origen y destino).'}
         </Text>
         {isPassengerFlavor ? (
@@ -78,7 +78,12 @@ export function HomeScreen() {
         ) : null}
         {flavor === 'driver' ? (
           <View style={styles.links}>
-            <TouchableOpacity style={styles.linkBtn} onPress={() => navigation.navigate('Driver')}>
+            <TouchableOpacity
+              style={styles.linkBtn}
+              onPress={() => parentNav?.navigate('DriverTripRequests')}
+              accessibilityRole="button"
+              accessibilityLabel="Solicitudes de viaje"
+            >
               <Text style={styles.linkBtnText}>Solicitudes</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.linkBtn} onPress={() => parentNav?.navigate('Messages')}>

@@ -72,8 +72,8 @@ function MainTabs() {
           name="Driver"
           component={DriverScreen}
           options={{
-            title: 'Solicitudes de viaje',
-            tabBarLabel: 'Solicitudes',
+            title: 'Conductor',
+            tabBarLabel: 'Conductor',
           }}
         />
       ) : (

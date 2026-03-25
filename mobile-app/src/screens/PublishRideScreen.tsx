@@ -89,12 +89,16 @@ export function PublishRideScreen() {
   const route = useRoute<ScreenRoute>();
   const { session } = useAuth();
   const params = route.params ?? {};
-  const publishKind: PublishKind = params.publishKind === 'long_distance' ? 'long_distance' : 'internal';
-  const isLongDistance = publishKind === 'long_distance';
-
   const tripRequestIdParam = params.tripRequestId;
   const fromRideIdParam = params.fromRideId;
   const groupIdParam = params.groupId;
+  /** Si venís de solicitud / ruta con demanda / copiar viaje, el tipo lo fija ese flujo. */
+  const contextualPublish = Boolean(tripRequestIdParam || groupIdParam || fromRideIdParam);
+  const paramPublishKind: PublishKind =
+    params.publishKind === 'long_distance' ? 'long_distance' : 'internal';
+  const [publishKindFree, setPublishKindFree] = useState<PublishKind>(paramPublishKind);
+  const publishKind = contextualPublish ? paramPublishKind : publishKindFree;
+  const isLongDistance = publishKind === 'long_distance';
   const suggestedSeatPriceGsParam =
     params.suggestedSeatPriceGs != null && Number.isFinite(params.suggestedSeatPriceGs)
       ? Math.round(Number(params.suggestedSeatPriceGs))
@@ -427,6 +431,10 @@ export function PublishRideScreen() {
   }, [suggestedSeatPriceGsParam, isLongDistance]);
 
   useEffect(() => {
+    if (!isLongDistance) setDepartureFlexibility('strict_5');
+  }, [isLongDistance]);
+
+  useEffect(() => {
     if (!origin || !destination) setWaypoints([]);
   }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng]);
 
@@ -668,8 +676,8 @@ export function PublishRideScreen() {
               : parseInt(String(userProfile.vehicle_year), 10) || null,
         },
         seat_layout: userProfile.vehicle_seat_layout ?? { rows: [userProfile.vehicle_seat_count] },
-        flexible_departure: departureFlexibility === 'flexible_30',
-        departure_flexibility: departureFlexibility,
+        flexible_departure: isLongDistance && departureFlexibility === 'flexible_30',
+        departure_flexibility: isLongDistance ? departureFlexibility : 'strict_5',
         status: 'published',
         mode: 'free',
       };
@@ -788,6 +796,36 @@ export function PublishRideScreen() {
         <Text style={styles.warnBanner}>
           Configurá EXPO_PUBLIC_API_BASE_URL para ver sugerencias de dirección y la ruta en el mapa.
         </Text>
+      )}
+      {!contextualPublish && (
+        <>
+          <Text style={styles.label}>Tipo de viaje</Text>
+          <View style={styles.kindPickerRow}>
+            <TouchableOpacity
+              style={[styles.kindChip, publishKind === 'internal' && styles.kindChipActive]}
+              onPress={() => {
+                setPublishKindFree('internal');
+                setManualSeatPriceInput('');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Viaje interno"
+            >
+              <Text style={[styles.kindChipText, publishKind === 'internal' && styles.kindChipTextActive]}>
+                Interno
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.kindChip, publishKind === 'long_distance' && styles.kindChipActive]}
+              onPress={() => setPublishKindFree('long_distance')}
+              accessibilityRole="button"
+              accessibilityLabel="Larga distancia"
+            >
+              <Text style={[styles.kindChipText, publishKind === 'long_distance' && styles.kindChipTextActive]}>
+                Larga distancia
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </>
       )}
       <View style={[styles.kindBanner, isLongDistance ? styles.kindBannerLong : styles.kindBannerInternal]}>
         <Text style={styles.kindBannerTitle}>
@@ -1044,33 +1082,37 @@ export function PublishRideScreen() {
         </>
       ) : null}
 
-      <Text style={styles.label}>Flexibilidad de salida</Text>
-      <View style={styles.segmentRow}>
-        <TouchableOpacity
-          style={[
-            styles.segmentBtn,
-            styles.segmentBtnLeft,
-            departureFlexibility === 'strict_5' && styles.segmentBtnActive,
-          ]}
-          onPress={() => setDepartureFlexibility('strict_5')}
-        >
-          <Text style={[styles.segmentText, departureFlexibility === 'strict_5' && styles.segmentTextActive]}>
-            Estricta (5 min)
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.segmentBtn,
-            styles.segmentBtnRight,
-            departureFlexibility === 'flexible_30' && styles.segmentBtnActive,
-          ]}
-          onPress={() => setDepartureFlexibility('flexible_30')}
-        >
-          <Text style={[styles.segmentText, departureFlexibility === 'flexible_30' && styles.segmentTextActive]}>
-            Flexible (30 min)
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {isLongDistance ? (
+        <>
+          <Text style={styles.label}>Flexibilidad de salida</Text>
+          <View style={styles.segmentRow}>
+            <TouchableOpacity
+              style={[
+                styles.segmentBtn,
+                styles.segmentBtnLeft,
+                departureFlexibility === 'strict_5' && styles.segmentBtnActive,
+              ]}
+              onPress={() => setDepartureFlexibility('strict_5')}
+            >
+              <Text style={[styles.segmentText, departureFlexibility === 'strict_5' && styles.segmentTextActive]}>
+                Estricta (5 min)
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.segmentBtn,
+                styles.segmentBtnRight,
+                departureFlexibility === 'flexible_30' && styles.segmentBtnActive,
+              ]}
+              onPress={() => setDepartureFlexibility('flexible_30')}
+            >
+              <Text style={[styles.segmentText, departureFlexibility === 'flexible_30' && styles.segmentTextActive]}>
+                Flexible (30 min)
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : null}
 
       <Text style={styles.label}>Asientos</Text>
       <Text style={styles.seatsReadonly}>
@@ -1266,4 +1308,16 @@ const styles = StyleSheet.create({
   mapModeText: { fontSize: 13, fontWeight: '600', color: '#374151' },
   mapModeTextDisabled: { color: '#9ca3af' },
   clearWp: { fontSize: 13, color: '#2563eb', fontWeight: '600', marginBottom: 8 },
+  kindPickerRow: { flexDirection: 'row', gap: 10, marginBottom: 14, flexWrap: 'wrap' },
+  kindChip: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+  },
+  kindChipActive: { backgroundColor: GREEN, borderColor: GREEN },
+  kindChipText: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  kindChipTextActive: { color: '#fff' },
 });
