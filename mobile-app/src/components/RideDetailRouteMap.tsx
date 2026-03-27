@@ -37,6 +37,8 @@ type Props = {
   passengerBookingGeo?: PassengerBookingMapGeo | null;
   /** Conductor: subidas/bajadas de todas las reservas no canceladas. */
   otherBookingsGeo?: Array<{ pickup: Point; dropoff: Point }>;
+  /** Posición actual del conductor durante el viaje en curso (pasajero). */
+  driverLocation?: Point | null;
 };
 
 function regionForPoints(pts: Point[]) {
@@ -66,6 +68,7 @@ export function RideDetailRouteMap({
   height = 280,
   passengerBookingGeo = null,
   otherBookingsGeo = [],
+  driverLocation = null,
 }: Props) {
   const [polyline, setPolyline] = useState<Point[]>([]);
   const [note, setNote] = useState<string | null>(null);
@@ -171,12 +174,15 @@ export function RideDetailRouteMap({
     otherBookingsGeo.forEach((b) => {
       pts.push(b.pickup, b.dropoff);
     });
+    if (driverLocation && Number.isFinite(driverLocation.lat) && Number.isFinite(driverLocation.lng)) {
+      pts.push(driverLocation);
+    }
     if (pts.length >= 2) return pts;
     if (polyline.length >= 2) return polyline;
     if (passengerLine.length >= 2) return passengerLine;
     if (driverBookingsLine.length >= 2) return driverBookingsLine;
     return markerCoords;
-  }, [polyline, passengerLine, driverBookingsLine, passengerBookingGeo, otherBookingsGeo, markerCoords]);
+  }, [polyline, passengerLine, driverBookingsLine, passengerBookingGeo, otherBookingsGeo, markerCoords, driverLocation]);
 
   const region = useMemo(() => regionForPoints(regionPts), [regionPts]);
 
@@ -314,6 +320,16 @@ export function RideDetailRouteMap({
               </Marker>
             </React.Fragment>
           ))}
+          {driverLocation && Number.isFinite(driverLocation.lat) && Number.isFinite(driverLocation.lng) ? (
+            <Marker
+              coordinate={{ latitude: driverLocation.lat, longitude: driverLocation.lng }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              tracksViewChanges={Platform.OS === 'android'}
+              title="Conductor en camino"
+            >
+              <View style={[styles.routeStopDot, styles.driverLiveDot]} collapsable={false} />
+            </Marker>
+          ) : null}
         </MapView>
         {fetching || passengerLineLoading || driverBookingsLineLoading ? (
           <View style={styles.loadingOverlay} pointerEvents="none">
@@ -402,4 +418,5 @@ const styles = StyleSheet.create({
   routeStopStart: { backgroundColor: '#15803d' },
   routeStopMid: { backgroundColor: '#d97706' },
   routeStopEnd: { backgroundColor: '#b91c1c' },
+  driverLiveDot: { backgroundColor: '#1d4ed8', width: 18, height: 18, borderRadius: 9 },
 });

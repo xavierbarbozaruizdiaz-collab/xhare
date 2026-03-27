@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/server';
+import { createServerClient, createServiceClient } from '@/lib/supabase/server';
 import { z } from 'zod';
-import { jwtDecode } from 'jwt-decode';
 
 const bodySchema = z.object({
   awaiting: z.boolean(),
   access_token: z.string().optional(),
 });
-
-type JwtPayload = { sub?: string; user_id?: string };
 
 export async function POST(
   request: NextRequest,
@@ -33,23 +30,18 @@ export async function POST(
       );
     }
 
-    let userId: string | null = null;
-    try {
-      const payload = jwtDecode<JwtPayload>(token);
-      userId = payload.sub ?? payload.user_id ?? null;
-    } catch {
+    const authClient = createServerClient(request);
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser(token);
+    if (authError || !user) {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
-
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
-        { status: 401 }
-      );
-    }
+    const userId = user.id;
 
     const { data: ride } = await service
       .from('rides')

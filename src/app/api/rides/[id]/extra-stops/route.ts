@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { jwtDecode } from 'jwt-decode';
-import { createServiceClient } from '@/lib/supabase/server';
+import { createServerClient, createServiceClient } from '@/lib/supabase/server';
 
 const extraStopSchema = z.object({
   lat: z.number(),
@@ -14,8 +13,6 @@ const bodySchema = z.object({
   stops: z.array(extraStopSchema).max(3),
   access_token: z.string().optional(),
 });
-
-type JwtPayload = { sub?: string; user_id?: string };
 
 export async function POST(
   request: NextRequest,
@@ -43,23 +40,18 @@ export async function POST(
       );
     }
 
-    let userId: string | null = null;
-    try {
-      const payload = jwtDecode<JwtPayload>(token);
-      userId = payload.sub ?? payload.user_id ?? null;
-    } catch {
+    const authClient = createServerClient(request);
+    const {
+      data: { user },
+      error: authError,
+    } = await authClient.auth.getUser(token);
+    if (authError || !user) {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
-
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
-        { status: 401 }
-      );
-    }
+    const userId = user.id;
 
     // Verificar que el usuario tiene una reserva activa en este viaje
     const { data: booking } = await service

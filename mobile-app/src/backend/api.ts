@@ -121,6 +121,14 @@ export async function arriveAtStop(
   return apiPost(`/api/rides/${rideId}/arrive`, { stopOrder, passengers });
 }
 
+export async function setRideAwaitingStopConfirmation(rideId: string, awaiting: boolean) {
+  return apiPost(`/api/rides/${rideId}/set-awaiting-confirmation`, { awaiting });
+}
+
+export async function confirmRideBookingPayment(rideId: string, bookingId: string) {
+  return apiPost(`/api/rides/${rideId}/confirm-payment`, { bookingId });
+}
+
 export async function saveExtraStops(
   rideId: string,
   stops: Array<{ lat: number; lng: number; label?: string | null; order: number }>

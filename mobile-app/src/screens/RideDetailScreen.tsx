@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as Location from 'expo-location';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
 import { updateRideStatus } from '../backend/rideStatus';
@@ -23,9 +24,11 @@ import { rideStatusConfig, formatRideDate, formatRideTime } from '../ui/rideStat
 import { openNavigation } from '../external-navigation';
 import { getNavigationPreference } from '../settings';
 import { loadRidePolyline } from '../lib/resolveRidePolyline';
-import { passengerWaypointsBeforeDestination } from '../lib/driverNavWaypoints';
 import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
 import type { Point } from '../lib/geo';
+import { sendRideLocation } from '../backend/locationApi';
+import { confirmRideBookingPayment, arriveAtStop, setRideAwaitingStopConfirmation } from '../backend/api';
+import { requestLocationPermission } from '../permissions';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'RideDetail'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'RideDetail'>;
@@ -42,6 +45,18 @@ type PassengerBookingSummary = {
   pickup_lng: number | null;
   dropoff_lat: number | null;
   dropoff_lng: number | null;
+};
+
+type DriverBookingStop = {
+  id: string;
+  passenger_id: string;
+  status: string;
+  pickup_stop_id: string | null;
+  dropoff_stop_id: string | null;
+  pickup_label: string | null;
+  dropoff_label: string | null;
+  price_paid: number;
+  payment_status: string | null;
 };
 
 function bookingStatusLabel(status: string): string {
@@ -93,7 +108,12 @@ export function RideDetailScreen() {
   const [passengerBooking, setPassengerBooking] = useState<PassengerBookingSummary | null>(null);
   const [passengerExtrasGeo, setPassengerExtrasGeo] = useState<Point[]>([]);
   const [driverBookingPins, setDriverBookingPins] = useState<Array<{ pickup: Point; dropoff: Point }>>([]);
+  const [driverRideBookings, setDriverRideBookings] = useState<DriverBookingStop[]>([]);
   const [navBasePolyline, setNavBasePolyline] = useState<Point[]>([]);
+  const [arriveModalOpen, setArriveModalOpen] = useState(false);
+  const [arriveDecisions, setArriveDecisions] = useState<Record<string, 'boarded' | 'no_show' | 'dropped_off'>>({});
+  const [arrivePaymentConfirmed, setArrivePaymentConfirmed] = useState<Record<string, boolean>>({});
+  const [submittingArrive, setSubmittingArrive] = useState(false);
 
   const loadPassengerBooking = useCallback(async () => {
     if (!session?.id) {
@@ -173,14 +193,30 @@ export function RideDetailScreen() {
   const refetchDriverBookingPins = useCallback(async () => {
     if (!session?.id || !ride || String(ride.driver_id) !== String(session.id)) {
       setDriverBookingPins([]);
+      setDriverRideBookings([]);
       return;
     }
     const { data, error } = await supabase
       .from('bookings')
-      .select('pickup_lat, pickup_lng, dropoff_lat, dropoff_lng')
+      .select(
+        'id, passenger_id, status, pickup_stop_id, dropoff_stop_id, pickup_label, dropoff_label, price_paid, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
+      )
       .eq('ride_id', rideId)
       .neq('status', 'cancelled');
     if (error) return;
+    setDriverRideBookings(
+      (data ?? []).map((row: Record<string, unknown>) => ({
+        id: String(row.id ?? ''),
+        passenger_id: String(row.passenger_id ?? ''),
+        status: String(row.status ?? ''),
+        pickup_stop_id: row.pickup_stop_id != null ? String(row.pickup_stop_id) : null,
+        dropoff_stop_id: row.dropoff_stop_id != null ? String(row.dropoff_stop_id) : null,
+        pickup_label: row.pickup_label != null ? String(row.pickup_label) : null,
+        dropoff_label: row.dropoff_label != null ? String(row.dropoff_label) : null,
+        price_paid: Number(row.price_paid ?? 0),
+        payment_status: row.payment_status != null ? String(row.payment_status) : null,
+      }))
+    );
     const pins = (data ?? [])
       .map((row: { pickup_lat?: number; pickup_lng?: number; dropoff_lat?: number; dropoff_lng?: number }) => ({
         pickup: { lat: Number(row.pickup_lat), lng: Number(row.pickup_lng) },
@@ -229,6 +265,43 @@ export function RideDetailScreen() {
       void refetchDriverBookingPins();
     }, [loadPassengerBooking, refetchDriverBookingPins])
   );
+
+  useEffect(() => {
+    if (!ride || String(ride.status ?? '') !== 'en_route') return;
+    const t = setInterval(() => {
+      void load({ quiet: true });
+      void loadPassengerBooking();
+      void refetchDriverBookingPins();
+    }, 15_000);
+    return () => clearInterval(t);
+  }, [ride, load, loadPassengerBooking, refetchDriverBookingPins]);
+
+  useEffect(() => {
+    if (!ride || !session?.id) return;
+    if (String(ride.driver_id) !== String(session.id)) return;
+    if (String(ride.status ?? '') !== 'en_route') return;
+    let cancelled = false;
+    const send = async () => {
+      const granted = await requestLocationPermission();
+      if (!granted || cancelled) return;
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      }).catch(() => null);
+      if (!pos || cancelled) return;
+      const { data: auth } = await supabase.auth.getSession();
+      const token = auth.session?.access_token;
+      if (!token || cancelled) return;
+      await sendRideLocation(rideId, pos.coords.latitude, pos.coords.longitude, token).catch(() => false);
+    };
+    void send();
+    const t = setInterval(() => {
+      void send();
+    }, 25_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [ride, rideId, session?.id]);
 
   useEffect(() => {
     if (!ride) {
@@ -339,25 +412,103 @@ export function RideDetailScreen() {
   const currentNavStop = rideStops.length > 0 ? rideStops[stopIdx] : undefined;
   const nextNavStop =
     rideStops.length > 0 && stopIdx + 1 < rideStops.length ? rideStops[stopIdx + 1] : undefined;
+  const currentStopOrder = currentNavStop?.stop_order ?? stopIdx;
+  const pickupAtCurrentStop = driverRideBookings.filter(
+    (b) => b.pickup_stop_id != null && currentNavStop && b.pickup_stop_id === currentNavStop.id
+  );
+  const dropoffAtCurrentStop = driverRideBookings.filter(
+    (b) => b.dropoff_stop_id != null && currentNavStop && b.dropoff_stop_id === currentNavStop.id
+  );
+  const allArriveDecisionsSet = (() => {
+    if (pickupAtCurrentStop.length === 0 && dropoffAtCurrentStop.length === 0) return true;
+    const hasPickupDecisions = pickupAtCurrentStop.every((b) => {
+      const v = arriveDecisions[`pickup:${b.id}`];
+      return v === 'boarded' || v === 'no_show';
+    });
+    const hasDropoffDecisions = dropoffAtCurrentStop.every((b) => {
+      const d = arriveDecisions[`dropoff:${b.id}`];
+      return d === 'dropped_off' && arrivePaymentConfirmed[b.id] === true;
+    });
+    return hasPickupDecisions && hasDropoffDecisions;
+  })();
 
   const openNavToStop = async (s: RideStopForReserve | undefined) => {
     if (!s || !Number.isFinite(s.lat) || !Number.isFinite(s.lng)) {
       Alert.alert('Navegación', 'Esta parada no tiene coordenadas.');
       return;
     }
-    const dest = { lat: s.lat, lng: s.lng };
-    const via =
-      driverBookingPins.length > 0 && navBasePolyline.length >= 2
-        ? passengerWaypointsBeforeDestination(navBasePolyline, driverBookingPins, dest)
-        : [];
     const pref = await getNavigationPreference();
-    const ok = await openNavigation(s.lat, s.lng, pref, { via });
-    if (!ok) {
-      const hint =
-        pref === 'waze'
-          ? 'No se pudo abrir Waze. Verificá que esté instalado o elegí otra app en Ajustes → Navegación externa.'
-          : 'No se pudo abrir la app de mapas. Probá de nuevo o abrí Google Maps manualmente.';
-      Alert.alert('Navegación', hint);
+    let origin: { lat: number; lng: number } | undefined;
+    try {
+      if (await requestLocationPermission()) {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        origin = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      }
+    } catch {
+      /* sin GPS aún abrimos nav; Waze usará su propia ubicación */
+    }
+    // Un solo destino por apertura. `origin` permite evitar Waze 402 (emulador lejos del destino → fallback Maps).
+    const result = await openNavigation(s.lat, s.lng, pref, { via: [], ...(origin ? { origin } : {}) });
+    if (!result.ok) {
+      const appName = pref === 'waze' ? 'Waze' : pref === 'browser' ? 'Google Chrome' : 'Google Maps';
+      const detail =
+        result.error === 'invalid_coordinates'
+          ? 'La parada actual tiene coordenadas inválidas.'
+          : `No encontramos ${appName} instalado en este teléfono.`;
+      const action =
+        'Entrá en Ajustes > Navegación externa y elegí una app que tengas instalada.';
+      Alert.alert('No se pudo abrir la navegación', `${detail}\n\n${action}`);
+    }
+  };
+
+  const openArriveModal = async () => {
+    if (!currentNavStop) {
+      Alert.alert('Parada', 'No hay parada actual para confirmar.');
+      return;
+    }
+    const r = await setRideAwaitingStopConfirmation(rideId, true);
+    if (!r.ok) {
+      Alert.alert('No se pudo marcar llegada', r.error ?? 'Intentá de nuevo.');
+      return;
+    }
+    setArriveDecisions({});
+    setArrivePaymentConfirmed({});
+    setArriveModalOpen(true);
+    await load({ quiet: true });
+  };
+
+  const submitArriveModal = async () => {
+    if (!allArriveDecisionsSet || !currentNavStop || submittingArrive) return;
+    setSubmittingArrive(true);
+    try {
+      const passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }> = [
+        ...pickupAtCurrentStop.map((b) => ({
+          id: b.id,
+          action: (arriveDecisions[`pickup:${b.id}`] ?? 'boarded') as 'boarded' | 'no_show' | 'dropped_off',
+        })),
+        ...dropoffAtCurrentStop.map((b) => ({
+          id: b.id,
+          action: 'dropped_off' as const,
+        })),
+      ];
+      const arrive = await arriveAtStop(rideId, currentStopOrder, passengers);
+      if (!arrive.ok) {
+        Alert.alert('No se pudo confirmar parada', arrive.error ?? 'Intentá de nuevo.');
+        return;
+      }
+      const toPay = dropoffAtCurrentStop.filter((b) => arrivePaymentConfirmed[b.id] === true);
+      for (const b of toPay) {
+        const paid = await confirmRideBookingPayment(rideId, b.id);
+        if (!paid.ok) {
+          Alert.alert('Cobro pendiente', `No se pudo confirmar cobro de ${b.price_paid.toLocaleString('es-PY')} PYG.`);
+        }
+      }
+      setArriveModalOpen(false);
+      await load({ quiet: true });
+      await refetchDriverBookingPins();
+      Alert.alert('Listo', 'Parada confirmada.');
+    } finally {
+      setSubmittingArrive(false);
     }
   };
 
@@ -379,6 +530,11 @@ export function RideDetailScreen() {
             rideStops={rideStops}
             height={300}
             otherBookingsGeo={driverBookingPins}
+            driverLocation={
+              Number.isFinite(Number(ride.driver_lat)) && Number.isFinite(Number(ride.driver_lng))
+                ? { lat: Number(ride.driver_lat), lng: Number(ride.driver_lng) }
+                : null
+            }
           />
           <Text style={styles.sectionLabel}>Salida</Text>
           <Text style={styles.bodyLine}>
@@ -429,8 +585,13 @@ export function RideDetailScreen() {
               <Text style={styles.sectionLabel}>Navegación</Text>
               {awaitingStop ? (
                 <Text style={styles.awaitingBanner}>
-                  Pendiente: confirmá subidas/bajadas de pasajeros en la web para poder avanzar de parada.
+                  Pendiente: confirmá subidas/bajadas y cobro en esta parada para poder avanzar.
                 </Text>
+              ) : null}
+              {!awaitingStop ? (
+                <TouchableOpacity style={[styles.navBtn, styles.arriveBtn]} onPress={() => void openArriveModal()}>
+                  <Text style={styles.navBtnText}>Llegué</Text>
+                </TouchableOpacity>
               ) : null}
               {currentNavStop && Number.isFinite(currentNavStop.lat) && Number.isFinite(currentNavStop.lng) ? (
                 <TouchableOpacity
@@ -509,6 +670,11 @@ export function RideDetailScreen() {
             rideStops={rideStops}
             height={300}
             passengerBookingGeo={passengerMapGeo}
+            driverLocation={
+              Number.isFinite(Number(ride.driver_lat)) && Number.isFinite(Number(ride.driver_lng))
+                ? { lat: Number(ride.driver_lat), lng: Number(ride.driver_lng) }
+                : null
+            }
           />
           <Text style={styles.sectionLabel}>Salida</Text>
           <Text style={styles.bodyLine}>
@@ -608,7 +774,7 @@ export function RideDetailScreen() {
           ) : null}
           {status === 'en_route' ? (
             <Text style={styles.hint}>
-              Para marcar “Llegué” y confirmar pasajeros en cada parada usá la web si tu flujo lo requiere.
+              Usá “Llegué” para confirmar subidas, bajadas y cobro en cada parada.
             </Text>
           ) : null}
           {canEdit ? (
@@ -623,6 +789,98 @@ export function RideDetailScreen() {
         <Text style={styles.secondaryText}>Volver</Text>
       </TouchableOpacity>
     </ScrollView>
+
+      <Modal visible={arriveModalOpen} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.arriveCard}>
+            <Text style={styles.arriveTitle}>
+              Llegada a {currentNavStop?.label?.trim() || `parada ${currentStopOrder + 1}`}
+            </Text>
+            <ScrollView style={styles.arriveBody}>
+              {pickupAtCurrentStop.length === 0 && dropoffAtCurrentStop.length === 0 ? (
+                <Text style={styles.bodyMuted}>No hay pasajeros para confirmar en esta parada.</Text>
+              ) : null}
+              {pickupAtCurrentStop.map((b) => (
+                <View key={`p:${b.id}`} style={styles.arriveRow}>
+                  <Text style={styles.arriveLabel}>Subida · {b.pickup_label?.trim() || 'Pasajero'}</Text>
+                  <View style={styles.arriveActions}>
+                    <TouchableOpacity
+                      style={[
+                        styles.arriveChip,
+                        arriveDecisions[`pickup:${b.id}`] === 'boarded' && styles.arriveChipActiveOk,
+                      ]}
+                      onPress={() =>
+                        setArriveDecisions((prev) => ({ ...prev, [`pickup:${b.id}`]: 'boarded' }))
+                      }
+                    >
+                      <Text style={styles.arriveChipText}>Subió</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.arriveChip,
+                        arriveDecisions[`pickup:${b.id}`] === 'no_show' && styles.arriveChipActiveNo,
+                      ]}
+                      onPress={() =>
+                        setArriveDecisions((prev) => ({ ...prev, [`pickup:${b.id}`]: 'no_show' }))
+                      }
+                    >
+                      <Text style={styles.arriveChipText}>No subió</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+              {dropoffAtCurrentStop.map((b) => (
+                <View key={`d:${b.id}`} style={styles.arriveRow}>
+                  <Text style={styles.arriveLabel}>Bajada · {b.dropoff_label?.trim() || 'Pasajero'}</Text>
+                  <Text style={styles.arriveAmount}>{b.price_paid.toLocaleString('es-PY')} PYG</Text>
+                  <View style={styles.arriveActions}>
+                    <TouchableOpacity
+                      style={[
+                        styles.arriveChip,
+                        arriveDecisions[`dropoff:${b.id}`] === 'dropped_off' && styles.arriveChipActiveWarn,
+                      ]}
+                      onPress={() =>
+                        setArriveDecisions((prev) => ({ ...prev, [`dropoff:${b.id}`]: 'dropped_off' }))
+                      }
+                    >
+                      <Text style={styles.arriveChipText}>Bajó</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.arriveChip,
+                        arrivePaymentConfirmed[b.id] === true && styles.arriveChipActiveOk,
+                      ]}
+                      onPress={() =>
+                        setArrivePaymentConfirmed((prev) => ({ ...prev, [b.id]: !prev[b.id] }))
+                      }
+                    >
+                      <Text style={styles.arriveChipText}>Cobro confirmado</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+            <View style={styles.arriveFooter}>
+              <TouchableOpacity
+                style={styles.arriveCancel}
+                onPress={() => {
+                  setArriveModalOpen(false);
+                  void setRideAwaitingStopConfirmation(rideId, false);
+                }}
+              >
+                <Text style={styles.arriveCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.arriveConfirm, (!allArriveDecisionsSet || submittingArrive) && styles.btnDisabled]}
+                disabled={!allArriveDecisionsSet || submittingArrive}
+                onPress={() => void submitArriveModal()}
+              >
+                <Text style={styles.arriveConfirmText}>{submittingArrive ? 'Guardando…' : 'Confirmar'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={statusUpdating} transparent animationType="fade">
         <View style={styles.modalOverlay} pointerEvents="box-none">
@@ -704,6 +962,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 10,
   },
+  arriveBtn: {
+    backgroundColor: '#b45309',
+  },
   navBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   navBtnOutline: {
     backgroundColor: '#fff',
@@ -711,6 +972,105 @@ const styles = StyleSheet.create({
     borderColor: '#1d4ed8',
   },
   navBtnTextOutline: { color: '#1d4ed8', fontWeight: '700', fontSize: 15 },
+  arriveCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    maxWidth: 420,
+    width: '100%',
+    maxHeight: '85%',
+    overflow: 'hidden',
+  },
+  arriveTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111827',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  arriveBody: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+  },
+  arriveRow: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderColor: '#f3f4f6',
+  },
+  arriveLabel: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '600',
+  },
+  arriveAmount: {
+    marginTop: 5,
+    fontSize: 13,
+    color: '#166534',
+    fontWeight: '700',
+  },
+  arriveActions: {
+    marginTop: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  arriveChip: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: '#fff',
+  },
+  arriveChipActiveOk: {
+    backgroundColor: '#166534',
+    borderColor: '#166534',
+  },
+  arriveChipActiveNo: {
+    backgroundColor: '#b91c1c',
+    borderColor: '#b91c1c',
+  },
+  arriveChipActiveWarn: {
+    backgroundColor: '#b45309',
+    borderColor: '#b45309',
+  },
+  arriveChipText: {
+    fontSize: 13,
+    color: '#111827',
+    fontWeight: '700',
+  },
+  arriveFooter: {
+    padding: 12,
+    borderTopWidth: 1,
+    borderColor: '#e5e7eb',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  arriveCancel: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  arriveCancelText: {
+    color: '#374151',
+    fontWeight: '700',
+  },
+  arriveConfirm: {
+    flex: 1,
+    backgroundColor: '#166534',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  arriveConfirmText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
