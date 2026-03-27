@@ -21,7 +21,7 @@ import { updateRideStatus } from '../backend/rideStatus';
 import { fetchRideForReserve, type RideStopForReserve } from '../rides/api';
 import type { MainStackParamList } from '../navigation/types';
 import { rideStatusConfig, formatRideDate, formatRideTime } from '../ui/rideStatusConfig';
-import { openNavigation } from '../external-navigation';
+import { openNavigation, openNavigationErrorMessage } from '../external-navigation';
 import { getNavigationPreference } from '../settings';
 import { loadRidePolyline } from '../lib/resolveRidePolyline';
 import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
@@ -450,14 +450,8 @@ export function RideDetailScreen() {
     // Un solo destino por apertura. `origin` permite evitar Waze 402 (emulador lejos del destino → fallback Maps).
     const result = await openNavigation(s.lat, s.lng, pref, { via: [], ...(origin ? { origin } : {}) });
     if (!result.ok) {
-      const appName = pref === 'waze' ? 'Waze' : pref === 'browser' ? 'Google Chrome' : 'Google Maps';
-      const detail =
-        result.error === 'invalid_coordinates'
-          ? 'La parada actual tiene coordenadas inválidas.'
-          : `No encontramos ${appName} instalado en este teléfono.`;
-      const action =
-        'Entrá en Ajustes > Navegación externa y elegí una app que tengas instalada.';
-      Alert.alert('No se pudo abrir la navegación', `${detail}\n\n${action}`);
+      const { title, body } = openNavigationErrorMessage(pref, result.error);
+      Alert.alert(title, body);
     }
   };
 

@@ -1,30 +1,39 @@
 /**
  * External navigation: open Maps, Waze, or browser.
- * Android: usa intent explícito por package cuando existe para evitar el popup "Abrir con".
+ * Android: [Intent.setPackage] via módulo nativo XhareNavigation (sin "Abrir con" ni startActivityForResult).
  */
-import * as IntentLauncher from 'expo-intent-launcher';
 import * as Linking from 'expo-linking';
-import { Platform } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 import { distanceMeters } from '../lib/geo';
 
 export type NavApp = 'google_maps' | 'waze' | 'browser';
 export type OpenNavigationError = 'invalid_coordinates' | 'target_app_unavailable';
+
 export type OpenNavigationResult = { ok: true } | { ok: false; error: OpenNavigationError };
+
+type XhareNavigationNative = {
+  openViewUriInPackage: (uri: string, packageName: string) => Promise<boolean>;
+};
 
 const WAZE_PREFIX = 'https://waze.com/ul';
 const ANDROID_GOOGLE_MAPS_PKG = 'com.google.android.apps.maps';
 const ANDROID_WAZE_PKG = 'com.waze';
 
-/** Waze rechaza rutas de conducción ~>3000 mi; la recta debe quedar holgada por debajo (emulador en US + destino en PY dispara 402). */
+/** Waze rechaza rutas de conducción ~>3000 mi; la recta debe quedar holgada por debajo. */
 const WAZE_MAX_HAVERSINE_METERS = 2_500 * 1609.344;
 
 export type NavViaPoint = { lat: number; lng: number };
+
+function nativeNav(): XhareNavigationNative | null {
+  const m = NativeModules.XhareNavigation as XhareNavigationNative | undefined;
+  if (m != null && typeof m.openViewUriInPackage === 'function') return m;
+  return null;
+}
 
 function normalizeLatLng(lat: number, lng: number): { lat: number; lng: number } {
   const a = Number(lat);
   const b = Number(lng);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return { lat: a, lng: b };
-  // Heurística: si lat queda fuera de rango típico y lng no, asumimos swap.
   if (Math.abs(a) > 90 && Math.abs(b) <= 90) return { lat: b, lng: a };
   return { lat: a, lng: b };
 }
@@ -49,20 +58,26 @@ async function tryOpenUrl(url: string): Promise<boolean> {
   }
 }
 
-async function tryOpenInPackage(url: string, packageName: string): Promise<boolean> {
-  if (Platform.OS !== 'android') return false;
-  try {
-    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-      data: url,
-      packageName,
-    });
-    return true;
-  } catch {
-    return false;
+/**
+ * Abre URI en un paquete concreto (Android). Fallback a Linking si el nativo no está o el intent falla.
+ */
+async function tryOpenInPackage(url: string, packageName: string): Promise<OpenNavigationResult> {
+  if (Platform.OS !== 'android') {
+    return (await tryOpenUrl(url)) ? { ok: true } : { ok: false, error: 'target_app_unavailable' };
   }
+  const mod = nativeNav();
+  if (mod != null) {
+    try {
+      const opened = await mod.openViewUriInPackage(url, packageName);
+      if (opened) return { ok: true };
+    } catch {
+      /* intent explícito falló: probamos Linking (p. ej. otra variante del sistema) */
+    }
+  }
+  if (await tryOpenUrl(url)) return { ok: true };
+  return { ok: false, error: 'target_app_unavailable' };
 }
 
-/** URL Waze alineada con la doc oficial: `ll` codificado y `navigate=yes` (+ zoom para fijar destino). */
 function wazeNavigateUrls(lat: number, lng: number): string[] {
   const pair = `${lat},${lng}`;
   const https = new URL('https://www.waze.com/ul');
@@ -70,19 +85,12 @@ function wazeNavigateUrls(lat: number, lng: number): string[] {
   https.searchParams.set('navigate', 'yes');
   https.searchParams.set('zoom', '17');
   const httpsStr = https.toString();
-  // Scheme: valor de `ll` codificado para que la coma no la parta otro parser.
   const scheme = `waze://?ll=${encodeURIComponent(pair)}&navigate=yes`;
   return [scheme, httpsStr];
 }
 
 /**
  * Open navigation to a destination. Uses saved preference from settings (caller should pass it).
- * `via`: waypoints intermedios solo para Google Maps (URLs `dir`). Mantener **pocos** (p. ej. una pierna del viaje);
- * listas largas provocan rechazos (p. ej. Waze 402) y conviene abrir **solo el destino del tramo** con `via: []`
- * y origen implícito en el GPS del dispositivo.
- * Con Waze y `via` no vacío se abre Google Maps con waypoints (Waze no expone el mismo contrato multi-parada).
- * `origin`: ubicación actual (GPS). Si la elegida es Waze y la distancia a destino supera el tope de Waze,
- * se abre Google Maps automáticamente (p. ej. emulador con Mountain View y parada en otro país).
  */
 export async function openNavigation(
   lat: number,
@@ -111,18 +119,13 @@ export async function openNavigation(
 
   if (effectiveApp === 'waze') {
     if (hasVia) {
-      if (await tryOpenInPackage(mapsDirUrl, ANDROID_GOOGLE_MAPS_PKG)) return { ok: true };
-      if (Platform.OS === 'android') return { ok: false, error: 'target_app_unavailable' };
-      return (await tryOpenUrl(mapsDirUrl)) ? { ok: true } : { ok: false, error: 'target_app_unavailable' };
+      return await tryOpenInPackage(mapsDirUrl, ANDROID_GOOGLE_MAPS_PKG);
     }
     const [schemeUrl, httpsUrl] = wazeNavigateUrls(dest.lat, dest.lng);
-    if (await tryOpenInPackage(schemeUrl, ANDROID_WAZE_PKG)) return { ok: true };
-    if (await tryOpenInPackage(httpsUrl, ANDROID_WAZE_PKG)) return { ok: true };
-    if (Platform.OS === 'android') return { ok: false, error: 'target_app_unavailable' };
-    for (const url of [schemeUrl, httpsUrl]) {
-      if (await tryOpenUrl(url)) return { ok: true };
-    }
-    return { ok: false, error: 'target_app_unavailable' };
+    let r = await tryOpenInPackage(schemeUrl, ANDROID_WAZE_PKG);
+    if (r.ok) return r;
+    r = await tryOpenInPackage(httpsUrl, ANDROID_WAZE_PKG);
+    return r;
   }
 
   if (effectiveApp === 'browser') {
@@ -130,10 +133,9 @@ export async function openNavigation(
       ? [mapsDirUrl, `https://www.google.com/maps?q=${lat},${lng}`]
       : [`https://www.google.com/maps?q=${lat},${lng}`, mapsDirUrl];
     if (Platform.OS === 'android') {
-      // Evita el chooser "Abrir con..." forzando navegador explícito.
-      // Si Chrome no está instalado, devolvemos false para que el caller avise.
       for (const url of urls) {
-        if (await tryOpenInPackage(url, 'com.android.chrome')) return { ok: true };
+        const r = await tryOpenInPackage(url, 'com.android.chrome');
+        if (r.ok) return r;
       }
       return { ok: false, error: 'target_app_unavailable' };
     }
@@ -144,20 +146,12 @@ export async function openNavigation(
   }
 
   // google_maps
-  const urls: string[] = [];
   if (Platform.OS === 'android' && !hasVia) {
-    if (await tryOpenInPackage(`google.navigation:q=${dest.lat},${dest.lng}`, ANDROID_GOOGLE_MAPS_PKG)) {
-      return { ok: true };
-    }
-    urls.push(`google.navigation:q=${dest.lat},${dest.lng}`);
+    const navUri = `google.navigation:q=${dest.lat},${dest.lng}`;
+    const r = await tryOpenInPackage(navUri, ANDROID_GOOGLE_MAPS_PKG);
+    if (r.ok) return r;
   }
-  if (await tryOpenInPackage(mapsDirUrl, ANDROID_GOOGLE_MAPS_PKG)) return { ok: true };
-  urls.push(mapsDirUrl);
-  if (Platform.OS === 'android') return { ok: false, error: 'target_app_unavailable' };
-  for (const url of urls) {
-    if (await tryOpenUrl(url)) return { ok: true };
-  }
-  return { ok: false, error: 'target_app_unavailable' };
+  return await tryOpenInPackage(mapsDirUrl, ANDROID_GOOGLE_MAPS_PKG);
 }
 
 export function getGoogleMapsUrl(lat: number, lng: number, via: NavViaPoint[] = []): string {
@@ -173,4 +167,23 @@ export function getWazeUrl(lat: number, lng: number): string {
   u.searchParams.set('navigate', 'yes');
   u.searchParams.set('zoom', '17');
   return u.toString();
+}
+
+/** Texto para mostrar en Alert según error de openNavigation (producto público). */
+export function openNavigationErrorMessage(
+  pref: NavApp,
+  error: OpenNavigationError
+): { title: string; body: string } {
+  if (error === 'invalid_coordinates') {
+    return {
+      title: 'Navegación',
+      body: 'Esta parada no tiene coordenadas válidas.',
+    };
+  }
+  const appLabel =
+    pref === 'waze' ? 'Waze' : pref === 'browser' ? 'Google Chrome' : 'Google Maps';
+  return {
+    title: 'No se pudo abrir la navegación',
+    body: `No se pudo abrir ${appLabel} con el destino elegido. Comprobá que esté instalada y actualizada, o elegí otra app en Ajustes > Navegación externa.`,
+  };
 }
