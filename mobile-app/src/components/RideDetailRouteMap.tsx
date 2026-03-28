@@ -18,6 +18,13 @@ import {
   mergeOsrmWaypointsBetween,
 } from '../lib/passengerRouteWaypoints';
 
+/** Evita pin en (0,0) si algún caller pasa coordenadas basura. */
+function isPlausibleGps(p: Point): boolean {
+  if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) return false;
+  if (Math.abs(p.lat) < 1e-5 && Math.abs(p.lng) < 1e-5) return false;
+  return true;
+}
+
 const GREEN = '#166534';
 const SLATE = '#64748b';
 const PASSENGER_AB = '#2563eb';
@@ -128,9 +135,10 @@ export function RideDetailRouteMap({
       return;
     }
     const { pickup, dropoff, extras = [] } = passengerBookingGeo;
+    const stops = stopsRef.current;
     let cancelled = false;
     setPassengerLineLoading(true);
-    const drv = driverIntermediateStopsBetween(polyline, pickup, dropoff, sortedStops);
+    const drv = driverIntermediateStopsBetween(polyline, pickup, dropoff, stops);
     const wp = mergeOsrmWaypointsBetween(polyline, pickup, dropoff, extras, drv);
     void buildPassengerMergedRoute(polyline, pickup, dropoff, wp).then((seg) => {
       if (cancelled) return;
@@ -141,7 +149,8 @@ export function RideDetailRouteMap({
     return () => {
       cancelled = true;
     };
-  }, [pbKey, polyline, stopsKey, sortedStops]);
+    // No incluir `sortedStops` en deps: cada fetch devuelve un array nuevo y re-disparaba el efecto en bucle (spinner parpadeando).
+  }, [pbKey, polyline, stopsKey, passengerBookingGeo]);
 
   useEffect(() => {
     if (passengerBookingGeo != null || otherBookingsGeo.length === 0 || polyline.length < 2) {
@@ -149,9 +158,10 @@ export function RideDetailRouteMap({
       setDriverBookingsLineLoading(false);
       return;
     }
+    const stops = stopsRef.current;
     let cancelled = false;
     setDriverBookingsLineLoading(true);
-    void buildDriverMergedRouteThroughBookings(polyline, sortedStops, otherBookingsGeo).then((pts) => {
+    void buildDriverMergedRouteThroughBookings(polyline, stops, otherBookingsGeo).then((pts) => {
       if (cancelled) return;
       setDriverBookingsLine(pts ?? []);
       setDriverBookingsLineLoading(false);
@@ -159,7 +169,7 @@ export function RideDetailRouteMap({
     return () => {
       cancelled = true;
     };
-  }, [obKey, polyline, stopsKey, passengerBookingGeo, sortedStops]);
+  }, [obKey, polyline, stopsKey, passengerBookingGeo]);
 
   const markerCoords: Point[] = useMemo(() => {
     return sortedStops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng)).map((s) => ({ lat: s.lat, lng: s.lng }));
@@ -174,7 +184,7 @@ export function RideDetailRouteMap({
     otherBookingsGeo.forEach((b) => {
       pts.push(b.pickup, b.dropoff);
     });
-    if (driverLocation && Number.isFinite(driverLocation.lat) && Number.isFinite(driverLocation.lng)) {
+    if (driverLocation && isPlausibleGps(driverLocation)) {
       pts.push(driverLocation);
     }
     if (pts.length >= 2) return pts;
@@ -250,7 +260,7 @@ export function RideDetailRouteMap({
                 key={s.id || `stop-${i}`}
                 coordinate={{ latitude: s.lat, longitude: s.lng }}
                 anchor={{ x: 0.5, y: 0.5 }}
-                tracksViewChanges={Platform.OS === 'android'}
+                tracksViewChanges={false}
                 title={title}
               >
                 <View
@@ -271,7 +281,7 @@ export function RideDetailRouteMap({
                   longitude: passengerBookingGeo.pickup.lng,
                 }}
                 anchor={{ x: 0.5, y: 0.5 }}
-                tracksViewChanges={Platform.OS === 'android'}
+                tracksViewChanges={false}
                 title="Tu subida"
               >
                 <View style={[styles.routeStopDot, styles.passengerPickupDot]} collapsable={false} />
@@ -282,7 +292,7 @@ export function RideDetailRouteMap({
                   longitude: passengerBookingGeo.dropoff.lng,
                 }}
                 anchor={{ x: 0.5, y: 0.5 }}
-                tracksViewChanges={Platform.OS === 'android'}
+                tracksViewChanges={false}
                 title="Tu bajada"
               >
                 <View style={[styles.routeStopDot, styles.passengerDropDot]} collapsable={false} />
@@ -292,7 +302,7 @@ export function RideDetailRouteMap({
                   key={`pex-${i}`}
                   coordinate={{ latitude: p.lat, longitude: p.lng }}
                   anchor={{ x: 0.5, y: 0.5 }}
-                  tracksViewChanges={Platform.OS === 'android'}
+                  tracksViewChanges={false}
                   title={`Tu parada ${i + 1}`}
                 >
                   <View style={[styles.routeStopDot, styles.passengerExtraDot]} collapsable={false} />
@@ -305,7 +315,7 @@ export function RideDetailRouteMap({
               <Marker
                 coordinate={{ latitude: b.pickup.lat, longitude: b.pickup.lng }}
                 anchor={{ x: 0.5, y: 0.5 }}
-                tracksViewChanges={Platform.OS === 'android'}
+                tracksViewChanges={false}
                 title={`Subida pasajero ${i + 1}`}
               >
                 <View style={[styles.smallPin, styles.otherPickup]} collapsable={false} />
@@ -313,25 +323,25 @@ export function RideDetailRouteMap({
               <Marker
                 coordinate={{ latitude: b.dropoff.lat, longitude: b.dropoff.lng }}
                 anchor={{ x: 0.5, y: 0.5 }}
-                tracksViewChanges={Platform.OS === 'android'}
+                tracksViewChanges={false}
                 title={`Bajada pasajero ${i + 1}`}
               >
                 <View style={[styles.smallPin, styles.otherDropoff]} collapsable={false} />
               </Marker>
             </React.Fragment>
           ))}
-          {driverLocation && Number.isFinite(driverLocation.lat) && Number.isFinite(driverLocation.lng) ? (
+          {driverLocation && isPlausibleGps(driverLocation) ? (
             <Marker
               coordinate={{ latitude: driverLocation.lat, longitude: driverLocation.lng }}
               anchor={{ x: 0.5, y: 0.5 }}
-              tracksViewChanges={Platform.OS === 'android'}
+              tracksViewChanges={false}
               title="Conductor en camino"
             >
               <View style={[styles.routeStopDot, styles.driverLiveDot]} collapsable={false} />
             </Marker>
           ) : null}
         </MapView>
-        {fetching || passengerLineLoading || driverBookingsLineLoading ? (
+        {fetching || passengerLineLoading || (driverBookingsLineLoading && polylineCoords.length < 2) ? (
           <View style={styles.loadingOverlay} pointerEvents="none">
             <ActivityIndicator size="large" color={GREEN} />
           </View>

@@ -18,7 +18,7 @@ import * as Location from 'expo-location';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
 import { updateRideStatus } from '../backend/rideStatus';
-import { fetchRideForReserve, type RideStopForReserve } from '../rides/api';
+import { driverLiveMapPoint, fetchRideForReserve, type RideStopForReserve } from '../rides/api';
 import type { MainStackParamList } from '../navigation/types';
 import { rideStatusConfig, formatRideDate, formatRideTime } from '../ui/rideStatusConfig';
 import { openNavigation, openNavigationErrorMessage } from '../external-navigation';
@@ -261,20 +261,39 @@ export function RideDetailScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void loadPassengerBooking();
-      void refetchDriverBookingPins();
-    }, [loadPassengerBooking, refetchDriverBookingPins])
-  );
-
-  useEffect(() => {
-    if (!ride || String(ride.status ?? '') !== 'en_route') return;
-    const t = setInterval(() => {
       void load({ quiet: true });
       void loadPassengerBooking();
       void refetchDriverBookingPins();
+    }, [load, loadPassengerBooking, refetchDriverBookingPins])
+  );
+
+  /** Conductor en_route: ubicación + datos. Pasajero con reserva: ver cuando el viaje pasa a en_route y el pin del conductor (sin depender de salir de la pantalla). */
+  useEffect(() => {
+    if (!ride) return;
+    const st = String(ride.status ?? '');
+    const isDriver = Boolean(session?.id && String(ride.driver_id) === String(session.id));
+    const isPassengerWithBooking = Boolean(
+      session?.id && passengerBooking && String(ride.driver_id) !== String(session.id)
+    );
+    const driverNeedsTick = isDriver && st === 'en_route';
+    const passengerNeedsTick =
+      isPassengerWithBooking && st !== 'completed' && st !== 'cancelled';
+    if (!driverNeedsTick && !passengerNeedsTick) return;
+
+    const t = setInterval(() => {
+      void load({ quiet: true });
+      void loadPassengerBooking();
+      if (isDriver) void refetchDriverBookingPins();
     }, 15_000);
     return () => clearInterval(t);
-  }, [ride, load, loadPassengerBooking, refetchDriverBookingPins]);
+  }, [
+    ride,
+    session?.id,
+    passengerBooking?.id,
+    load,
+    loadPassengerBooking,
+    refetchDriverBookingPins,
+  ]);
 
   useEffect(() => {
     if (!ride || !session?.id) return;
@@ -388,6 +407,7 @@ export function RideDetailScreen() {
   const depIso = ride.departure_time ? String(ride.departure_time) : '';
   const priceSeat = Number(ride.price_per_seat ?? 0);
   const description = ride.description != null ? String(ride.description).trim() : '';
+  const routeNameLine = ride.route_name != null ? String(ride.route_name).trim() : '';
   const durMin = Number(ride.estimated_duration_minutes ?? 0);
   const flexible = Boolean(ride.flexible_departure);
   const maxDevKm = Number(ride.max_deviation_km ?? 0);
@@ -516,6 +536,7 @@ export function RideDetailScreen() {
             <Text style={[styles.statusPillText, { color: stCfg.color }]}>{stCfg.label}</Text>
           </View>
           <Text style={styles.sectionLabel}>Ruta</Text>
+          {routeNameLine ? <Text style={styles.routeNameLine}>{routeNameLine}</Text> : null}
           <Text style={styles.title}>
             {String(ride.origin_label ?? 'Origen')} → {String(ride.destination_label ?? 'Destino')}
           </Text>
@@ -524,11 +545,7 @@ export function RideDetailScreen() {
             rideStops={rideStops}
             height={300}
             otherBookingsGeo={driverBookingPins}
-            driverLocation={
-              Number.isFinite(Number(ride.driver_lat)) && Number.isFinite(Number(ride.driver_lng))
-                ? { lat: Number(ride.driver_lat), lng: Number(ride.driver_lng) }
-                : null
-            }
+            driverLocation={driverLiveMapPoint(ride)}
           />
           <Text style={styles.sectionLabel}>Salida</Text>
           <Text style={styles.bodyLine}>
@@ -656,6 +673,16 @@ export function RideDetailScreen() {
               <Text style={styles.bodyLine}>{passengerBooking.price_paid.toLocaleString('es-PY')} PYG</Text>
             </View>
           ) : null}
+          {passengerBooking ? (
+            <View style={[styles.statusPill, { borderColor: stCfg.color, marginBottom: 12 }]}>
+              <View style={[styles.statusDot, { backgroundColor: stCfg.color }]} />
+              <Text style={[styles.statusPillText, { color: stCfg.color }]}>
+                Viaje: {stCfg.label}
+                {status === 'en_route' ? ' · El conductor comparte ubicación en el mapa (punto azul).' : ''}
+              </Text>
+            </View>
+          ) : null}
+          {routeNameLine ? <Text style={styles.routeNameLine}>{routeNameLine}</Text> : null}
           <Text style={styles.title}>
             {String(ride.origin_label ?? 'Origen')} → {String(ride.destination_label ?? 'Destino')}
           </Text>
@@ -664,11 +691,7 @@ export function RideDetailScreen() {
             rideStops={rideStops}
             height={300}
             passengerBookingGeo={passengerMapGeo}
-            driverLocation={
-              Number.isFinite(Number(ride.driver_lat)) && Number.isFinite(Number(ride.driver_lng))
-                ? { lat: Number(ride.driver_lat), lng: Number(ride.driver_lng) }
-                : null
-            }
+            driverLocation={driverLiveMapPoint(ride)}
           />
           <Text style={styles.sectionLabel}>Salida</Text>
           <Text style={styles.bodyLine}>
@@ -915,6 +938,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
     marginBottom: 4,
   },
+  routeNameLine: { fontSize: 15, fontWeight: '700', color: '#14532d', marginBottom: 6 },
   title: { fontSize: 18, fontWeight: '700', color: '#111', lineHeight: 24 },
   bodyLine: { fontSize: 15, color: '#111', fontWeight: '500' },
   bodyMuted: { fontSize: 13, color: '#6b7280', marginTop: 4, lineHeight: 18 },

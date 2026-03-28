@@ -137,6 +137,7 @@ export function SearchPublishedRidesScreen() {
   const [date, setDate] = useState('');
   /** HH:MM opcional; solo aplica si hay fecha válida. */
   const [fromTime, setFromTime] = useState('');
+  const [routeNameQuery, setRouteNameQuery] = useState('');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
   const [originGeo, setOriginGeo] = useState<Point | null>(null);
@@ -155,6 +156,7 @@ export function SearchPublishedRidesScreen() {
       const rows = (await searchRides({
         date: date.trim() || undefined,
         fromTimeLocal: date.trim() && fromTime.trim() ? fromTime.trim() : undefined,
+        routeName: routeNameQuery.trim() || undefined,
         origin: originGeo ? undefined : origin.trim() || undefined,
         destination: destGeo ? undefined : destination.trim() || undefined,
         originNear: originGeo
@@ -171,7 +173,7 @@ export function SearchPublishedRidesScreen() {
     } finally {
       setLoading(false);
     }
-  }, [date, fromTime, origin, destination, originGeo, destGeo, rideKind]);
+  }, [date, fromTime, routeNameQuery, origin, destination, originGeo, destGeo, rideKind]);
 
   useEffect(() => {
     void load();
@@ -212,10 +214,13 @@ export function SearchPublishedRidesScreen() {
         `Destino: texto “${destination.trim().slice(0, 48)}${destination.trim().length > 48 ? '…' : ''}”`
       );
     }
+    if (routeNameQuery.trim()) {
+      parts.push(`Nombre del viaje: “${routeNameQuery.trim().slice(0, 48)}${routeNameQuery.trim().length > 48 ? '…' : ''}”`);
+    }
     if (rideKind === 'internal') parts.push('Tipo: solo viajes internos');
     if (rideKind === 'long_distance') parts.push('Tipo: solo larga distancia');
     return parts;
-  }, [date, fromTime, origin, destination, originGeo, destGeo, rideKind]);
+  }, [date, fromTime, routeNameQuery, origin, destination, originGeo, destGeo, rideKind]);
 
   const listHeader = useMemo(
     () => (
@@ -303,6 +308,14 @@ export function SearchPublishedRidesScreen() {
           }}
         />
       ) : null}
+      <Text style={styles.label}>Nombre del viaje (opcional)</Text>
+      <TextInput
+        style={styles.input}
+        value={routeNameQuery}
+        onChangeText={setRouteNameQuery}
+        placeholder="Si el conductor lo definió al publicar"
+        placeholderTextColor="#9ca3af"
+      />
       <Text style={styles.label}>Origen (texto)</Text>
       <TextInput
         style={styles.input}
@@ -369,7 +382,19 @@ export function SearchPublishedRidesScreen() {
       </TouchableOpacity>
     </View>
     ),
-    [date, fromTime, origin, destination, originGeo, destGeo, rideKind, load, showDatePicker, showTimePicker]
+    [
+      date,
+      fromTime,
+      routeNameQuery,
+      origin,
+      destination,
+      originGeo,
+      destGeo,
+      rideKind,
+      load,
+      showDatePicker,
+      showTimePicker,
+    ]
   );
 
   return (
@@ -394,12 +419,18 @@ export function SearchPublishedRidesScreen() {
         }
         renderItem={({ item }) => {
           const dep = item.departure_time ? new Date(String(item.departure_time)).toLocaleString('es-PY') : '';
+          const rName = String((item as { route_name?: string | null }).route_name ?? '').trim();
           return (
             <TouchableOpacity
               style={styles.card}
               onPress={() => navigation.navigate('RideDetail', { rideId: String(item.id) })}
               accessibilityRole="button"
             >
+              {rName ? (
+                <Text style={styles.cardRouteName} numberOfLines={1}>
+                  {rName}
+                </Text>
+              ) : null}
               <Text style={styles.cardTitle} numberOfLines={2}>
                 {String(item.origin_label ?? '')} → {String(item.destination_label ?? '')}
               </Text>
@@ -474,6 +505,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
+  cardRouteName: { fontSize: 14, fontWeight: '700', color: '#14532d', marginBottom: 4 },
   cardTitle: { fontSize: 16, fontWeight: '600', color: '#111' },
   cardMeta: { fontSize: 13, color: '#6b7280', marginTop: 4 },
   emptyBlock: {

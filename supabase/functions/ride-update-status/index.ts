@@ -9,9 +9,87 @@ const corsHeaders = {
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? Deno.env.get('NEXT_PUBLIC_SUPABASE_URL');
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? Deno.env.get('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
+const EXPO_BATCH = 100;
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('[ride-update-status] Missing SUPABASE_URL or SUPABASE_ANON_KEY in Edge Function environment');
+}
+
+type ExpoMsg = {
+  to: string;
+  sound: 'default';
+  title: string;
+  body: string;
+  data: { rideId: string; type: 'ride_en_route' };
+};
+
+/**
+ * Pasajeros con reserva no cancelada: Expo Push (tokens en push_tokens).
+ * Requiere SUPABASE_SERVICE_ROLE_KEY en secrets de la función.
+ */
+async function sendPassengersRideEnRoutePush(
+  admin: ReturnType<typeof createClient>,
+  rideId: string
+): Promise<void> {
+  const { data: bookings, error: bErr } = await admin
+    .from('bookings')
+    .select('passenger_id')
+    .eq('ride_id', rideId)
+    .neq('status', 'cancelled');
+
+  if (bErr || !bookings?.length) return;
+
+  const userIds = [...new Set(bookings.map((b: { passenger_id: string }) => b.passenger_id))];
+
+  const { data: rows, error: tErr } = await admin
+    .from('push_tokens')
+    .select('token')
+    .in('user_id', userIds);
+
+  if (tErr || !rows?.length) return;
+
+  const tokens = [
+    ...new Set(
+      rows
+        .map((r: { token: string }) => r.token)
+        .filter((t: string) => typeof t === 'string' && t.startsWith('ExponentPushToken'))
+    ),
+  ];
+  if (!tokens.length) return;
+
+  const accessToken = Deno.env.get('EXPO_ACCESS_TOKEN')?.trim();
+  const title = 'El viaje comenzó';
+  const body = 'El conductor inició el recorrido. Podés seguirlo en el mapa.';
+  const messages: ExpoMsg[] = tokens.map((to: string) => ({
+    to,
+    sound: 'default',
+    title,
+    body,
+    data: { rideId, type: 'ride_en_route' },
+  }));
+
+  for (let i = 0; i < messages.length; i += EXPO_BATCH) {
+    const chunk = messages.slice(i, i + EXPO_BATCH);
+    const payload = chunk.length === 1 ? chunk[0] : chunk;
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      'Accept-Encoding': 'gzip, deflate',
+      'Content-Type': 'application/json',
+    };
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
+    const res = await fetch(EXPO_PUSH_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.error('[ride-update-status] expo_push_http', res.status, text);
+    }
+  }
 }
 
 serve(async (req) => {
@@ -178,6 +256,23 @@ serve(async (req) => {
           hint: 'If message mentions RLS or policy, the driver may not match auth.uid() for this ride',
         }),
         { status: 400, headers: jsonHeaders }
+      );
+    }
+
+    if (status === 'en_route' && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        });
+        await sendPassengersRideEnRoutePush(admin, ride_id);
+      } catch (e) {
+        console.error('[ride-update-status] passenger_en_route_push_failed', {
+          message: (e as Error)?.message,
+        });
+      }
+    } else if (status === 'en_route') {
+      console.warn(
+        '[ride-update-status] en_route without SUPABASE_SERVICE_ROLE_KEY: skip passenger push'
       );
     }
 

@@ -21,6 +21,7 @@ import { BookRideScreen } from '../screens/BookRideScreen';
 import { PublishRideScreen } from '../screens/PublishRideScreen';
 import { SearchPublishedRidesScreen } from '../screens/SearchPublishedRidesScreen';
 import { AvailableRidesScreen } from '../screens/AvailableRidesScreen';
+import { NearbyEnRouteRidesScreen } from '../screens/NearbyEnRouteRidesScreen';
 import { EditRideScreen } from '../screens/EditRideScreen';
 import { MyTripRequestsScreen } from '../screens/MyTripRequestsScreen';
 import { MyBookingsScreen } from '../screens/MyBookingsScreen';
@@ -111,6 +112,11 @@ function MainStackNavigator() {
         name="AvailableRides"
         component={AvailableRidesScreen}
         options={{ title: 'Viajes disponibles' }}
+      />
+      <MainStack.Screen
+        name="NearbyEnRouteRides"
+        component={NearbyEnRouteRidesScreen}
+        options={{ title: 'En curso cerca' }}
       />
       <MainStack.Screen
         name="EditRide"

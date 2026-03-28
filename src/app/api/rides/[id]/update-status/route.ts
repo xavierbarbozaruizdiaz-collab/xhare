@@ -3,6 +3,8 @@ import { cookies, headers } from 'next/headers';
 import { z } from 'zod';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import { requireDriverOwnsRide } from '@/lib/api-auth';
+import { createServiceClient } from '@/lib/supabase/server';
+import { sendPassengersRideEnRoutePush } from '@/lib/push/sendPassengersRideEnRoutePush';
 
 const RIDE_STATUSES = ['draft', 'published', 'booked', 'en_route', 'completed', 'cancelled'] as const;
 const updateStatusSchema = z.object({
@@ -68,6 +70,15 @@ export async function POST(
 
     if (updateError) {
       return NextResponse.json({ error: updateError.message }, { status: 400 });
+    }
+
+    if (validated.status === 'en_route') {
+      try {
+        const service = createServiceClient();
+        await sendPassengersRideEnRoutePush(service, rideId);
+      } catch (e) {
+        console.error('[update-status] passenger en_route push failed', e);
+      }
     }
 
     return NextResponse.json({ success: true });

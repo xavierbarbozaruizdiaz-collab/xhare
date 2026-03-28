@@ -29,6 +29,8 @@ export type MainStackParamList = {
   SearchPublishedRides: undefined;
   /** Lista del día: viajes publicados con cupos (sin pantalla de filtros). */
   AvailableRides: undefined;
+  /** Viajes en curso cerca: mapa + lista (filtros en API). */
+  NearbyEnRouteRides: undefined;
   EditRide: { rideId: string };
   MyTripRequests: undefined;
   /** Reservas del pasajero (viajes en los que reservó asiento). */

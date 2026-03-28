@@ -13,6 +13,8 @@
     "android:run": "expo run:android --variant debug",
     "android:passenger": "cross-env APP_FLAVOR=passenger expo run:android --variant debug",
     "android:driver": "cross-env APP_FLAVOR=driver expo run:android --variant debug",
+    "android:debug:install": "cross-env REACT_NATIVE_PACKAGER_HOSTNAME=10.0.2.2 expo run:android --variant debug --no-bundler",
+    "android:passenger:debug:install": "cross-env APP_FLAVOR=passenger REACT_NATIVE_PACKAGER_HOSTNAME=10.0.2.2 expo run:android --variant debug --no-bundler",
     "android:passenger:no-bundler": "cross-env APP_FLAVOR=passenger node scripts/run-android-debug-no-bundler.cjs",
     "android:driver:no-bundler": "cross-env APP_FLAVOR=driver node scripts/run-android-debug-no-bundler.cjs",
     "ios": "expo run:ios",

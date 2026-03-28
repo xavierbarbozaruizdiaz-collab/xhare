@@ -44,8 +44,18 @@ export function HomeScreen() {
         <Text style={styles.hint}>
           {flavor === 'driver'
             ? 'Tocá Solicitudes para ver pedidos de pasajeros y rutas con demanda. En la pestaña Conductor podés publicar un viaje. Con Mis viajes publicados revisá lo que ya publicaste.'
-            : 'En Pasajero podés unirte a rutas con demanda. Para viajes ya publicados: Viajes disponibles (lista de hoy) o Buscar viajes (fecha, origen y destino).'}
+            : 'En la pestaña Pasajero podés unirte a rutas con demanda. En Viajes disponibles podés buscar por el nombre de la ruta (por ejemplo una línea que la gente ya conoce). Si no aparece lo que necesitás, guardá el trayecto desde Buscar viajes o Mis solicitudes.'}
         </Text>
+        {isPassengerFlavor ? (
+          <TouchableOpacity
+            style={styles.linkBtnEnCurso}
+            onPress={() => parentNav?.navigate('NearbyEnRouteRides')}
+            accessibilityRole="button"
+            accessibilityLabel="Ver viajes en curso cerca de tu ubicación"
+          >
+            <Text style={styles.linkBtnEnCursoText}>En curso cerca</Text>
+          </TouchableOpacity>
+        ) : null}
         {isPassengerFlavor ? (
           <View style={styles.passengerRideActions}>
             <TouchableOpacity
@@ -163,7 +173,16 @@ const styles = StyleSheet.create({
     borderColor: '#3b82f6',
   },
   bannerText: { fontSize: 14, color: '#1f2937' },
-  passengerRideActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  passengerRideActions: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  linkBtnEnCurso: {
+    marginTop: 14,
+    minHeight: 48,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#1d4ed8',
+    alignItems: 'center',
+  },
+  linkBtnEnCursoText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   linkBtnOutline: {
     flex: 1,
     paddingVertical: 12,

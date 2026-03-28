@@ -23,7 +23,8 @@ export function DriverScreen() {
       <View style={styles.card}>
         <Text style={styles.title}>Conductor</Text>
         <Text style={styles.hint}>
-          Publicá un trayecto nuevo o revisá las solicitudes que dejaron los pasajeros y las rutas con demanda.
+          Publicá y poné un nombre a tu trayecto: algo que la gente reconozca al toque, por ejemplo «Ruta Línea 777».
+          Después podés revisar las solicitudes de pasajeros y las rutas con demanda.
         </Text>
         <TouchableOpacity
           style={styles.btnPrimary}

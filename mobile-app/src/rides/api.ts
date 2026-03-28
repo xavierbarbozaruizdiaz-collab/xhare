@@ -3,6 +3,7 @@
  * Aligned with web app Supabase queries and RPCs.
  */
 import { supabase } from '../backend/supabase';
+import { apiPost } from '../backend/api';
 import { env } from '../core/env';
 import { raceWithTimeout } from '../backend/withTimeout';
 import { distanceMeters, distancePointToPolylineMeters, type Point } from '../lib/geo';
@@ -45,6 +46,29 @@ function textMatchStrength(label: string, query: string): number {
     if (idx >= 0) score += Math.max(0, 50 - idx);
   }
   return score;
+}
+
+/**
+ * Punto del conductor en el mapa (tracking en vivo).
+ * Importante: `Number(null) === 0` en JavaScript; si `driver_lat`/`driver_lng` vienen null de la DB,
+ * el check `Number.isFinite(Number(null))` es true y el pin cae en (0,0) en el Atlántico.
+ * Solo aplica con viaje en curso, alineado con la web (`RideDetailClient`).
+ */
+export function driverLiveMapPoint(
+  ride: { driver_lat?: unknown; driver_lng?: unknown; status?: unknown } | null | undefined
+): Point | null {
+  if (!ride) return null;
+  if (String(ride.status ?? '') !== 'en_route') return null;
+  const lat = ride.driver_lat;
+  const lng = ride.driver_lng;
+  if (lat == null || lng == null) return null;
+  if (typeof lat === 'string' && lat.trim() === '') return null;
+  if (typeof lng === 'string' && lng.trim() === '') return null;
+  const la = Number(lat);
+  const lo = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
+  if (Math.abs(la) < 1e-5 && Math.abs(lo) < 1e-5) return null;
+  return { lat: la, lng: lo };
 }
 
 function parseRideBasePolyline(ride: Record<string, unknown>): Point[] {
@@ -184,6 +208,8 @@ export async function searchRides(options: {
   date?: string;
   /** Solo con `date`. Hora local HH:MM desde la cual (hasta fin del día). Omitir = todo el día. */
   fromTimeLocal?: string;
+  /** Coincidencia flexible sobre `rides.route_name` (nombre que puso el conductor). */
+  routeName?: string;
   origin?: string;
   destination?: string;
   /** Si viene, filtra por proximidad al origen del viaje (metros); no combina con `origin` texto en el mismo eje. */
@@ -192,7 +218,8 @@ export async function searchRides(options: {
   seats?: number;
   maxPrice?: number | string;
 }) {
-  const { date, fromTimeLocal, origin, destination, originNear, destinationNear, seats = 1, maxPrice } = options;
+  const { date, fromTimeLocal, routeName, origin, destination, originNear, destinationNear, seats = 1, maxPrice } =
+    options;
   // Sin join a `profiles`: la policy solo permite ver otros perfiles a `authenticated`;
   // con sesión anónima el embed falla y la query puede venir vacía o sin filas útiles.
   let query = supabase
@@ -306,6 +333,12 @@ export async function searchRides(options: {
     );
   }
 
+  if (routeName?.trim()) {
+    list = list.filter((r: { route_name?: string | null }) =>
+      labelMatchesSearchText(String(r.route_name ?? ''), routeName)
+    );
+  }
+
   const max = typeof maxPrice === 'string' ? parseFloat(maxPrice) : maxPrice;
   if (typeof max === 'number' && !Number.isNaN(max) && max > 0) {
     list = list.filter((r: { price_per_seat?: number | null }) => Number(r.price_per_seat ?? 0) <= max);
@@ -323,7 +356,7 @@ export async function searchRides(options: {
       if (ra !== rb) return ra - rb;
       return depTime(a as { departure_time?: string }) - depTime(b as { departure_time?: string });
     });
-  } else if (origin?.trim() || destination?.trim()) {
+  } else if (origin?.trim() || destination?.trim() || routeName?.trim()) {
     list.sort((a, b) => {
       let sa = 0;
       let sb = 0;
@@ -334,6 +367,10 @@ export async function searchRides(options: {
       if (destination?.trim()) {
         sa += textMatchStrength(String((a as { destination_label?: string }).destination_label ?? ''), destination);
         sb += textMatchStrength(String((b as { destination_label?: string }).destination_label ?? ''), destination);
+      }
+      if (routeName?.trim()) {
+        sa += textMatchStrength(String((a as { route_name?: string }).route_name ?? ''), routeName);
+        sb += textMatchStrength(String((b as { route_name?: string }).route_name ?? ''), routeName);
       }
       if (sa !== sb) return sb - sa;
       return depTime(a as { departure_time?: string }) - depTime(b as { departure_time?: string });
@@ -371,9 +408,61 @@ export type RideStopForReserve = {
   stop_order: number;
 };
 
+export type NearbyEnRouteRide = {
+  id: string;
+  driver_lat: number;
+  driver_lng: number;
+  available_seats: number;
+  distance_route_m: number;
+  distance_driver_m: number;
+  polyline: Array<{ lat: number; lng: number }>;
+  origin_label: string | null;
+  destination_label: string | null;
+  price_per_seat: number | null;
+};
+
+export type NearbyEnRouteCriteria = {
+  route_within_m: number;
+  driver_between_m: readonly [number, number];
+  requires_available_seats: boolean;
+};
+
 /**
- * Ride with ride_stops for the reserve screen. Uses direct select so any authenticated
- * user can load a published ride and its stops (RLS: published rides + "view stops for published").
+ * Viajes en curso cercanos (API Next): corona conductor 2–3 km, ruta ≤1 km, con cupos.
+ */
+export async function fetchNearbyEnRouteRides(
+  lat: number,
+  lng: number
+): Promise<
+  | { ok: true; rides: NearbyEnRouteRide[]; criteria: NearbyEnRouteCriteria }
+  | { ok: false; error: string }
+> {
+  const res = await apiPost('/api/rides/nearby-en-route', { lat, lng });
+  if (!res.ok) {
+    return { ok: false, error: res.error ?? `Error ${res.status}` };
+  }
+  const data = res.data as {
+    rides?: NearbyEnRouteRide[];
+    criteria?: NearbyEnRouteCriteria;
+    error?: string;
+  };
+  if (!Array.isArray(data?.rides)) {
+    return { ok: false, error: data?.error ?? 'Respuesta inválida' };
+  }
+  return {
+    ok: true,
+    rides: data.rides,
+    criteria: data.criteria ?? {
+      route_within_m: 1000,
+      driver_between_m: [2000, 3000],
+      requires_available_seats: true,
+    },
+  };
+}
+
+/**
+ * Ride with ride_stops for the reserve screen. RLS: publicados; en_route con cupos si hay sesión;
+ * pasajero con reserva; conductor.
  */
 export async function fetchRideForReserve(rideId: string): Promise<{
   ride: Record<string, unknown>;
@@ -384,6 +473,7 @@ export async function fetchRideForReserve(rideId: string): Promise<{
     .select(`
       id, driver_id, status, available_seats, total_seats, price_per_seat,
       origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label,
+      route_name,
       departure_time, base_route_polyline, max_deviation_km,
       description, estimated_duration_minutes, flexible_departure, started_at, vehicle_info,
       driver_lat, driver_lng, driver_location_updated_at,
@@ -735,16 +825,16 @@ export async function fetchMyBookings(passengerId: string) {
     .from('bookings')
     .select(
       `
-      id, ride_id, seats_count, price_paid, status, pickup_label, dropoff_label,
+      id, ride_id, seats_count, price_paid, status, pickup_label, dropoff_label, created_at,
       ride:rides(
-        id, origin_label, destination_label, departure_time, price_per_seat,
+        id, status, origin_label, destination_label, departure_time, price_per_seat,
         driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count)
       )
     `
     )
     .eq('passenger_id', passengerId)
     .order('created_at', { ascending: false })
-    .limit(50);
+    .limit(100);
   if (error) throw error;
   return data ?? [];
 }

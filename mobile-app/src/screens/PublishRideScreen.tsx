@@ -124,6 +124,7 @@ export function PublishRideScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [departureFlexibility, setDepartureFlexibility] = useState<'strict_5' | 'flexible_30'>('strict_5');
+  const [routeName, setRouteName] = useState('');
   const [description, setDescription] = useState('');
   const [manualSeatPriceInput, setManualSeatPriceInput] = useState('');
   const [routePolyline, setRoutePolyline] = useState<Point[]>([]);
@@ -259,7 +260,7 @@ export function PublishRideScreen() {
         const { data: ride, error } = await supabase
           .from('rides')
           .select(
-            'origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, departure_time'
+            'origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, departure_time, route_name'
           )
           .eq('id', fromRideIdParam)
           .eq('driver_id', session.id)
@@ -286,6 +287,7 @@ export function PublishRideScreen() {
             setDepartureDate(toLocalYyyyMmDd(d));
             setDepartureTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
           }
+          setRouteName(String((ride as { route_name?: string | null }).route_name ?? '').slice(0, 100));
         }
         setTripRequestIdsToLink([]);
         return;
@@ -668,6 +670,7 @@ export function PublishRideScreen() {
         total_seats: userProfile.vehicle_seat_count,
         available_seats: userProfile.vehicle_seat_count,
         capacity: userProfile.vehicle_seat_count,
+        route_name: routeName.trim().slice(0, 100) || null,
         description: description.trim() || null,
         vehicle_info: {
           model: userProfile.vehicle_model,
@@ -1141,6 +1144,17 @@ export function PublishRideScreen() {
           Viaje interno: el precio lo define el tramo del pasajero (origen–destino o paradas).
         </Text>
       )}
+
+      <Text style={styles.label}>Nombre del viaje (opcional)</Text>
+      <TextInput
+        style={styles.input}
+        value={routeName}
+        onChangeText={(t) => setRouteName(t.slice(0, 100))}
+        placeholder="Ej. Centro–Luque mañana, Ruta universidad…"
+        placeholderTextColor="#9ca3af"
+        maxLength={100}
+      />
+      <Text style={styles.priceNote}>Lo ven los pasajeros al buscar y en el listado de viajes disponibles.</Text>
 
       <Text style={styles.label}>Descripción (opcional)</Text>
       <TextInput

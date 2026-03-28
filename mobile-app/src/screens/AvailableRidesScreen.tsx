@@ -2,10 +2,11 @@
  * Pasajero: viajes publicados con cupos para un día (fecha editable, hora desde opcional).
  * Filtros completos → Buscar viajes.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   FlatList,
   TouchableOpacity,
@@ -35,6 +36,8 @@ export function AvailableRidesScreen() {
   /** Vacío = sin filtro por hora (todo el día). */
   const [fromTimeHm, setFromTimeHm] = useState('');
   const [rideKind, setRideKind] = useState<'all' | 'internal' | 'long_distance'>('all');
+  /** Filtro por nombre de ruta (`rides.route_name`), mismo criterio flexible que en Buscar viajes. */
+  const [routeNameFilter, setRouteNameFilter] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -48,6 +51,7 @@ export function AvailableRidesScreen() {
     const rows = (await searchRides({
       date: dateYmd.trim(),
       fromTimeLocal: fromTimeHm.trim() || undefined,
+      routeName: routeNameFilter.trim() || undefined,
       seats: 1,
     })) as Record<string, unknown>[];
     if (rideKind === 'all') return rows;
@@ -55,7 +59,7 @@ export function AvailableRidesScreen() {
       const hasDriverSeatPrice = Number(r.price_per_seat ?? 0) > 0;
       return rideKind === 'long_distance' ? hasDriverSeatPrice : !hasDriverSeatPrice;
     });
-  }, [dateYmd, fromTimeHm, rideKind]);
+  }, [dateYmd, fromTimeHm, rideKind, routeNameFilter]);
 
   useFocusEffect(
     useCallback(() => {
@@ -77,6 +81,22 @@ export function AvailableRidesScreen() {
       };
     }, [fetchRows])
   );
+
+  /** Misma query cuando cambian filtros (ej. nombre) estando ya en la pantalla. */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await fetchRows();
+        if (!cancelled) setList(rows);
+      } catch {
+        if (!cancelled) setList([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchRows]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -163,6 +183,21 @@ export function AvailableRidesScreen() {
         />
       ) : null}
 
+      <Text style={styles.fieldLabel}>Buscar por nombre del viaje (opcional)</Text>
+      <TextInput
+        style={styles.textInput}
+        value={routeNameFilter}
+        onChangeText={setRouteNameFilter}
+        placeholder="Ej. universidad, Luque, trabajo…"
+        placeholderTextColor="#9ca3af"
+        autoCapitalize="sentences"
+        autoCorrect
+        accessibilityLabel="Filtrar por nombre del viaje"
+      />
+      <Text style={styles.fieldHint}>
+        Si el conductor puso un nombre al publicar, podés acotar la lista. Dejá vacío para ver todos.
+      </Text>
+
       <Text style={styles.fieldLabel}>Tipo de viaje</Text>
       <View style={styles.kindRow}>
         <TouchableOpacity
@@ -221,11 +256,17 @@ export function AvailableRidesScreen() {
         }
         renderItem={({ item }) => {
           const dep = item.departure_time ? new Date(String(item.departure_time)).toLocaleString('es-PY') : '';
+          const rName = String((item as { route_name?: string | null }).route_name ?? '').trim();
           return (
             <TouchableOpacity
               style={styles.card}
               onPress={() => navigation.navigate('RideDetail', { rideId: String(item.id) })}
             >
+              {rName ? (
+                <Text style={styles.cardRouteName} numberOfLines={1}>
+                  {rName}
+                </Text>
+              ) : null}
               <Text style={styles.cardTitle} numberOfLines={2}>
                 {String(item.origin_label ?? '')} → {String(item.destination_label ?? '')}
               </Text>
@@ -243,6 +284,18 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   headerBlock: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
   fieldLabel: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6 },
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    color: '#111',
+    marginBottom: 6,
+    backgroundColor: '#fff',
+  },
+  fieldHint: { fontSize: 12, color: '#6b7280', marginBottom: 12, lineHeight: 17 },
   pickerRow: {
     borderWidth: 1,
     borderColor: '#d1d5db',
@@ -282,6 +335,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
+  cardRouteName: { fontSize: 14, fontWeight: '700', color: '#14532d', marginBottom: 4 },
   cardTitle: { fontSize: 16, fontWeight: '600', color: '#111' },
   cardMeta: { fontSize: 13, color: '#6b7280', marginTop: 4 },
   empty: { textAlign: 'center', color: '#6b7280', marginTop: 16, lineHeight: 20, paddingHorizontal: 8 },
