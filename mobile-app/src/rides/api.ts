@@ -406,6 +406,8 @@ export type RideStopForReserve = {
   lng: number;
   label: string | null;
   stop_order: number;
+  /** Momento en que se confirmó “Llegué” en esa parada publicada (si aplica). */
+  arrived_at?: string | null;
 };
 
 export type NearbyEnRouteRide = {
@@ -486,7 +488,7 @@ export async function fetchRideForReserve(rideId: string): Promise<{
       driver_lat, driver_lng, driver_location_updated_at,
       current_stop_index, awaiting_stop_confirmation,
       driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count),
-      ride_stops(id, lat, lng, label, stop_order)
+      ride_stops(id, lat, lng, label, stop_order, arrived_at)
     `)
     .eq('id', rideId)
     .maybeSingle();
@@ -503,13 +505,14 @@ export async function fetchRideForReserve(rideId: string): Promise<{
         lng: Number(s.lng),
         label: s.label != null ? String(s.label) : null,
         stop_order: Number(s.stop_order ?? 0),
+        arrived_at: s.arrived_at != null ? String(s.arrived_at) : null,
       }))
       .sort((a, b) => a.stop_order - b.stop_order);
   }
   if (stops.length === 0) {
     const { data: stopsData } = await supabase
       .from('ride_stops')
-      .select('id, lat, lng, label, stop_order')
+      .select('id, lat, lng, label, stop_order, arrived_at')
       .eq('ride_id', rideId)
       .order('stop_order', { ascending: true });
     if (stopsData?.length) {
@@ -521,6 +524,7 @@ export async function fetchRideForReserve(rideId: string): Promise<{
           lng: Number(s.lng),
           label: s.label != null ? String(s.label) : null,
           stop_order: Number(s.stop_order ?? 0),
+          arrived_at: s.arrived_at != null ? String(s.arrived_at) : null,
         }))
         .sort((a, b) => a.stop_order - b.stop_order);
     }

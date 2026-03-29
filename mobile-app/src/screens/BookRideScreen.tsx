@@ -21,7 +21,8 @@ import { supabase } from '../backend/supabase';
 import { fetchSegmentStats } from '../backend/routeApi';
 import { reverseGeocodeStructured } from '../backend/geocodeApi';
 import { saveExtraStops } from '../backend/api';
-import { fetchRideForReserve, fetchRidePublicMapPoints } from '../rides/api';
+import { fetchRideForReserve, fetchRidePublicMapPoints, type RideStopForReserve } from '../rides/api';
+import { nearestRideStopIdForBookingPoint } from '../lib/bookingStopLink';
 import { PickupDropoffMapView, type MapPoint, type ExtraStopPoint, type DriverStopMarker } from '../components/PickupDropoffMapView';
 import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
 import { loadRidePolyline } from '../lib/resolveRidePolyline';
@@ -82,6 +83,8 @@ export function BookRideScreen() {
   const [error, setError] = useState<string | null>(null);
   const [ride, setRide] = useState<Record<string, unknown> | null>(null);
   const [driverStops, setDriverStops] = useState<DriverStopMarker[]>([]);
+  /** Con ids de `ride_stops` para enlazar pickup/dropoff en la reserva. */
+  const [stopsForBookLink, setStopsForBookLink] = useState<RideStopForReserve[]>([]);
   const [existingPickups, setExistingPickups] = useState<Array<{ lat: number; lng: number; label?: string | null }>>([]);
   const [existingDropoffs, setExistingDropoffs] = useState<Array<{ lat: number; lng: number; label?: string | null }>>([]);
   const [seats, setSeats] = useState(1);
@@ -252,6 +255,7 @@ export function BookRideScreen() {
         return;
       }
       setRide(r);
+      setStopsForBookLink(res.ride_stops);
       setDriverStops(
         res.ride_stops.map((s) => ({
           lat: s.lat,
@@ -507,6 +511,12 @@ export function BookRideScreen() {
         total: pricePaid,
         pricing_mode: usesDriverSeatPrice ? 'driver_seat_price' : 'segment',
       };
+      const linkRows = stopsForBookLink.filter((s) => s.id && Number.isFinite(s.lat) && Number.isFinite(s.lng));
+      const pickup_stop_id =
+        pickup && linkRows.length > 0 ? nearestRideStopIdForBookingPoint(linkRows, pickup.lat, pickup.lng) : null;
+      const dropoff_stop_id =
+        dropoff && linkRows.length > 0 ? nearestRideStopIdForBookingPoint(linkRows, dropoff.lat, dropoff.lng) : null;
+
       const payload = {
         ride_id: rideId,
         passenger_id: session.id,
@@ -520,6 +530,8 @@ export function BookRideScreen() {
         dropoff_lat: dropoff?.lat ?? null,
         dropoff_lng: dropoff?.lng ?? null,
         dropoff_label: dropoff ? doLabel.displayName.slice(0, 500) : null,
+        pickup_stop_id,
+        dropoff_stop_id,
         selected_seat_ids: null,
         pricing_snapshot: pricingSnapshot,
         pricing_settings_id: effectivePricing.pricingSettingsId,

@@ -116,9 +116,21 @@ export async function ratePassenger(rideId: string, passengerId: string, stars: 
 export async function arriveAtStop(
   rideId: string,
   stopOrder: number,
-  passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }>
+  passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }>,
+  driverLat?: number,
+  driverLng?: number
 ) {
-  return apiPost(`/api/rides/${rideId}/arrive`, { stopOrder, passengers });
+  const body: Record<string, unknown> = { stopOrder, passengers };
+  if (
+    driverLat != null &&
+    driverLng != null &&
+    Number.isFinite(driverLat) &&
+    Number.isFinite(driverLng)
+  ) {
+    body.driverLat = driverLat;
+    body.driverLng = driverLng;
+  }
+  return apiPost(`/api/rides/${rideId}/arrive`, body);
 }
 
 export async function setRideAwaitingStopConfirmation(rideId: string, awaiting: boolean) {

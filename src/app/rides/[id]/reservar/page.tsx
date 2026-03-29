@@ -15,6 +15,7 @@ import {
 } from '@/lib/pricing/segment-fare';
 import { loadActivePricingSettings, computeEffectivePricing, type EffectivePricing } from '@/lib/pricing/runtime-pricing';
 import { getPositionAlongPolyline } from '@/lib/geo';
+import { nearestRideStopIdForBookingPoint } from '@/lib/booking-stop-link';
 
 const FALLBACK_PRICING: EffectivePricing = {
   minFarePyg: MIN_FARE_PYG,
@@ -94,7 +95,7 @@ export default function ReservarPage() {
             origin_lat, origin_lng, destination_lat, destination_lng,
             departure_time, base_route_polyline, max_deviation_km,
             driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count),
-            ride_stops(lat, lng, label, stop_order)
+            ride_stops(id, lat, lng, label, stop_order)
           `)
           .eq('id', rideId)
           .maybeSingle();
@@ -127,7 +128,7 @@ export default function ReservarPage() {
         if (!Array.isArray(r.ride_stops) || r.ride_stops.length === 0) {
           const { data: stopsData } = await supabase
             .from('ride_stops')
-            .select('lat, lng, label, stop_order')
+            .select('id, lat, lng, label, stop_order')
             .eq('ride_id', rideId)
             .order('stop_order', { ascending: true });
           if (stopsData && stopsData.length > 0) {
@@ -407,6 +408,19 @@ export default function ReservarPage() {
       seats: seatsToBook,
       total: pricePaid,
     };
+    const rideStopsRaw = (ride?.ride_stops ?? []) as Array<{
+      id?: string;
+      lat?: number;
+      lng?: number;
+    }>;
+    const linkStops = rideStopsRaw
+      .filter((s) => s.id && Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lng)))
+      .map((s) => ({ id: String(s.id), lat: Number(s.lat), lng: Number(s.lng) }));
+    const pickup_stop_id =
+      pickup && linkStops.length > 0 ? nearestRideStopIdForBookingPoint(linkStops, pickup.lat, pickup.lng) : null;
+    const dropoff_stop_id =
+      dropoff && linkStops.length > 0 ? nearestRideStopIdForBookingPoint(linkStops, dropoff.lat, dropoff.lng) : null;
+
     const payload: Record<string, unknown> = {
       seats_count: seatsToBook,
       price_paid: pricePaid,
@@ -416,6 +430,8 @@ export default function ReservarPage() {
       dropoff_lat: dropoff?.lat ?? null,
       dropoff_lng: dropoff?.lng ?? null,
       dropoff_label: dropoff?.label ?? null,
+      pickup_stop_id,
+      dropoff_stop_id,
       selected_seat_ids: null,
       pricing_snapshot: pricingSnapshot,
       pricing_settings_id: effectivePricing.pricingSettingsId ?? null,
@@ -455,6 +471,8 @@ export default function ReservarPage() {
       dropoff_lat: payload.dropoff_lat,
       dropoff_lng: payload.dropoff_lng,
       dropoff_label: payload.dropoff_label,
+      pickup_stop_id: payload.pickup_stop_id,
+      dropoff_stop_id: payload.dropoff_stop_id,
       selected_seat_ids: null,
     });
     if (err) {

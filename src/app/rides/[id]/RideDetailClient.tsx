@@ -16,6 +16,18 @@ function shortLabel(label: string | null | undefined, max = 50): string {
   return t.length <= max ? t : t.slice(0, max) + '…';
 }
 
+/** Ubicación del conductor para validar cercanía al confirmar parada (misma regla que la app móvil si hay permiso). */
+function getDriverGeoForArrive(): Promise<{ lat: number; lng: number } | null> {
+  if (typeof window === 'undefined' || !navigator.geolocation) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 30_000 }
+    );
+  });
+}
+
 export default function RideDetailClient() {
   const params = useParams();
   const router = useRouter();
@@ -742,7 +754,13 @@ export default function RideDetailClient() {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       };
-      const bodyPayload = { stopOrder: currentStop?.stop_order ?? currentStopIndex, passengers, access_token: token };
+      const coords = await getDriverGeoForArrive();
+      const bodyPayload = {
+        stopOrder: currentStop?.stop_order ?? currentStopIndex,
+        passengers,
+        access_token: token,
+        ...(coords ? { driverLat: coords.lat, driverLng: coords.lng } : {}),
+      };
       let res = await fetch(`/api/rides/${rideId}/arrive`, {
         method: 'POST',
         headers,

@@ -13,6 +13,138 @@ import { distanceMeters, getPositionAlongPolyline, type Point } from './geo';
 const DEDUP_M = 12;
 const JOIN_TOL_M = 14;
 
+/**
+ * Misma secuencia que usa `buildMasterBookRidePolyline` antes de pedir OSRM: orden por avance sobre
+ * la ruta base del conductor y deduplicación por distancia (sin llamadas de red).
+ */
+export type OrderedMapVisitRow = {
+  kind: 'published' | 'pickup' | 'dropoff';
+  lat: number;
+  lng: number;
+  title: string;
+  subtitle?: string;
+  rideStopId?: string;
+  bookingId?: string;
+  stopOrder?: number;
+};
+
+export type DriverStopForMapOrder = {
+  id: string;
+  lat: number;
+  lng: number;
+  label: string | null;
+  stop_order: number;
+};
+
+export type BookingGeoForMapOrder = {
+  id: string;
+  status: string;
+  pickup_lat: number | null;
+  pickup_lng: number | null;
+  dropoff_lat: number | null;
+  dropoff_lng: number | null;
+  pickup_label: string | null;
+  dropoff_label: string | null;
+};
+
+export function computeOrderedVisitStopsForMap(params: {
+  driverBaseRoute: Point[];
+  driverStops: DriverStopForMapOrder[];
+  bookings: BookingGeoForMapOrder[];
+}): OrderedMapVisitRow[] {
+  const { driverBaseRoute: base, driverStops, bookings } = params;
+  if (base.length < 2) return [];
+
+  type Tagged = { p: Point; t: number; ord: number; row: OrderedMapVisitRow };
+  const tagged: Tagged[] = [];
+  let ord = 0;
+
+  const sortedDriver = [...driverStops].sort((a, b) => a.stop_order - b.stop_order);
+  for (const s of sortedDriver) {
+    if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) continue;
+    const p = { lat: s.lat, lng: s.lng };
+    tagged.push({
+      p,
+      t: getPositionAlongPolyline(p, base),
+      ord: ord++,
+      row: {
+        kind: 'published',
+        lat: p.lat,
+        lng: p.lng,
+        title: s.label?.trim() || 'Parada del recorrido publicado',
+        rideStopId: s.id,
+        stopOrder: s.stop_order,
+      },
+    });
+  }
+
+  const active = bookings.filter((b) => b.status !== 'cancelled');
+  for (const b of active) {
+    const lat = Number(b.pickup_lat);
+    const lng = Number(b.pickup_lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      const p = { lat, lng };
+      tagged.push({
+        p,
+        t: getPositionAlongPolyline(p, base),
+        ord: ord++,
+        row: {
+          kind: 'pickup',
+          lat,
+          lng,
+          title: b.pickup_label?.trim() || 'Subida de pasajero',
+          bookingId: b.id,
+        },
+      });
+    }
+  }
+  for (const b of active) {
+    const lat = Number(b.dropoff_lat);
+    const lng = Number(b.dropoff_lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      const p = { lat, lng };
+      tagged.push({
+        p,
+        t: getPositionAlongPolyline(p, base),
+        ord: ord++,
+        row: {
+          kind: 'dropoff',
+          lat,
+          lng,
+          title: b.dropoff_label?.trim() || 'Bajada de pasajero',
+          bookingId: b.id,
+        },
+      });
+    }
+  }
+
+  if (tagged.length === 0) return [];
+
+  tagged.sort((a, b) => a.t - b.t || a.ord - b.ord);
+  const out: OrderedMapVisitRow[] = [];
+
+  for (const x of tagged) {
+    if (out.length === 0) {
+      out.push({ ...x.row });
+      continue;
+    }
+    const last = out[out.length - 1];
+    if (distanceMeters({ lat: last.lat, lng: last.lng }, x.p) < DEDUP_M) {
+      const piece =
+        x.row.kind === 'published'
+          ? x.row.title
+          : x.row.kind === 'pickup'
+            ? `Subida: ${x.row.title}`
+            : `Bajada: ${x.row.title}`;
+      last.subtitle = last.subtitle ? `${last.subtitle} · ${piece}` : `También: ${piece}`;
+      continue;
+    }
+    out.push({ ...x.row });
+  }
+
+  return out;
+}
+
 /** Máximo de `via` intermedio por petición (origen + estos + destino = maxVia+2 coords). */
 const MAX_VIA_PER_REQUEST = 8;
 
