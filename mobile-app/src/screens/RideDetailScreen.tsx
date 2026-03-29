@@ -1,7 +1,7 @@
 /**
  * Detalle de viaje: pasajero ve conductor y puede reservar; conductor ve resumen tipo publicación e Iniciar/Finalizar viaje.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   ScrollView,
   Alert,
   Modal,
+  Platform,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,20 +19,33 @@ import * as Location from 'expo-location';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
 import { updateRideStatus } from '../backend/rideStatus';
-import { driverLiveMapPoint, fetchRideForReserve, type RideStopForReserve } from '../rides/api';
+import {
+  cancelBooking,
+  driverLiveMapPoint,
+  fetchRideForReserve,
+  fetchRidePublicMapPoints,
+  type RideStopForReserve,
+} from '../rides/api';
 import type { MainStackParamList } from '../navigation/types';
 import { rideStatusConfig, formatRideDate, formatRideTime } from '../ui/rideStatusConfig';
-import { openNavigation, openNavigationErrorMessage } from '../external-navigation';
+import { openNavigation, openNavigationErrorMessage, type NavViaPoint } from '../external-navigation';
 import { getNavigationPreference } from '../settings';
-import { loadRidePolyline } from '../lib/resolveRidePolyline';
+import { useRideResolvedPolyline } from '../hooks/useRideResolvedPolyline';
 import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
-import type { Point } from '../lib/geo';
+import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
 import { sendRideLocation } from '../backend/locationApi';
 import { confirmRideBookingPayment, arriveAtStop, setRideAwaitingStopConfirmation } from '../backend/api';
 import { requestLocationPermission } from '../permissions';
+import { getOriginForExternalNavigation } from '../location/getOriginForExternalNavigation';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'RideDetail'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'RideDetail'>;
+
+/** Límite práctico de waypoints en Google Maps al abrir navegación desde la app. */
+const DRIVER_NAV_MAX_EXTERNAL_VIA = 8;
+
+/** No duplicar en el mapa el pin “otro pasajero” si coincide con tu subida/bajada/paradas extra. */
+const CO_PASSENGER_DEDUP_M = 35;
 
 type PassengerBookingSummary = {
   id: string;
@@ -57,6 +71,10 @@ type DriverBookingStop = {
   dropoff_label: string | null;
   price_paid: number;
   payment_status: string | null;
+  pickup_lat: number | null;
+  pickup_lng: number | null;
+  dropoff_lat: number | null;
+  dropoff_lng: number | null;
 };
 
 function bookingStatusLabel(status: string): string {
@@ -72,6 +90,15 @@ function bookingStatusLabel(status: string): string {
     default:
       return status || '—';
   }
+}
+
+/** Misma idea que la web: no cancelar con viaje en curso o reserva cerrada. */
+function canPassengerCancelReservation(bookingStatus: string, rideStatus: string): boolean {
+  if (bookingStatus === 'cancelled' || bookingStatus === 'completed') return false;
+  if (bookingStatus !== 'pending' && bookingStatus !== 'confirmed') return false;
+  const rs = String(rideStatus ?? '');
+  if (rs === 'completed' || rs === 'cancelled' || rs === 'en_route') return false;
+  return rs === 'published' || rs === 'booked';
 }
 
 function friendlyStatusError(code: string | undefined, details?: string): string {
@@ -105,15 +132,25 @@ export function RideDetailScreen() {
   const [ride, setRide] = useState<Record<string, unknown> | null>(null);
   const [rideStops, setRideStops] = useState<RideStopForReserve[]>([]);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [cancellingBooking, setCancellingBooking] = useState(false);
   const [passengerBooking, setPassengerBooking] = useState<PassengerBookingSummary | null>(null);
   const [passengerExtrasGeo, setPassengerExtrasGeo] = useState<Point[]>([]);
   const [driverBookingPins, setDriverBookingPins] = useState<Array<{ pickup: Point; dropoff: Point }>>([]);
+  const [coPassengerPickups, setCoPassengerPickups] = useState<Point[]>([]);
+  const [coPassengerDropoffs, setCoPassengerDropoffs] = useState<Point[]>([]);
   const [driverRideBookings, setDriverRideBookings] = useState<DriverBookingStop[]>([]);
-  const [navBasePolyline, setNavBasePolyline] = useState<Point[]>([]);
   const [arriveModalOpen, setArriveModalOpen] = useState(false);
   const [arriveDecisions, setArriveDecisions] = useState<Record<string, 'boarded' | 'no_show' | 'dropped_off'>>({});
   const [arrivePaymentConfirmed, setArrivePaymentConfirmed] = useState<Record<string, boolean>>({});
   const [submittingArrive, setSubmittingArrive] = useState(false);
+  /** Evita re-render del mapa si el poll silencioso no cambió datos visibles (menos parpadeo / menos OSRM). */
+  const rideVisualSigRef = useRef<string>('');
+
+  const resolvedRideRoute = useRideResolvedPolyline(ride, rideStops);
+  const navBasePolyline = useMemo(
+    () => (resolvedRideRoute.points.length >= 2 ? resolvedRideRoute.points : []),
+    [resolvedRideRoute.points]
+  );
 
   const loadPassengerBooking = useCallback(async () => {
     if (!session?.id) {
@@ -168,6 +205,20 @@ export function RideDetailScreen() {
     );
   }, [rideId, session?.id]);
 
+  /** Cuantización leve para no recalcular región del mapa en cada tick de GPS (menos parpadeo). */
+  const driverLiveForMap = useMemo(() => {
+    const p = driverLiveMapPoint(ride);
+    if (!p) return null;
+    return {
+      lat: Math.round(p.lat * 10000) / 10000,
+      lng: Math.round(p.lng * 10000) / 10000,
+    };
+  }, [
+    ride ? String(ride.status ?? '') : '',
+    ride ? String(ride.driver_lat ?? '') : '',
+    ride ? String(ride.driver_lng ?? '') : '',
+  ]);
+
   const passengerMapGeo = useMemo((): PassengerBookingMapGeo | null => {
     if (!passengerBooking) return null;
     const plat = passengerBooking.pickup_lat;
@@ -189,6 +240,22 @@ export function RideDetailScreen() {
       extras: passengerExtrasGeo.length > 0 ? passengerExtrasGeo : undefined,
     };
   }, [passengerBooking, passengerExtrasGeo]);
+
+  const mapCoPassengerPickups = useMemo(() => {
+    if (!passengerMapGeo) return coPassengerPickups;
+    const exclude = [passengerMapGeo.pickup, passengerMapGeo.dropoff, ...(passengerMapGeo.extras ?? [])];
+    return coPassengerPickups.filter(
+      (p) => !exclude.some((e) => distanceMeters(p, e) < CO_PASSENGER_DEDUP_M)
+    );
+  }, [coPassengerPickups, passengerMapGeo]);
+
+  const mapCoPassengerDropoffs = useMemo(() => {
+    if (!passengerMapGeo) return coPassengerDropoffs;
+    const exclude = [passengerMapGeo.pickup, passengerMapGeo.dropoff, ...(passengerMapGeo.extras ?? [])];
+    return coPassengerDropoffs.filter(
+      (p) => !exclude.some((e) => distanceMeters(p, e) < CO_PASSENGER_DEDUP_M)
+    );
+  }, [coPassengerDropoffs, passengerMapGeo]);
 
   const refetchDriverBookingPins = useCallback(async () => {
     if (!session?.id || !ride || String(ride.driver_id) !== String(session.id)) {
@@ -215,6 +282,10 @@ export function RideDetailScreen() {
         dropoff_label: row.dropoff_label != null ? String(row.dropoff_label) : null,
         price_paid: Number(row.price_paid ?? 0),
         payment_status: row.payment_status != null ? String(row.payment_status) : null,
+        pickup_lat: row.pickup_lat != null ? Number(row.pickup_lat) : null,
+        pickup_lng: row.pickup_lng != null ? Number(row.pickup_lng) : null,
+        dropoff_lat: row.dropoff_lat != null ? Number(row.dropoff_lat) : null,
+        dropoff_lng: row.dropoff_lng != null ? Number(row.dropoff_lng) : null,
       }))
     );
     const pins = (data ?? [])
@@ -228,6 +299,29 @@ export function RideDetailScreen() {
     setDriverBookingPins(pins);
   }, [rideId, session?.id, ride]);
 
+  const refetchCoPassengerMapPoints = useCallback(async () => {
+    if (!rideId) return;
+    if (!ride) {
+      setCoPassengerPickups([]);
+      setCoPassengerDropoffs([]);
+      return;
+    }
+    const isDriver = Boolean(session?.id && String(ride.driver_id) === String(session.id));
+    if (isDriver) {
+      setCoPassengerPickups([]);
+      setCoPassengerDropoffs([]);
+      return;
+    }
+    try {
+      const { pickups, dropoffs } = await fetchRidePublicMapPoints(rideId);
+      setCoPassengerPickups(pickups);
+      setCoPassengerDropoffs(dropoffs);
+    } catch {
+      setCoPassengerPickups([]);
+      setCoPassengerDropoffs([]);
+    }
+  }, [rideId, session?.id, ride]);
+
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
     const quiet = Boolean(opts?.quiet);
     if (!quiet) {
@@ -237,13 +331,36 @@ export function RideDetailScreen() {
     try {
       const res = await fetchRideForReserve(rideId);
       if (!res?.ride) {
-        if (!quiet) setError('Viaje no encontrado.');
-        setRide(null);
-        setRideStops([]);
+        /** Solo la carga visible puede vaciar el estado: un poll/focus silencioso no debe borrar un viaje ya mostrado (red/RLS transitorio). */
+        if (!quiet) {
+          setError('Viaje no encontrado.');
+          rideVisualSigRef.current = '';
+          setRide(null);
+          setRideStops([]);
+        }
         return;
       }
-      setRide(res.ride);
-      setRideStops(res.ride_stops ?? []);
+      const nextRide = res.ride;
+      const stops = res.ride_stops ?? [];
+      const br = nextRide.base_route_polyline;
+      const brLen = Array.isArray(br) ? br.length : 0;
+      const stopsSig = stops.map((s) => `${s.id}:${s.stop_order}:${s.lat},${s.lng}`).join(';');
+      const sig = [
+        String(nextRide.id ?? ''),
+        String(nextRide.status ?? ''),
+        String(nextRide.driver_lat ?? ''),
+        String(nextRide.driver_lng ?? ''),
+        brLen,
+        String(nextRide.current_stop_index ?? ''),
+        String(nextRide.awaiting_stop_confirmation ?? ''),
+        stopsSig,
+      ].join('|');
+      if (quiet && sig === rideVisualSigRef.current) {
+        return;
+      }
+      rideVisualSigRef.current = sig;
+      setRide(nextRide);
+      setRideStops(stops);
     } catch (e) {
       if (!quiet) setError(e instanceof Error ? e.message : 'Error al cargar');
     } finally {
@@ -259,13 +376,51 @@ export function RideDetailScreen() {
     void refetchDriverBookingPins();
   }, [refetchDriverBookingPins]);
 
+  useEffect(() => {
+    void refetchCoPassengerMapPoints();
+  }, [refetchCoPassengerMapPoints]);
+
   useFocusEffect(
     useCallback(() => {
       void load({ quiet: true });
       void loadPassengerBooking();
       void refetchDriverBookingPins();
-    }, [load, loadPassengerBooking, refetchDriverBookingPins])
+      void refetchCoPassengerMapPoints();
+    }, [load, loadPassengerBooking, refetchDriverBookingPins, refetchCoPassengerMapPoints])
   );
+
+  const handleCancelPassengerBooking = useCallback(() => {
+    if (!session?.id || !passengerBooking) return;
+    Alert.alert(
+      'Cancelar reserva',
+      '¿Querés cancelar esta reserva? Los cupos del viaje se liberarán para otros pasajeros.',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Sí, cancelar',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setCancellingBooking(true);
+              try {
+                await cancelBooking(passengerBooking.id, session.id);
+                await loadPassengerBooking();
+                await load({ quiet: true });
+                Alert.alert('Listo', 'Tu reserva fue cancelada.');
+              } catch (e) {
+                Alert.alert(
+                  'No se pudo cancelar',
+                  e instanceof Error ? e.message : 'Intentá de nuevo en un momento.'
+                );
+              } finally {
+                setCancellingBooking(false);
+              }
+            })();
+          },
+        },
+      ]
+    );
+  }, [session?.id, passengerBooking, load, loadPassengerBooking]);
 
   /** Conductor en_route: ubicación + datos. Pasajero con reserva: ver cuando el viaje pasa a en_route y el pin del conductor (sin depender de salir de la pantalla). */
   useEffect(() => {
@@ -284,7 +439,8 @@ export function RideDetailScreen() {
       void load({ quiet: true });
       void loadPassengerBooking();
       if (isDriver) void refetchDriverBookingPins();
-    }, 15_000);
+      if (isPassengerWithBooking) void refetchCoPassengerMapPoints();
+    }, 22_000);
     return () => clearInterval(t);
   }, [
     ride,
@@ -293,6 +449,7 @@ export function RideDetailScreen() {
     load,
     loadPassengerBooking,
     refetchDriverBookingPins,
+    refetchCoPassengerMapPoints,
   ]);
 
   useEffect(() => {
@@ -321,20 +478,6 @@ export function RideDetailScreen() {
       clearInterval(t);
     };
   }, [ride, rideId, session?.id]);
-
-  useEffect(() => {
-    if (!ride) {
-      setNavBasePolyline([]);
-      return;
-    }
-    let alive = true;
-    void loadRidePolyline(ride, rideStops).then((res) => {
-      if (alive) setNavBasePolyline(res.points.length >= 2 ? res.points : []);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [ride, rideStops]);
 
   const runStatusUpdate = useCallback(
     (next: 'en_route' | 'completed') => {
@@ -379,6 +522,25 @@ export function RideDetailScreen() {
     },
     [rideId, load]
   );
+
+  /**
+   * Ingresos conductor: debe ir con el resto de hooks antes de cualquier return condicional.
+   */
+  const driverBookingRevenue = useMemo(() => {
+    const rows = driverRideBookings.filter((b) => b.status !== 'cancelled');
+    let totalGs = 0;
+    let paidGs = 0;
+    for (const b of rows) {
+      const amt = Math.max(0, Math.round(Number(b.price_paid ?? 0)));
+      if (!Number.isFinite(amt)) continue;
+      totalGs += amt;
+      if (String(b.payment_status ?? '').toLowerCase() === 'paid') {
+        paidGs += amt;
+      }
+    }
+    const pendingGs = Math.max(0, totalGs - paidGs);
+    return { count: rows.length, totalGs, paidGs, pendingGs };
+  }, [driverRideBookings]);
 
   if (loading) {
     return (
@@ -453,25 +615,58 @@ export function RideDetailScreen() {
   })();
 
   const openNavToStop = async (s: RideStopForReserve | undefined) => {
-    if (!s || !Number.isFinite(s.lat) || !Number.isFinite(s.lng)) {
+    const lat = Number(s?.lat);
+    const lng = Number(s?.lng);
+    if (!s || !Number.isFinite(lat) || !Number.isFinite(lng)) {
       Alert.alert('Navegación', 'Esta parada no tiene coordenadas.');
       return;
     }
-    const pref = await getNavigationPreference();
-    let origin: { lat: number; lng: number } | undefined;
     try {
+      const pref = await getNavigationPreference();
+      let origin: { lat: number; lng: number } | undefined;
       if (await requestLocationPermission()) {
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        origin = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        origin = await getOriginForExternalNavigation();
       }
-    } catch {
-      /* sin GPS aún abrimos nav; Waze usará su propia ubicación */
-    }
-    // Un solo destino por apertura. `origin` permite evitar Waze 402 (emulador lejos del destino → fallback Maps).
-    const result = await openNavigation(s.lat, s.lng, pref, { via: [], ...(origin ? { origin } : {}) });
-    if (!result.ok) {
-      const { title, body } = openNavigationErrorMessage(pref, result.error);
-      Alert.alert(title, body);
+      /** Google Maps admite pocas paradas; encadenamos subidas/bajadas de pasajeros que van antes en el recorrido. */
+      const VIA_DEDUP_M = 40;
+      const via: NavViaPoint[] = [];
+      const destPt: Point = { lat, lng };
+      if (navBasePolyline.length >= 2) {
+        const tDest = getPositionAlongPolyline(destPt, navBasePolyline);
+        const candidates: { t: number; lat: number; lng: number }[] = [];
+        for (const b of driverRideBookings) {
+          if (b.status === 'cancelled') continue;
+          const pushIfBefore = (plat: number | null, plng: number | null) => {
+            if (plat == null || plng == null || ![plat, plng].every(Number.isFinite)) return;
+            const p: Point = { lat: plat, lng: plng };
+            if (distanceMeters(p, destPt) < VIA_DEDUP_M) return;
+            const t = getPositionAlongPolyline(p, navBasePolyline);
+            if (t < tDest - 1e-5) candidates.push({ t, lat: plat, lng: plng });
+          };
+          pushIfBefore(b.pickup_lat, b.pickup_lng);
+          pushIfBefore(b.dropoff_lat, b.dropoff_lng);
+        }
+        candidates.sort((a, b) => a.t - b.t);
+        for (const c of candidates) {
+          const last = via[via.length - 1];
+          if (last && distanceMeters(last, { lat: c.lat, lng: c.lng }) < VIA_DEDUP_M) continue;
+          via.push({ lat: c.lat, lng: c.lng });
+          if (via.length >= DRIVER_NAV_MAX_EXTERNAL_VIA) break;
+        }
+      }
+      const result = await openNavigation(lat, lng, pref, {
+        via,
+        ...(origin ? { origin } : {}),
+      });
+      if (!result.ok) {
+        const { title, body } = openNavigationErrorMessage(pref, result.error);
+        Alert.alert(title, body);
+      }
+    } catch (e) {
+      Alert.alert(
+        'Navegación',
+        e instanceof Error ? e.message : 'No se pudo abrir la app de mapas. Reintentá o revisá que Maps esté instalado.'
+      );
     }
   };
 
@@ -528,7 +723,13 @@ export function RideDetailScreen() {
 
   return (
     <View style={styles.flexFill}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        nestedScrollEnabled={Platform.OS === 'android'}
+        removeClippedSubviews={Platform.OS === 'android' ? false : undefined}
+        keyboardShouldPersistTaps="handled"
+      >
       {isOwn ? (
         <>
           <View style={[styles.statusPill, { borderColor: stCfg.color }]}>
@@ -543,9 +744,11 @@ export function RideDetailScreen() {
           <RideDetailRouteMap
             ride={ride}
             rideStops={rideStops}
+            resolvedRoute={resolvedRideRoute}
+            resolvedRouteLoading={resolvedRideRoute.loading}
             height={300}
             otherBookingsGeo={driverBookingPins}
-            driverLocation={driverLiveMapPoint(ride)}
+            driverLocation={driverLiveForMap}
           />
           <Text style={styles.sectionLabel}>Salida</Text>
           <Text style={styles.bodyLine}>
@@ -565,6 +768,30 @@ export function RideDetailScreen() {
             {available} libres
             {totalSeats > 0 ? ` de ${totalSeats}` : ''}
           </Text>
+          {driverBookingRevenue.count > 0 ? (
+            <View style={styles.driverRevenueBox}>
+              <Text style={styles.driverRevenueBlockTitle}>Dinero según reservas</Text>
+              <Text style={styles.driverRevenueTotal}>
+                Total acordado: ₲ {driverBookingRevenue.totalGs.toLocaleString('es-PY')}
+              </Text>
+              <Text style={styles.driverRevenueMeta}>
+                {driverBookingRevenue.count === 1 ? '1 reserva activa' : `${driverBookingRevenue.count} reservas activas`}
+                {driverBookingRevenue.totalGs <= 0 ? ' · Monto en ₲0 (revisá datos de la reserva)' : ''}
+              </Text>
+              {driverBookingRevenue.totalGs > 0 && driverBookingRevenue.paidGs > 0 ? (
+                <Text style={styles.driverRevenueMeta}>
+                  Ya cobrado (confirmado en app): ₲ {driverBookingRevenue.paidGs.toLocaleString('es-PY')}
+                  {driverBookingRevenue.pendingGs > 0
+                    ? ` · Pendiente de cobrar: ₲ ${driverBookingRevenue.pendingGs.toLocaleString('es-PY')}`
+                    : ''}
+                </Text>
+              ) : driverBookingRevenue.totalGs > 0 && driverBookingRevenue.pendingGs > 0 ? (
+                <Text style={styles.driverRevenueMeta}>
+                  Pendiente de cobrar (según reservas): ₲ {driverBookingRevenue.pendingGs.toLocaleString('es-PY')}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           {priceSeat > 0 ? (
             <>
               <Text style={styles.sectionLabel}>Precio por asiento</Text>
@@ -580,15 +807,34 @@ export function RideDetailScreen() {
           {rideStops.length > 0 ? (
             <>
               <Text style={styles.sectionLabel}>Paradas del recorrido</Text>
-              {rideStops.map((s, i) => (
-                <View key={s.id} style={styles.stopRow}>
-                  <Text style={styles.stopOrder}>{i + 1}.</Text>
-                  <Text style={styles.stopLabel}>{s.label?.trim() || `Parada ${i + 1}`}</Text>
-                  {status === 'en_route' && i === stopIdx ? (
-                    <Text style={styles.stopCurrentBadge}>Actual</Text>
-                  ) : null}
-                </View>
-              ))}
+              {rideStops.map((s, i) => {
+                const passengerHerePickup = driverRideBookings.some(
+                  (b) => b.pickup_stop_id != null && b.pickup_stop_id === s.id
+                );
+                const passengerHereDrop = driverRideBookings.some(
+                  (b) => b.dropoff_stop_id != null && b.dropoff_stop_id === s.id
+                );
+                const passengerTag =
+                  passengerHerePickup && passengerHereDrop
+                    ? ' (punto pasajero: subida y bajada)'
+                    : passengerHerePickup
+                      ? ' (punto pasajero: subida)'
+                      : passengerHereDrop
+                        ? ' (punto pasajero: bajada)'
+                        : '';
+                return (
+                  <View key={s.id} style={styles.stopRow}>
+                    <Text style={styles.stopOrder}>{i + 1}.</Text>
+                    <Text style={styles.stopLabel}>
+                      {s.label?.trim() || `Parada ${i + 1}`}
+                      {passengerTag}
+                    </Text>
+                    {status === 'en_route' && i === stopIdx ? (
+                      <Text style={styles.stopCurrentBadge}>Actual</Text>
+                    ) : null}
+                  </View>
+                );
+              })}
             </>
           ) : null}
           {isOwn && status === 'en_route' && rideStops.length > 0 ? (
@@ -604,7 +850,9 @@ export function RideDetailScreen() {
                   <Text style={styles.navBtnText}>Llegué</Text>
                 </TouchableOpacity>
               ) : null}
-              {currentNavStop && Number.isFinite(currentNavStop.lat) && Number.isFinite(currentNavStop.lng) ? (
+              {currentNavStop &&
+              Number.isFinite(Number(currentNavStop.lat)) &&
+              Number.isFinite(Number(currentNavStop.lng)) ? (
                 <TouchableOpacity
                   style={styles.navBtn}
                   onPress={() => void openNavToStop(currentNavStop)}
@@ -614,8 +862,8 @@ export function RideDetailScreen() {
                 </TouchableOpacity>
               ) : null}
               {nextNavStop &&
-              Number.isFinite(nextNavStop.lat) &&
-              Number.isFinite(nextNavStop.lng) &&
+              Number.isFinite(Number(nextNavStop.lat)) &&
+              Number.isFinite(Number(nextNavStop.lng)) &&
               nextNavStop.id !== currentNavStop?.id ? (
                 <TouchableOpacity
                   style={[styles.navBtn, styles.navBtnOutline]}
@@ -627,8 +875,8 @@ export function RideDetailScreen() {
               ) : null}
               {driverBookingPins.length > 0 ? (
                 <Text style={styles.navHintMuted}>
-                  La ruta en el mapa externo sigue las subidas y bajadas de pasajeros que caen antes de esa parada;
-                  si hay varias, se abre Google Maps con paradas intermedias.
+                  Al tocar “Ir a la parada…”, Google Maps incluye subidas y bajadas de pasajeros que van antes en el
+                  recorrido (hasta {DRIVER_NAV_MAX_EXTERNAL_VIA} intermedias). Waze no admite varias paradas: se usa Maps.
                 </Text>
               ) : null}
             </>
@@ -671,6 +919,19 @@ export function RideDetailScreen() {
               )}
               <Text style={styles.sectionLabel}>Total</Text>
               <Text style={styles.bodyLine}>{passengerBooking.price_paid.toLocaleString('es-PY')} PYG</Text>
+              {canPassengerCancelReservation(passengerBooking.status, status) ? (
+                <TouchableOpacity
+                  style={[styles.cancelBookingBtn, cancellingBooking && styles.btnDisabled]}
+                  onPress={handleCancelPassengerBooking}
+                  disabled={cancellingBooking}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancelar reserva"
+                >
+                  <Text style={styles.cancelBookingBtnText}>
+                    {cancellingBooking ? 'Cancelando…' : 'Cancelar reserva'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           ) : null}
           {passengerBooking ? (
@@ -689,9 +950,13 @@ export function RideDetailScreen() {
           <RideDetailRouteMap
             ride={ride}
             rideStops={rideStops}
+            resolvedRoute={resolvedRideRoute}
+            resolvedRouteLoading={resolvedRideRoute.loading}
             height={300}
             passengerBookingGeo={passengerMapGeo}
-            driverLocation={driverLiveMapPoint(ride)}
+            coPassengerPickups={mapCoPassengerPickups}
+            coPassengerDropoffs={mapCoPassengerDropoffs}
+            driverLocation={driverLiveForMap}
           />
           <Text style={styles.sectionLabel}>Salida</Text>
           <Text style={styles.bodyLine}>
@@ -942,6 +1207,33 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '700', color: '#111', lineHeight: 24 },
   bodyLine: { fontSize: 15, color: '#111', fontWeight: '500' },
   bodyMuted: { fontSize: 13, color: '#6b7280', marginTop: 4, lineHeight: 18 },
+  driverRevenueBox: {
+    marginTop: 10,
+    padding: 12,
+    backgroundColor: '#f0fdf4',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  driverRevenueBlockTitle: {
+    fontSize: 11,
+    color: '#166534',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    fontWeight: '700',
+  },
+  driverRevenueTotal: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#14532d',
+    marginTop: 2,
+  },
+  driverRevenueMeta: {
+    fontSize: 13,
+    color: '#3f6212',
+    marginTop: 6,
+    lineHeight: 18,
+  },
   navHintMuted: {
     fontSize: 12,
     color: '#9ca3af',
@@ -1119,6 +1411,15 @@ const styles = StyleSheet.create({
   },
   bookingCardTitle: { fontSize: 17, fontWeight: '800', color: '#14532d', marginBottom: 6 },
   bookingMeta: { fontSize: 13, color: '#166534', marginBottom: 8, fontWeight: '600' },
+  cancelBookingBtn: {
+    marginTop: 16,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#b91c1c',
+    alignItems: 'center',
+  },
+  cancelBookingBtnText: { color: '#b91c1c', fontWeight: '700', fontSize: 15 },
   cardLabel: { fontSize: 12, color: '#6b7280', textTransform: 'uppercase' },
   cardValue: { fontSize: 17, fontWeight: '600', marginTop: 4 },
   actions: { marginTop: 24, gap: 0 },

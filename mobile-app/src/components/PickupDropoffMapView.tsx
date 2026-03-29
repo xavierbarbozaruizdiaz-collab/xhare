@@ -1,6 +1,6 @@
 /**
  * Mapa: subida (A), bajada (B) y hasta 3 paradas intermedias.
- * Con API: gris = recorte de la ruta publicada; verde = OSRM que conecta a la ruta y pasa por A/paradas/B.
+ * Con API (reserva): gris = ruta publicada + subidas/bajadas ya reservadas (una polyline); verde = solo tramo del pasajero actual (A/paradas/B).
  * Sin fusión OSRM: verde = recorte de la misma polyline del conductor entre A y B.
  */
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
@@ -139,8 +139,10 @@ export function PickupDropoffMapView({
     if (pickup) pts.push(pickup);
     if (dropoff) pts.push(dropoff);
     extraStops.forEach((s) => pts.push({ lat: s.lat, lng: s.lng }));
+    existingPickups.forEach((p) => pts.push({ lat: p.lat, lng: p.lng }));
+    existingDropoffs.forEach((p) => pts.push({ lat: p.lat, lng: p.lng }));
     return getRegion(pts);
-  }, [baseRoute, pickup, dropoff, extraStops]);
+  }, [baseRoute, pickup, dropoff, extraStops, existingPickups, existingDropoffs]);
 
   useEffect(() => {
     if (!fullVisible) return;
@@ -367,19 +369,25 @@ export function PickupDropoffMapView({
         <Marker
           key={`ep-${i}`}
           coordinate={{ latitude: p.lat, longitude: p.lng }}
-          title="Otra subida"
+          anchor={{ x: 0.5, y: 0.5 }}
+          tracksViewChanges={Platform.OS === 'android'}
+          title={`Subida de otro pasajero (${i + 1})`}
           description={p.label ?? undefined}
-          pinColor="#15803d"
-        />
+        >
+          <View style={styles.driverDot} collapsable={false} />
+        </Marker>
       ))}
       {existingDropoffs.map((p, i) => (
         <Marker
           key={`ed-${i}`}
           coordinate={{ latitude: p.lat, longitude: p.lng }}
-          title="Otra bajada"
+          anchor={{ x: 0.5, y: 0.5 }}
+          tracksViewChanges={Platform.OS === 'android'}
+          title={`Bajada de otro pasajero (${i + 1})`}
           description={p.label ?? undefined}
-          pinColor="#b45309"
-        />
+        >
+          <View style={styles.driverDot} collapsable={false} />
+        </Marker>
       ))}
       {extraStops.map((s, i) => (
         <Marker
@@ -408,22 +416,27 @@ export function PickupDropoffMapView({
 
   const corridorM =
     maxDeviationMeters != null && maxDeviationMeters > 0 ? Math.round(maxDeviationMeters) : null;
+  const hasExistingOthers = existingPickups.length > 0 || existingDropoffs.length > 0;
+  const othersHint = hasExistingOthers
+    ? 'La línea gris ya incluye por calles las subidas/bajadas de otros pasajeros; el verde es solo tu tramo (A→B). '
+    : '';
   const modalHintLines =
     (corridorM != null
       ? `Podés tocar hasta unos ${corridorM} m de la ruta gris del conductor. `
       : 'Tocá el mapa para colocar el punto. ') +
+    othersHint +
     (hasPassengerHighlight
       ? usesOsrmMergedPath
-        ? 'Gris: ruta publicada del conductor. Verde: tu tramo por calles (OSRM) que pasa por A, paradas y B y se conecta de nuevo a la ruta del conductor. '
-        : 'El tramo entre A y B sigue la línea publicada del conductor en verde (si falla OSRM se usa este recorte). '
+        ? 'Gris: conductor + pasajeros ya reservados. Verde: solo tu tramo por calles (OSRM) entre A, tus paradas y B. '
+        : 'El tramo entre A y B sigue la línea gris en verde (si falla OSRM se usa este recorte). '
       : 'Cuando marques A y B, verás tu tramo en verde y el resto en gris. ') +
     'El botón de ubicación centra el mapa en vos.';
 
   const legendText = hasPassengerHighlight
     ? usesOsrmMergedPath
-      ? 'Gris: conductor · Verde: OSRM por A→paradas→B conectado a la ruta · Gris: paradas del conductor'
-      : 'Gris: ruta publicada; verde: tu tramo sobre esa línea · Paradas del conductor en gris'
-    : 'Gris: ruta del conductor y sus paradas · Marcá A/B cerca del corredor';
+      ? `Gris: recorrido compartido (conductor + reservas) · Verde: tu tramo · Puntos grises: paradas${hasExistingOthers ? ' y otros pasajeros' : ''}`
+      : `Gris: recorrido compartido; verde: tu tramo sobre esa línea · Puntos grises: paradas${hasExistingOthers ? ' y otros' : ''}`
+    : `Gris: recorrido del viaje (conductor${hasExistingOthers ? ' + pasajeros ya reservados' : ''}) · Marcá A/B cerca del corredor`;
 
   const modeRow = (
     <View style={styles.modeRow}>

@@ -592,18 +592,18 @@ export default function RideDetailClient() {
         router.push('/login?session_expired=1');
         return;
       }
-      const fnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/ride-update-status`;
+      const statusUrl = `/api/rides/${rideId}/update-status`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 25000);
       let res: Response;
       try {
-        res = await fetch(fnUrl, {
+        res = await fetch(statusUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ ride_id: rideId, status: newStatus }),
+          body: JSON.stringify({ status: newStatus }),
           signal: controller.signal,
         });
       } catch (fetchErr: any) {
@@ -618,10 +618,10 @@ export default function RideDetailClient() {
       clearTimeout(timeoutId);
       const data = await res.json().catch(() => ({}));
       if (process.env.NODE_ENV === 'development') {
-        console.log('RIDE_UPDATE_STATUS_FN', { status: res.status, data });
+        console.log('RIDE_UPDATE_STATUS_API', { status: res.status, data });
       }
       if (!res.ok) {
-        console.error('ride-update-status FAILED', {
+        console.error('ride-update-status API FAILED', {
           status: res.status,
           statusText: res.statusText,
           body: data,
@@ -632,7 +632,7 @@ export default function RideDetailClient() {
         router.push('/login?session_expired=1');
         return;
       }
-      if (!res.ok || !data?.ok) {
+      if (!res.ok || !data?.success) {
         const msg =
           data?.error === 'account_suspended'
             ? data?.details ??

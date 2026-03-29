@@ -51,6 +51,40 @@ export async function POST(
     const body = await request.json();
     const validated = updateStatusSchema.parse(body);
 
+    if (validated.status === 'en_route') {
+      const { data: otherEnRoute } = await supabase
+        .from('rides')
+        .select('id')
+        .eq('driver_id', user.id)
+        .eq('status', 'en_route')
+        .neq('id', rideId)
+        .limit(1);
+      if (otherEnRoute && otherEnRoute.length > 0) {
+        return NextResponse.json(
+          {
+            error: 'already_has_active_ride',
+            details: 'Ya tenés un viaje en curso. Finalizá ese viaje antes de iniciar otro.',
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    const { data: driverAccount } = await supabase
+      .from('driver_accounts')
+      .select('account_status')
+      .eq('driver_id', user.id)
+      .maybeSingle();
+    if (driverAccount?.account_status === 'suspended') {
+      return NextResponse.json(
+        {
+          error: 'account_suspended',
+          details: 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.',
+        },
+        { status: 403 }
+      );
+    }
+
     const updatePayload: Record<string, unknown> = { status: validated.status };
     if (validated.status === 'en_route') {
       updatePayload.started_at = new Date().toISOString();

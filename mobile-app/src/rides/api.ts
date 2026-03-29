@@ -439,6 +439,13 @@ export async function fetchNearbyEnRouteRides(
 > {
   const res = await apiPost('/api/rides/nearby-en-route', { lat, lng });
   if (!res.ok) {
+    if (res.status === 404) {
+      return {
+        ok: false,
+        error:
+          'El servidor no expone esta función (404). Hace falta desplegar el backend con la ruta /api/rides/nearby-en-route o revisar EXPO_PUBLIC_API_BASE_URL.',
+      };
+    }
     return { ok: false, error: res.error ?? `Error ${res.status}` };
   }
   const data = res.data as {
@@ -506,7 +513,16 @@ export async function fetchRideForReserve(rideId: string): Promise<{
       .eq('ride_id', rideId)
       .order('stop_order', { ascending: true });
     if (stopsData?.length) {
-      stops = stopsData as RideStopForReserve[];
+      stops = stopsData
+        .filter((s: unknown) => s && typeof s === 'object')
+        .map((s: Record<string, unknown>) => ({
+          id: String(s.id ?? ''),
+          lat: Number(s.lat),
+          lng: Number(s.lng),
+          label: s.label != null ? String(s.label) : null,
+          stop_order: Number(s.stop_order ?? 0),
+        }))
+        .sort((a, b) => a.stop_order - b.stop_order);
     }
   }
   const rideClean = { ...ride };
@@ -538,6 +554,45 @@ export async function fetchRidePublicInfo(rideId: string) {
   if (error) return null;
   const row = Array.isArray(data) && data[0] ? data[0] : data;
   return row as { booked_seats: number; pickups?: Array<{ lat: number; lng: number; label?: string }>; dropoffs?: Array<{ lat: number; lng: number; label?: string }> } | null;
+}
+
+function parsePublicInfoPointArray(raw: unknown): Point[] {
+  let arr: unknown[] = [];
+  if (Array.isArray(raw)) arr = raw;
+  else if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw) as unknown;
+      if (Array.isArray(p)) arr = p;
+    } catch {
+      return [];
+    }
+  }
+  return arr
+    .map((o) => {
+      if (!o || typeof o !== 'object') return null;
+      const r = o as Record<string, unknown>;
+      const lat = Number(r.lat);
+      const lng = Number(r.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { lat, lng };
+    })
+    .filter((p): p is Point => p != null);
+}
+
+/**
+ * Puntos de subida/bajada de todas las reservas (y solicitudes aceptadas) para el mapa.
+ * Usa RPC SECURITY DEFINER: sirve para pasajeros aunque RLS de `bookings` solo abra filas en viaje `published`.
+ */
+export async function fetchRidePublicMapPoints(rideId: string): Promise<{
+  pickups: Point[];
+  dropoffs: Point[];
+}> {
+  const row = await fetchRidePublicInfo(rideId);
+  if (!row) return { pickups: [], dropoffs: [] };
+  return {
+    pickups: parsePublicInfoPointArray(row.pickups),
+    dropoffs: parsePublicInfoPointArray(row.dropoffs),
+  };
 }
 
 function buildTripRequestRow(params: {

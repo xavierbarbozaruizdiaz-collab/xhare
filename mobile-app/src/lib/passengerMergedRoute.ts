@@ -1,9 +1,14 @@
 /**
- * Ruta mostrada al reservar: recorte de la polyline del conductor (gris) + OSRM que pasa por A, waypoints y B (verde).
- * `waypointsBetween` debe incluir paradas extra del pasajero y paradas intermedias del conductor en el tramo A–B.
+ * Recorte sobre la polyline gris del mapa (conductor + reservas existentes) + OSRM del tramo del pasajero actual (verde).
+ * `waypointsBetween`: extras del pasajero y paradas del conductor entre A y B (no incluir subidas/bajadas de otros: ya están en la gris).
  */
 import { fetchRoute } from '../backend/routeApi';
-import { distanceMeters, getPositionAlongPolyline, slicePolylineBetweenT, type Point } from './geo';
+import {
+  distanceMeters,
+  getPositionAlongPolyline,
+  slicePolylineBetweenT,
+  type Point,
+} from './geo';
 import { driverIntermediateStopsBetweenT } from './passengerRouteWaypoints';
 
 export type PassengerMergedSegments = { head: Point[]; mid: Point[]; tail: Point[] };
@@ -37,6 +42,32 @@ async function osrmOrNull(origin: Point, destination: Point, waypoints: Point[] 
   return r.polyline;
 }
 
+/**
+ * OSRM en una sola URL con muchos `via` a veces falla o ignora orden en demos; encadenar tramos
+ * A→w1→…→B garantiza que la polyline pase por cada coordenada (subidas/bajadas de otros).
+ */
+async function chainMidThroughWaypoints(
+  pickup: Point,
+  dropoff: Point,
+  waypointsBetween: Point[]
+): Promise<Point[] | null> {
+  const chain: Point[] = [pickup, ...waypointsBetween, dropoff];
+  if (chain.length < 2) return null;
+  const parts: Point[][] = [];
+  for (let i = 0; i < chain.length - 1; i++) {
+    const a = chain[i];
+    const b = chain[i + 1];
+    let seg = await osrmOrNull(a, b, []);
+    if (!seg || seg.length < 2) {
+      seg = distanceMeters(a, b) < 2 ? [a] : [a, b];
+    }
+    if (seg.length < 2) return null;
+    parts.push(seg);
+  }
+  const merged = concatPolylines(parts);
+  return merged.length >= 2 ? merged : null;
+}
+
 function shortBridge(a: Point, b: Point): Point[] {
   return distanceMeters(a, b) < 2 ? [a] : [a, b];
 }
@@ -67,8 +98,11 @@ export async function buildPassengerMergedRoute(
       ? shortBridge(joinA, pickup)
       : (await osrmOrNull(joinA, pickup)) ?? shortBridge(joinA, pickup);
 
-  const midCore = await osrmOrNull(pickup, dropoff, waypointsBetween);
-  if (!midCore) return null;
+  let midCore = await osrmOrNull(pickup, dropoff, waypointsBetween);
+  if (!midCore || midCore.length < 2) {
+    midCore = await chainMidThroughWaypoints(pickup, dropoff, waypointsBetween);
+  }
+  if (!midCore || midCore.length < 2) return null;
 
   const bridgeB =
     distanceMeters(dropoff, joinB) < BRIDGE_OSRM_MIN_M
@@ -122,6 +156,78 @@ const CHAIN_DEDUP_M = 10;
 
 type DriverStopLike = { lat: number; lng: number; stop_order?: number };
 
+function visitOrderedAlongBase(baseRoute: Point[], rawPoints: Point[]): Point[] {
+  const tagged = rawPoints
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+    .map((p, i) => ({ p, t: getPositionAlongPolyline(p, baseRoute), ord: i }));
+  tagged.sort((a, b) => a.t - b.t || a.ord - b.ord);
+  const visit: Point[] = [];
+  for (const row of tagged) {
+    if (visit.length && distanceMeters(visit[visit.length - 1], row.p) < CHAIN_DEDUP_M) continue;
+    visit.push(row.p);
+  }
+  return visit;
+}
+
+/**
+ * Inicio/fin de la ruta publicada + waypoints (subidas/bajadas) ordenados en el eje de la base → OSRM por tramos.
+ */
+async function chainRouteThroughVisitOnBase(
+  baseRoute: Point[],
+  driverStops: DriverStopLike[],
+  visit: Point[]
+): Promise<Point[] | null> {
+  if (baseRoute.length < 2 || visit.length === 0) return null;
+
+  const start = baseRoute[0];
+  const end = baseRoute[baseRoute.length - 1];
+  const rawChain = [start, ...visit, end];
+  const chain: Point[] = [];
+  for (const p of rawChain) {
+    if (chain.length && distanceMeters(chain[chain.length - 1], p) < CHAIN_DEDUP_M) continue;
+    chain.push(p);
+  }
+  if (chain.length < 2) return null;
+
+  const parts: Point[][] = [];
+  for (let i = 0; i < chain.length - 1; i++) {
+    const a = chain[i];
+    const b = chain[i + 1];
+    const tA = getPositionAlongPolyline(a, baseRoute);
+    const tB = getPositionAlongPolyline(b, baseRoute);
+
+    let seg: Point[] | null = null;
+
+    if (tA < tB - 1e-8) {
+      const wps = driverIntermediateStopsBetweenT(baseRoute, tA, tB, driverStops);
+      seg = await buildMergedSegmentOnBase(baseRoute, a, b, wps);
+      if (!seg || seg.length < 2) {
+        const fallback = slicePolylineBetweenT(baseRoute, tA, tB);
+        if (fallback.length >= 2) seg = fallback;
+      }
+    } else {
+      const lo = Math.min(tA, tB);
+      const hi = Math.max(tA, tB);
+      const wpsMid = driverIntermediateStopsBetweenT(baseRoute, lo, hi, driverStops);
+      seg = await osrmOrNull(a, b, wpsMid);
+    }
+
+    if (!seg || seg.length < 2) {
+      seg = await osrmOrNull(a, b, []);
+    }
+    if (!seg || seg.length < 2) {
+      seg = [a, b];
+    }
+    parts.push(seg);
+  }
+
+  const merged = concatPolylines(parts);
+  if (merged.length >= 2) return merged;
+
+  const oneShot = await osrmOrNull(start, end, visit);
+  return oneShot && oneShot.length >= 2 ? oneShot : null;
+}
+
 /**
  * Vista conductor: una sola polyline OSRM que encadena inicio → subidas/bajadas de reservas (orden por progreso en la base)
  * → fin, insertando paradas intermedias del conductor en cada tramo.
@@ -148,28 +254,20 @@ export async function buildDriverMergedRouteThroughBookings(
   }
   if (visit.length === 0) return null;
 
-  const start = baseRoute[0];
-  const end = baseRoute[baseRoute.length - 1];
-  const rawChain = [start, ...visit, end];
-  const chain: Point[] = [];
-  for (const p of rawChain) {
-    if (chain.length && distanceMeters(chain[chain.length - 1], p) < CHAIN_DEDUP_M) continue;
-    chain.push(p);
-  }
-  if (chain.length < 2) return null;
+  return chainRouteThroughVisitOnBase(baseRoute, driverStops, visit);
+}
 
-  const parts: Point[][] = [];
-  for (let i = 0; i < chain.length - 1; i++) {
-    const a = chain[i];
-    const b = chain[i + 1];
-    const tA = getPositionAlongPolyline(a, baseRoute);
-    const tB = getPositionAlongPolyline(b, baseRoute);
-    if (tA >= tB - 1e-8) return null;
-    const wps = driverIntermediateStopsBetweenT(baseRoute, tA, tB, driverStops);
-    const seg = await buildMergedSegmentOnBase(baseRoute, a, b, wps);
-    if (!seg || seg.length < 2) return null;
-    parts.push(seg);
-  }
-
-  return concatPolylines(parts);
+/**
+ * Vista pasajero (sin reserva propia): misma lógica que el conductor pero con subidas/bajadas desde RPC público (listas sueltas).
+ */
+export async function buildMergedRouteThroughCoPassengerPoints(
+  baseRoute: Point[],
+  driverStops: DriverStopLike[],
+  pickups: Point[],
+  dropoffs: Point[]
+): Promise<Point[] | null> {
+  if (baseRoute.length < 2) return null;
+  const visit = visitOrderedAlongBase(baseRoute, [...pickups, ...dropoffs]);
+  if (visit.length === 0) return null;
+  return chainRouteThroughVisitOnBase(baseRoute, driverStops, visit);
 }

@@ -7,6 +7,24 @@ import { buildPolylineFromRide, type Point } from './geo';
 
 export type RideStopLike = { lat: number; lng: number; stop_order?: number };
 
+/** PostgREST a veces entrega jsonb como string; sin parseo `hasDbPoly` queda en falso y el mapa no usa la ruta guardada. */
+function coerceBaseRoutePolylineRaw(raw: unknown): unknown[] | null {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const v = JSON.parse(raw) as unknown;
+      if (Array.isArray(v)) return v;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+function finitePolyline(pts: Point[]): Point[] {
+  return pts.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+}
+
 export type ResolvedPolylineSource = 'stored' | 'osrm' | 'chord' | 'empty';
 
 export type ResolvedPolyline = {
@@ -46,23 +64,26 @@ export async function loadRidePolyline(
   stops: RideStopLike[]
 ): Promise<ResolvedPolyline> {
   const rawPoly = ride.base_route_polyline;
-  const hasDbPoly = Array.isArray(rawPoly) && rawPoly.length >= 2;
-  const fromBuild = buildPolylineFromRide({ ...ride, ride_stops: stops });
+  const coerced = coerceBaseRoutePolylineRaw(rawPoly);
+  const rideForBuild =
+    coerced != null ? ({ ...ride, base_route_polyline: coerced } as Record<string, unknown>) : ride;
+  const hasDbPoly = coerced != null && coerced.length >= 2;
+  const fromBuild = buildPolylineFromRide({ ...rideForBuild, ride_stops: stops });
 
   if (hasDbPoly && fromBuild.length >= 2) {
-    return { points: fromBuild, source: 'stored' };
+    return { points: finitePolyline(fromBuild), source: 'stored' };
   }
 
   const od = resolveOriginDestWaypoints(ride, stops);
   if (od) {
     const res = await fetchRoute(od.origin, od.destination, od.waypoints);
     if (res.polyline && res.polyline.length >= 2) {
-      return { points: res.polyline, source: 'osrm' };
+      return { points: finitePolyline(res.polyline as Point[]), source: 'osrm' };
     }
   }
 
   if (fromBuild.length >= 2) {
-    return { points: fromBuild, source: 'chord' };
+    return { points: finitePolyline(fromBuild), source: 'chord' };
   }
   return { points: [], source: 'empty' };
 }

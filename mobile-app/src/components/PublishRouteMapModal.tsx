@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { androidMapProvider } from '../lib/androidMapProvider';
 import { getLocationPermissionStatus, requestLocationPermission } from '../permissions';
+import { MAX_DRIVER_PUBLISH_WAYPOINTS } from '../core/publishRouteLimits';
 
 const GREEN = '#166534';
 
@@ -38,8 +39,6 @@ type Props = {
   waypointCount: number;
   maxWaypoints?: number;
   onRemoveWaypoint: (index: number) => void;
-  /** Remount del MapView cuando cambian marcadores/ruta (Android puede no pintar overlays si solo cambia `region`). */
-  mapRenderKey: string;
 };
 
 export function PublishRouteMapModal({
@@ -55,13 +54,13 @@ export function PublishRouteMapModal({
   onMapPress,
   originDestinationReady,
   waypointCount,
-  maxWaypoints = 3,
+  maxWaypoints = MAX_DRIVER_PUBLISH_WAYPOINTS,
   onRemoveWaypoint,
-  mapRenderKey,
 }: Props) {
   const mapRef = useRef<MapView>(null);
   /** Tras quitar una parada con `onMarkerPress`, Android también dispara `onPress` del mapa: lo ignoramos un instante. */
   const mapPressSilenceUntilRef = useRef(0);
+  const didFitForOpenRef = useRef(false);
   const [locationOk, setLocationOk] = useState(false);
   const [locating, setLocating] = useState(false);
 
@@ -76,6 +75,37 @@ export function PublishRouteMapModal({
       cancelled = true;
     };
   }, [visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      didFitForOpenRef.current = false;
+      return;
+    }
+    const coords: { latitude: number; longitude: number }[] = [];
+    if (origin) coords.push({ latitude: origin.lat, longitude: origin.lng });
+    if (destination) coords.push({ latitude: destination.lat, longitude: destination.lng });
+    waypoints.forEach((w) => coords.push({ latitude: w.lat, longitude: w.lng }));
+    const t = setTimeout(() => {
+      if (coords.length >= 2) {
+        mapRef.current?.fitToCoordinates(coords, {
+          edgePadding: { top: 96, right: 44, bottom: 200, left: 44 },
+          animated: !didFitForOpenRef.current,
+        });
+      } else if (coords.length === 1) {
+        mapRef.current?.animateToRegion(
+          {
+            latitude: coords[0].latitude,
+            longitude: coords[0].longitude,
+            latitudeDelta: Math.max(region.latitudeDelta, 0.045),
+            longitudeDelta: Math.max(region.longitudeDelta, 0.045),
+          },
+          380
+        );
+      }
+      didFitForOpenRef.current = true;
+    }, 320);
+    return () => clearTimeout(t);
+  }, [visible, origin, destination, waypoints, region.latitudeDelta, region.longitudeDelta]);
 
   const goToMyLocation = useCallback(async () => {
     setLocating(true);
@@ -164,11 +194,10 @@ export function PublishRouteMapModal({
         </Text>
         <View style={styles.mapContainer}>
           <MapView
-            key={mapRenderKey}
             ref={mapRef}
             provider={androidMapProvider}
             style={styles.map}
-            region={region}
+            initialRegion={region}
             onPress={handleMapPress}
             onMarkerPress={handleMapMarkerPress}
             scrollEnabled
@@ -187,7 +216,7 @@ export function PublishRouteMapModal({
                 identifier={`publish-wp-${i}`}
                 coordinate={{ latitude: w.lat, longitude: w.lng }}
                 anchor={{ x: 0.5, y: 1 }}
-                tracksViewChanges={Platform.OS === 'android'}
+                tracksViewChanges={false}
                 stopPropagation
                 onPress={() => requestRemoveWaypoint(i)}
               >
@@ -284,7 +313,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     backgroundColor: '#f9fafb',
   },
-  mapContainer: { flex: 1, position: 'relative' },
+  mapContainer: { flex: 1, position: 'relative', backgroundColor: '#e8ece9' },
   map: { ...StyleSheet.absoluteFillObject },
   locateBtn: {
     position: 'absolute',

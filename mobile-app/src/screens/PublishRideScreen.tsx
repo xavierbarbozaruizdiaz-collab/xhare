@@ -29,6 +29,7 @@ import { env } from '../core/env';
 import { getPositionAlongPolyline, snapToPolyline, type Point as GeoPoint } from '../lib/geo';
 import { PublishRouteMapModal, type PublishMapMode } from '../components/PublishRouteMapModal';
 import type { MainStackParamList } from '../navigation/types';
+import { MAX_DRIVER_PUBLISH_WAYPOINTS } from '../core/publishRouteLimits';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'PublishRide'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'PublishRide'>;
@@ -65,6 +66,23 @@ function regionForPoints(points: Point[]) {
     longitude: (Math.min(...lngs) + Math.max(...lngs)) / 2,
     latitudeDelta: Math.max(0.04, Math.max(...lats) - Math.min(...lats) + pad * 2),
     longitudeDelta: Math.max(0.04, Math.max(...lngs) - Math.min(...lngs) + pad * 2),
+  };
+}
+
+/** Región del modal: solo origen, destino y paradas (no todos los vértices OSRM → evita zoom a “planeta”). */
+function regionForPublishFocus(origin: Point | null, destination: Point | null, waypoints: Point[]) {
+  const pts: Point[] = [];
+  if (origin) pts.push(origin);
+  if (destination) pts.push(destination);
+  waypoints.forEach((w) => pts.push(w));
+  if (pts.length === 0) {
+    return { latitude: -25.3, longitude: -57.6, latitudeDelta: 0.35, longitudeDelta: 0.35 };
+  }
+  const r = regionForPoints(pts);
+  return {
+    ...r,
+    latitudeDelta: Math.min(Math.max(r.latitudeDelta, 0.028), 0.42),
+    longitudeDelta: Math.min(Math.max(r.longitudeDelta, 0.028), 0.42),
   };
 }
 
@@ -132,36 +150,20 @@ export function PublishRideScreen() {
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [tripRequestIdsToLink, setTripRequestIdsToLink] = useState<string[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
-  /** Hasta 3 paradas intermedias (mapa); `label` se muestra en el formulario y en ride_stops. */
+  /** Paradas intermedias en el mapa; `label` se muestra en el formulario y en ride_stops. */
   const [waypoints, setWaypoints] = useState<Point[]>([]);
   const [publishMapMode, setPublishMapMode] = useState<PublishMapMode>('origin');
   const [mapModalVisible, setMapModalVisible] = useState(false);
 
 
-  const mapPoints = useMemo(() => {
-    const pts: Point[] = [...routePolyline];
-    waypoints.forEach((w) => pts.push({ lat: w.lat, lng: w.lng }));
-    if (origin) pts.push(origin);
-    if (destination) pts.push(destination);
-    return pts;
-  }, [routePolyline, origin, destination, waypoints]);
-
-  const mapRegion = useMemo(() => regionForPoints(mapPoints), [mapPoints]);
+  const mapRegion = useMemo(
+    () => regionForPublishFocus(origin, destination, waypoints),
+    [origin, destination, waypoints]
+  );
   const polylineCoords = useMemo(
     () => routePolyline.map((p) => ({ latitude: p.lat, longitude: p.lng })),
     [routePolyline]
   );
-
-  /** Android a veces no refresca la vista previa si solo cambia `region`; forzar remount cuando cambian los puntos. */
-  const mapPreviewKey = useMemo(() => {
-    const w = waypoints.map((p) => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`).join('|');
-    return [
-      origin ? `${origin.lat.toFixed(5)},${origin.lng.toFixed(5)}` : 'o',
-      destination ? `${destination.lat.toFixed(5)},${destination.lng.toFixed(5)}` : 'd',
-      w,
-      polylineCoords.length,
-    ].join('~');
-  }, [origin, destination, waypoints, polylineCoords.length]);
 
   const loadGate = useCallback(async () => {
     if (!session?.id) {
@@ -555,7 +557,7 @@ export function PublishRideScreen() {
       return;
     }
     if (publishMapMode === 'waypoint' && origin && destination) {
-      if (waypoints.length >= 3) return;
+      if (waypoints.length >= MAX_DRIVER_PUBLISH_WAYPOINTS) return;
       const chord: GeoPoint[] = [
         { lat: origin.lat, lng: origin.lng },
         { lat: destination.lat, lng: destination.lng },
@@ -577,7 +579,7 @@ export function PublishRideScreen() {
       setWaypoints((prev) =>
         [...prev, added]
           .sort((a, b) => getPositionAlongPolyline(a, chord) - getPositionAlongPolyline(b, chord))
-          .slice(0, 3)
+          .slice(0, MAX_DRIVER_PUBLISH_WAYPOINTS)
       );
       void reverseGeocodeStructured(lat, lng).then((r) => {
         setWaypoints((wps) =>
@@ -862,7 +864,7 @@ export function PublishRideScreen() {
           disabled={!origin || !destination}
         >
           <Text style={[styles.mapModeText, (!origin || !destination) && styles.mapModeTextDisabled]}>
-            + Parada ({waypoints.length}/3)
+            + Parada ({waypoints.length}/{MAX_DRIVER_PUBLISH_WAYPOINTS})
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.mapModeBtn} onPress={() => openMapPicker('destination')}>
@@ -882,7 +884,6 @@ export function PublishRideScreen() {
         accessibilityLabel="Abrir mapa en pantalla completa"
       >
         <MapView
-          key={mapPreviewKey}
           provider={androidMapProvider}
           style={styles.mapPreview}
           region={mapRegion}
@@ -930,9 +931,8 @@ export function PublishRideScreen() {
         onMapPress={onPublishMapPress}
         originDestinationReady={Boolean(origin && destination)}
         waypointCount={waypoints.length}
-        maxWaypoints={3}
+        maxWaypoints={MAX_DRIVER_PUBLISH_WAYPOINTS}
         onRemoveWaypoint={removeWaypointAt}
-        mapRenderKey={mapPreviewKey}
       />
 
       <Text style={styles.label}>Origen</Text>
@@ -1224,6 +1224,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
     position: 'relative',
+    backgroundColor: '#e8ece9',
   },
   mapPreview: { width: '100%', height: '100%' },
   mapPreviewOverlay: {

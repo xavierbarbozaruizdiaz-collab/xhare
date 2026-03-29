@@ -1,5 +1,6 @@
 /**
- * Pasajero: reservar sobre la ruta publicada (corredor + mapa con OSRM por A/paradas/B conectado a la polyline del conductor; precio vía segment-stats).
+ * Pasajero: reservar sobre la ruta publicada.
+ * Gris: OSRM conductor + subidas/bajadas ya reservadas (una polyline). Verde: solo tramo del pasajero actual (A/B + extras + paradas del conductor en ese tramo).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -20,9 +21,9 @@ import { supabase } from '../backend/supabase';
 import { fetchSegmentStats } from '../backend/routeApi';
 import { reverseGeocodeStructured } from '../backend/geocodeApi';
 import { saveExtraStops } from '../backend/api';
-import { fetchRideForReserve } from '../rides/api';
+import { fetchRideForReserve, fetchRidePublicMapPoints } from '../rides/api';
 import { PickupDropoffMapView, type MapPoint, type ExtraStopPoint, type DriverStopMarker } from '../components/PickupDropoffMapView';
-import { getPositionAlongPolyline, type Point } from '../lib/geo';
+import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
 import { loadRidePolyline } from '../lib/resolveRidePolyline';
 import {
   loadActivePricingSettings,
@@ -35,14 +36,15 @@ import {
 } from '../lib/pricing/segment-fare';
 import { env } from '../core/env';
 import type { MainStackParamList } from '../navigation/types';
+import { buildMasterBookRidePolyline } from '../lib/buildMasterBookRidePolyline';
 import { buildPassengerMergedRoute, type PassengerMergedSegments } from '../lib/passengerMergedRoute';
-import {
-  driverIntermediateStopsBetween,
-  mergeOsrmWaypointsBetween,
-} from '../lib/passengerRouteWaypoints';
+import { driverIntermediateStopsBetween, mergeOsrmWaypointsBetween } from '../lib/passengerRouteWaypoints';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'BookRide'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'BookRide'>;
+
+/** Alineado a RideDetail: no duplicar pins si coinciden con la reserva propia (re-reserva / edición). */
+const EXISTING_BOOKING_DEDUP_M = 35;
 
 const FALLBACK_PRICING: EffectivePricing = {
   minFarePyg: 7140,
@@ -91,12 +93,19 @@ export function BookRideScreen() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [effectivePricing, setEffectivePricing] = useState<EffectivePricing>(FALLBACK_PRICING);
   const [existingBooking, setExistingBooking] = useState(false);
+  /** Ruta publicada del conductor (solo referencia interna + orden para OSRM maestro). */
   const [resolvedRoute, setResolvedRoute] = useState<Point[]>([]);
   const [routeResolving, setRouteResolving] = useState(false);
+  /** Polilínea gris del mapa: conductor + pasajeros ya reservados (OSRM) o igual a `resolvedRoute` si no hay otros. */
+  const [mapDisplayRoute, setMapDisplayRoute] = useState<Point[]>([]);
+  const [masterGreyResolving, setMasterGreyResolving] = useState(false);
   const [mergedPassengerRoute, setMergedPassengerRoute] = useState<PassengerMergedSegments | null>(null);
 
   const rideRef = useRef<Record<string, unknown> | null>(null);
   const driverStopsRef = useRef(driverStops);
+  /** Mismo A/B y misma poly base: permite retener solo si el intento OSRM es para los **mismos** waypoints (no dejar colado un merge sin puntos de otros). */
+  const lastSuccessfulMergeStableKeyRef = useRef<string>('');
+  const lastSuccessfulWpsKeyRef = useRef<string>('');
   rideRef.current = ride;
   driverStopsRef.current = driverStops;
 
@@ -131,6 +140,37 @@ export function BookRideScreen() {
     };
   }, [rideId, polyLen, stopsKey]);
 
+  useEffect(() => {
+    if (resolvedRoute.length < 2) {
+      setMapDisplayRoute([]);
+      setMasterGreyResolving(false);
+      return;
+    }
+    const hasOthers = existingPickups.length + existingDropoffs.length > 0;
+    if (!hasOthers || !env.apiBaseUrl?.trim()) {
+      setMapDisplayRoute(resolvedRoute);
+      setMasterGreyResolving(false);
+      return;
+    }
+    setMapDisplayRoute(resolvedRoute);
+    let cancelled = false;
+    setMasterGreyResolving(true);
+    void buildMasterBookRidePolyline({
+      driverBaseRoute: resolvedRoute,
+      driverStops,
+      existingPickups: existingPickups.map((p) => ({ lat: p.lat, lng: p.lng })),
+      existingDropoffs: existingDropoffs.map((p) => ({ lat: p.lat, lng: p.lng })),
+    }).then((pts) => {
+      if (cancelled) return;
+      setMapDisplayRoute(pts.length >= 2 ? pts : resolvedRoute);
+    }).finally(() => {
+      if (!cancelled) setMasterGreyResolving(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedRoute, stopsKey, existingPickups, existingDropoffs, env.apiBaseUrl]);
+
   const maxDeviationMeters = useMemo(() => {
     const km = ride ? Number((ride as { max_deviation_km?: number }).max_deviation_km ?? 1) : 1;
     return Math.max(200, km * 1000);
@@ -145,21 +185,38 @@ export function BookRideScreen() {
     [extraStops]
   );
 
-  /** OSRM entre A y B: paradas extra del pasajero + paradas intermedias del conductor en ese tramo. */
+  /** OSRM verde / precio: solo extras del pasajero actual + paradas del conductor entre A y B (otros ya van en la gris). */
   const waypointsBetween = useMemo(() => {
-    if (!pickup || !dropoff || resolvedRoute.length < 2) return [];
-    const extras = sortExtrasBetween(pickup, dropoff, extraStops, resolvedRoute);
-    const drv = driverIntermediateStopsBetween(resolvedRoute, pickup, dropoff, driverStops);
-    return mergeOsrmWaypointsBetween(resolvedRoute, pickup, dropoff, extras, drv);
+    if (!pickup || !dropoff || mapDisplayRoute.length < 2) return [];
+    const extras = sortExtrasBetween(pickup, dropoff, extraStops, mapDisplayRoute);
+    const drv = driverIntermediateStopsBetween(mapDisplayRoute, pickup, dropoff, driverStops);
+    return mergeOsrmWaypointsBetween(mapDisplayRoute, pickup, dropoff, extras, drv, []);
   }, [
     pickup?.lat,
     pickup?.lng,
     dropoff?.lat,
     dropoff?.lng,
     extraStopsKey,
-    resolvedRoute,
+    mapDisplayRoute,
     stopsKey,
   ]);
+
+  const mapDisplayRouteSig = useMemo(() => {
+    if (mapDisplayRoute.length < 2) return '';
+    const a = mapDisplayRoute[0];
+    const b = mapDisplayRoute[mapDisplayRoute.length - 1];
+    return `${mapDisplayRoute.length}|${a.lat},${a.lng}|${b.lat},${b.lng}`;
+  }, [mapDisplayRoute]);
+
+  const mergeStableKey = useMemo(() => {
+    if (!pickup || !dropoff || !mapDisplayRouteSig) return '';
+    return `${pickup.lat},${pickup.lng}|${dropoff.lat},${dropoff.lng}|${mapDisplayRouteSig}`;
+  }, [pickup, dropoff, mapDisplayRouteSig]);
+
+  const waypointsBetweenKey = useMemo(
+    () => waypointsBetween.map((p) => `${p.lat},${p.lng}`).join(';'),
+    [waypointsBetween]
+  );
 
   useEffect(() => {
     let c = false;
@@ -212,50 +269,73 @@ export function BookRideScreen() {
         .eq('ride_id', rideId)
         .neq('status', 'cancelled');
       const bks = bksRes.data ?? [];
-      const others = bks.filter((b: { passenger_id: string }) => b.passenger_id !== session.id);
-      setExistingPickups(
-        others
+      const mine = bks.find((b: { passenger_id: string }) => b.passenger_id === session.id);
+      setExistingBooking(!!mine);
+
+      /**
+       * Puntos de otros pasajeros: el SELECT directo a `bookings` solo ve otras filas si el viaje está
+       * `published` (RLS). En `booked` / `en_route` un nuevo reservista no ve nada → usamos RPC público.
+       */
+      const { pickups: pubPu, dropoffs: pubDo } = await fetchRidePublicMapPoints(rideId);
+      const mineExclude: Point[] = [];
+      if (mine) {
+        const m = mine as Record<string, unknown>;
+        const plat = m.pickup_lat != null ? Number(m.pickup_lat) : NaN;
+        const plng = m.pickup_lng != null ? Number(m.pickup_lng) : NaN;
+        const dlat = m.dropoff_lat != null ? Number(m.dropoff_lat) : NaN;
+        const dlng = m.dropoff_lng != null ? Number(m.dropoff_lng) : NaN;
+        if ([plat, plng].every(Number.isFinite)) mineExclude.push({ lat: plat, lng: plng });
+        if ([dlat, dlng].every(Number.isFinite)) mineExclude.push({ lat: dlat, lng: dlng });
+      }
+      const filterDedup = (pts: Point[]) =>
+        mineExclude.length === 0
+          ? pts
+          : pts.filter((p) => !mineExclude.some((e) => distanceMeters(p, e) < EXISTING_BOOKING_DEDUP_M));
+
+      let nextPickups = filterDedup(pubPu).map((p) => ({ lat: p.lat, lng: p.lng, label: null as string | null }));
+      let nextDropoffs = filterDedup(pubDo).map((p) => ({ lat: p.lat, lng: p.lng, label: null as string | null }));
+
+      if (nextPickups.length === 0 && nextDropoffs.length === 0) {
+        const others = bks.filter((b: { passenger_id: string }) => b.passenger_id !== session.id);
+        nextPickups = others
           .filter((b: Record<string, unknown>) => b.pickup_lat != null && b.pickup_lng != null)
           .map((b: Record<string, unknown>) => ({
             lat: Number(b.pickup_lat),
             lng: Number(b.pickup_lng),
             label: (b.pickup_label as string | null) ?? null,
-          }))
-      );
-      setExistingDropoffs(
-        others
+          }));
+        nextDropoffs = others
           .filter((b: Record<string, unknown>) => b.dropoff_lat != null && b.dropoff_lng != null)
           .map((b: Record<string, unknown>) => ({
             lat: Number(b.dropoff_lat),
             lng: Number(b.dropoff_lng),
             label: (b.dropoff_label as string | null) ?? null,
-          }))
-      );
+          }));
+        const { data: trRows } = await supabase
+          .from('trip_requests')
+          .select('origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label')
+          .eq('ride_id', rideId)
+          .eq('status', 'accepted');
+        const trPickups = (trRows ?? [])
+          .filter((tr: Record<string, unknown>) => tr.origin_lat != null && tr.origin_lng != null)
+          .map((tr: Record<string, unknown>) => ({
+            lat: Number(tr.origin_lat),
+            lng: Number(tr.origin_lng),
+            label: (tr.origin_label as string | null) ?? null,
+          }));
+        const trDropoffs = (trRows ?? [])
+          .filter((tr: Record<string, unknown>) => tr.destination_lat != null && tr.destination_lng != null)
+          .map((tr: Record<string, unknown>) => ({
+            lat: Number(tr.destination_lat),
+            lng: Number(tr.destination_lng),
+            label: (tr.destination_label as string | null) ?? null,
+          }));
+        nextPickups = [...nextPickups, ...trPickups];
+        nextDropoffs = [...nextDropoffs, ...trDropoffs];
+      }
 
-      const mine = bks.find((b: { passenger_id: string }) => b.passenger_id === session.id);
-      setExistingBooking(!!mine);
-
-      const { data: trRows } = await supabase
-        .from('trip_requests')
-        .select('origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label')
-        .eq('ride_id', rideId)
-        .eq('status', 'accepted');
-      const trPickups = (trRows ?? [])
-        .filter((tr: Record<string, unknown>) => tr.origin_lat != null && tr.origin_lng != null)
-        .map((tr: Record<string, unknown>) => ({
-          lat: Number(tr.origin_lat),
-          lng: Number(tr.origin_lng),
-          label: (tr.origin_label as string | null) ?? null,
-        }));
-      const trDropoffs = (trRows ?? [])
-        .filter((tr: Record<string, unknown>) => tr.destination_lat != null && tr.destination_lng != null)
-        .map((tr: Record<string, unknown>) => ({
-          lat: Number(tr.destination_lat),
-          lng: Number(tr.destination_lng),
-          label: (tr.destination_label as string | null) ?? null,
-        }));
-      setExistingPickups((prev) => [...prev, ...trPickups]);
-      setExistingDropoffs((prev) => [...prev, ...trDropoffs]);
+      setExistingPickups(nextPickups);
+      setExistingDropoffs(nextDropoffs);
 
       const { data: pes } = await supabase
         .from('passenger_extra_stops')
@@ -324,21 +404,55 @@ export function BookRideScreen() {
   }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, waypointsBetween, usesDriverSeatPrice]);
 
   useEffect(() => {
-    if (!pickup || !dropoff || resolvedRoute.length < 2 || !env.apiBaseUrl?.trim()) {
+    if (!pickup || !dropoff || mapDisplayRoute.length < 2 || !env.apiBaseUrl?.trim()) {
+      lastSuccessfulMergeStableKeyRef.current = '';
+      lastSuccessfulWpsKeyRef.current = '';
       setMergedPassengerRoute(null);
       return;
     }
+    if (!mergeStableKey) {
+      lastSuccessfulMergeStableKeyRef.current = '';
+      lastSuccessfulWpsKeyRef.current = '';
+      setMergedPassengerRoute(null);
+      return;
+    }
+
     let cancelled = false;
-    const handle = setTimeout(() => {
-      void buildPassengerMergedRoute(resolvedRoute, pickup, dropoff, waypointsBetween).then((seg) => {
-        if (!cancelled) setMergedPassengerRoute(seg);
+    const wpsFingerprint = (wps: Point[]) => wps.map((p) => `${p.lat},${p.lng}`).join(';');
+    const tryMerge = (wps: Point[], isMinimalRetry: boolean) => {
+      void buildPassengerMergedRoute(mapDisplayRoute, pickup, dropoff, wps).then((seg) => {
+        if (cancelled) return;
+        const ok = Boolean(seg && seg.mid && seg.mid.length >= 2);
+        const fp = wpsFingerprint(wps);
+        if (ok) {
+          lastSuccessfulMergeStableKeyRef.current = mergeStableKey;
+          lastSuccessfulWpsKeyRef.current = fp;
+          setMergedPassengerRoute(seg);
+          return;
+        }
+        if (
+          lastSuccessfulMergeStableKeyRef.current === mergeStableKey &&
+          lastSuccessfulWpsKeyRef.current === fp
+        ) {
+          setMergedPassengerRoute((prev) => prev);
+          return;
+        }
+        if (!isMinimalRetry && waypointsBetween.length > 0) {
+          tryMerge([], true);
+          return;
+        }
+        setMergedPassengerRoute(null);
       });
+    };
+
+    const handle = setTimeout(() => {
+      tryMerge(waypointsBetween, false);
     }, 400);
     return () => {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, waypointsBetween, resolvedRoute]);
+  }, [mergeStableKey, waypointsBetweenKey, waypointsBetween, pickup, dropoff, mapDisplayRoute]);
 
   const totalPrice = usesDriverSeatPrice
     ? fixedSeatPrice * Math.min(maxSeats, Math.max(1, seats))
@@ -360,7 +474,7 @@ export function BookRideScreen() {
       Alert.alert('Cupos', 'No hay asientos disponibles.');
       return;
     }
-    if (resolvedRoute.length >= 2 && (!pickup || !dropoff)) {
+    if (mapDisplayRoute.length >= 2 && (!pickup || !dropoff)) {
       Alert.alert('Mapa', 'Marcá subida (A) y bajada (B) en la ruta.');
       return;
     }
@@ -461,13 +575,13 @@ export function BookRideScreen() {
   }
 
   if (error && !ride) {
-    return (
+  return (
       <View style={styles.centered}>
         <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.btn} onPress={() => navigation.goBack()}>
-          <Text style={styles.btnText}>Volver</Text>
-        </TouchableOpacity>
-      </View>
+      <TouchableOpacity style={styles.btn} onPress={() => navigation.goBack()}>
+        <Text style={styles.btnText}>Volver</Text>
+      </TouchableOpacity>
+    </View>
     );
   }
 
@@ -509,10 +623,10 @@ export function BookRideScreen() {
         <Text style={styles.muted}>No hay asientos disponibles.</Text>
       ) : (
         <>
-          {routeResolving && resolvedRoute.length < 2 ? (
+          {(routeResolving || masterGreyResolving) && mapDisplayRoute.length < 2 ? (
             <ActivityIndicator style={{ marginVertical: 20 }} size="large" color="#166534" />
           ) : null}
-          {resolvedRoute.length >= 2 ? (
+          {mapDisplayRoute.length >= 2 ? (
             <>
               <Text style={styles.sectionTitle}>Tu tramo en la ruta</Text>
               {!usesDriverSeatPrice && !env.apiBaseUrl?.trim() ? (
@@ -526,7 +640,7 @@ export function BookRideScreen() {
                 </Text>
               ) : null}
               <PickupDropoffMapView
-                baseRoute={resolvedRoute}
+                baseRoute={mapDisplayRoute}
                 resolvedPassengerRoute={mergedPassengerRoute}
                 pickup={pickup}
                 dropoff={dropoff}
@@ -557,7 +671,7 @@ export function BookRideScreen() {
           />
           <Text style={styles.hintSmall}>Disponibles: {maxSeats}</Text>
 
-          {resolvedRoute.length >= 2 && (!pickup || !dropoff) ? (
+          {mapDisplayRoute.length >= 2 && (!pickup || !dropoff) ? (
             <Text style={styles.muted}>Marcá A y B para ver el precio del tramo.</Text>
           ) : !usesDriverSeatPrice && priceLoading ? (
             <Text style={styles.muted}>Calculando precio…</Text>

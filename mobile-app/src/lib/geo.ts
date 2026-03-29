@@ -202,6 +202,22 @@ export function passengerSegmentAlongBaseRoute(
 
 const PROXIMITY_METERS = 2000;
 
+/** Igual criterio que `parseBaseRoutePolyline` en Next: evita NaN en el mapa / OSRM (Android no dibuja la línea). */
+function pointFromStoredPolyEntry(p: unknown): Point | null {
+  if (p && typeof p === 'object' && !Array.isArray(p)) {
+    const o = p as { lat?: unknown; lng?: unknown };
+    const lat = Number(o.lat);
+    const lng = Number(o.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  if (Array.isArray(p) && p.length >= 2) {
+    const lng = Number(p[0]);
+    const lat = Number(p[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  return null;
+}
+
 export function buildPolylineFromRide(ride: {
   base_route_polyline?: Array<{ lat?: number; lng?: number } | [number, number]> | null;
   origin_lat?: number | null;
@@ -212,12 +228,15 @@ export function buildPolylineFromRide(ride: {
 }): Point[] {
   const poly = ride.base_route_polyline;
   if (Array.isArray(poly) && poly.length >= 2) {
-    return poly.map((p: any) => ({ lat: p.lat ?? p[1], lng: p.lng ?? p[0] }));
+    const pts = poly.map(pointFromStoredPolyEntry).filter((x): x is Point => x != null);
+    if (pts.length >= 2) return pts;
   }
   const stops = ride.ride_stops;
   if (Array.isArray(stops) && stops.length >= 2) {
     const sorted = [...stops].sort((a, b) => (a.stop_order ?? 0) - (b.stop_order ?? 0));
-    return sorted.map((s) => ({ lat: s.lat, lng: s.lng }));
+    return sorted
+      .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
+      .map((s) => ({ lat: s.lat, lng: s.lng }));
   }
   const o =
     ride.origin_lat != null && ride.origin_lng != null ? { lat: ride.origin_lat, lng: ride.origin_lng } : null;

@@ -1,6 +1,8 @@
 /**
- * Update ride status (en_route, completed) via Supabase Edge Function.
- * Same contract as web app. Timeout + refresh de sesión en 401 (cold start / token viejo).
+ * Actualiza estado del viaje (en_route, completed) vía API Next.js.
+ * Ahí corre sendPassengersRideEnRoutePush (Expo) con SUPABASE_SERVICE_ROLE_KEY del deploy.
+ *
+ * Fallback: Edge Function ride-update-status (mismo contrato de auth) si no hay EXPO_PUBLIC_API_BASE_URL.
  */
 import { env } from '../core/env';
 import { supabase } from './supabase';
@@ -9,7 +11,25 @@ export type RideStatusUpdate = 'en_route' | 'completed';
 
 const RIDE_STATUS_TIMEOUT_MS = 60_000;
 
-async function postRideStatus(
+async function postNextUpdateStatus(
+  rideId: string,
+  status: RideStatusUpdate,
+  accessToken: string,
+  signal: AbortSignal
+): Promise<Response> {
+  const base = env.apiBaseUrl.replace(/\/$/, '');
+  return fetch(`${base}/api/rides/${encodeURIComponent(rideId)}/update-status`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ status }),
+    signal,
+  });
+}
+
+async function postEdgeRideStatus(
   rideId: string,
   status: RideStatusUpdate,
   accessToken: string,
@@ -27,20 +47,46 @@ async function postRideStatus(
   });
 }
 
+function parseStatusResponse(data: Record<string, unknown>): {
+  ok: boolean;
+  error?: string;
+  details?: string;
+} {
+  if (data.success === true || data.ok === true) return { ok: true };
+  const errRaw = data.error;
+  const errStr =
+    typeof errRaw === 'string'
+      ? errRaw
+      : Array.isArray(errRaw)
+        ? 'validation_error'
+        : 'unknown';
+  const details =
+    typeof data.details === 'string'
+      ? data.details
+      : typeof errRaw === 'string'
+        ? errRaw
+        : undefined;
+  return { ok: false, error: errStr, details };
+}
+
 export async function updateRideStatus(
   rideId: string,
   status: RideStatusUpdate,
   accessToken: string
 ): Promise<{ ok: boolean; error?: string; details?: string }> {
-  if (!env.supabaseUrl?.trim()) {
-    return { ok: false, error: 'config', details: 'Supabase URL no configurada' };
+  const useNext = Boolean(env.apiBaseUrl?.trim());
+  if (!useNext && !env.supabaseUrl?.trim()) {
+    return { ok: false, error: 'config', details: 'API o Supabase URL no configurada' };
   }
 
   const run = async (token: string): Promise<Response> => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), RIDE_STATUS_TIMEOUT_MS);
     try {
-      return await postRideStatus(rideId, status, token, controller.signal);
+      if (useNext) {
+        return await postNextUpdateStatus(rideId, status, token, controller.signal);
+      }
+      return await postEdgeRideStatus(rideId, status, token, controller.signal);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -56,16 +102,17 @@ export async function updateRideStatus(
       }
     }
 
-    const data = await res.json().catch(() => ({}));
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (res.status === 401) return { ok: false, error: 'unauthorized' };
     if (!res.ok) {
+      const parsed = parseStatusResponse(data);
       return {
         ok: false,
-        error: (data as { error?: string })?.error ?? 'unknown',
-        details: (data as { details?: string })?.details,
+        error: parsed.error ?? 'unknown',
+        details: parsed.details,
       };
     }
-    return { ok: (data as { ok?: boolean })?.ok !== false };
+    return parseStatusResponse(data);
   } catch (e) {
     const aborted = e instanceof Error && e.name === 'AbortError';
     return {
