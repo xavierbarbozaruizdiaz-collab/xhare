@@ -28,7 +28,7 @@ export async function sendPassengersRideEnRoutePush(
 
   if (bErr || !bookings?.length) return;
 
-  const userIds = [...new Set(bookings.map((b) => b.passenger_id))];
+  const userIds = Array.from(new Set(bookings.map((b) => b.passenger_id)));
 
   const { data: rows, error: tErr } = await service
     .from('push_tokens')
@@ -37,13 +37,13 @@ export async function sendPassengersRideEnRoutePush(
 
   if (tErr || !rows?.length) return;
 
-  const tokens = [
-    ...new Set(
+  const tokens = Array.from(
+    new Set(
       rows
         .map((r) => r.token)
         .filter((t): t is string => typeof t === 'string' && t.startsWith('ExponentPushToken'))
-    ),
-  ];
+    )
+  );
 
   if (!tokens.length) return;
 
