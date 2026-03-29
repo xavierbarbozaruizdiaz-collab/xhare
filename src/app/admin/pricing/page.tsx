@@ -12,7 +12,8 @@ type PricingRow = {
   round_to: number;
   block_size: number;
   block_multiplier: number;
-  driver_fee_per_completed_ride: number;
+  min_fare_floor_pyg: number;
+  driver_fee_percent_of_collected: number;
   driver_debt_limit_default: number;
   is_active: boolean;
   created_at: string;
@@ -23,13 +24,14 @@ export default function AdminPricingPage() {
   const [saving, setSaving] = useState(false);
   const [active, setActive] = useState<PricingRow | null>(null);
   const [form, setForm] = useState({
-    min_fare_100: 11900,
+    min_fare_100: 10000,
     pyg_per_km_100: 4634,
     discount_percent: 0,
     round_to: 100,
     block_size: 4,
     block_multiplier: 1.5,
-    driver_fee_per_completed_ride: 2000,
+    min_fare_floor_pyg: 10000,
+    driver_fee_percent_of_collected: 10,
     driver_debt_limit_default: 50000,
   });
 
@@ -47,13 +49,14 @@ export default function AdminPricingPage() {
     setActive((data as PricingRow) ?? null);
     if (data) {
       setForm({
-        min_fare_100: (data as PricingRow).min_fare_100 ?? 11900,
+        min_fare_100: (data as PricingRow).min_fare_100 ?? 10000,
         pyg_per_km_100: (data as PricingRow).pyg_per_km_100 ?? 4634,
         discount_percent: (data as PricingRow).discount_percent ?? 0,
         round_to: (data as PricingRow).round_to ?? 100,
         block_size: (data as PricingRow).block_size ?? 4,
         block_multiplier: Number((data as PricingRow).block_multiplier ?? 1.5),
-        driver_fee_per_completed_ride: (data as PricingRow).driver_fee_per_completed_ride ?? 2000,
+        min_fare_floor_pyg: (data as PricingRow).min_fare_floor_pyg ?? 10000,
+        driver_fee_percent_of_collected: (data as PricingRow).driver_fee_percent_of_collected ?? 10,
         driver_debt_limit_default: (data as PricingRow).driver_debt_limit_default ?? 50000,
       });
     }
@@ -74,7 +77,8 @@ export default function AdminPricingPage() {
             round_to: form.round_to,
             block_size: form.block_size,
             block_multiplier: form.block_multiplier,
-            driver_fee_per_completed_ride: form.driver_fee_per_completed_ride,
+            min_fare_floor_pyg: form.min_fare_floor_pyg,
+            driver_fee_percent_of_collected: form.driver_fee_percent_of_collected,
             driver_debt_limit_default: form.driver_debt_limit_default,
           })
           .eq('id', active.id);
@@ -111,7 +115,9 @@ export default function AdminPricingPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Pricing</h1>
       <p className="text-gray-600 mb-6">
-        Valores 100% y descuento para la tarifa efectiva. Si no hay fila activa, la app usa fallback (7140 / 2780 PYG, block 4, 1.5×, round 100).
+        Valores 100% y descuento para la tarifa efectiva. El piso en PYG asegura que la tarifa mínima cobrada (tras descuento y
+        redondeo) no baje de ese monto. El fee al conductor es un porcentaje del total cobrado en reservas no canceladas al
+        completar el viaje. Sin fila activa, la app usa fallback (10.000 / 2780 PYG, block 4, 1.5×, round 100).
       </p>
 
       <form onSubmit={handleSave} className="bg-white rounded-xl border border-gray-200 p-6 max-w-xl space-y-4">
@@ -125,6 +131,7 @@ export default function AdminPricingPage() {
               onChange={(e) => setForm((f) => ({ ...f, min_fare_100: parseInt(e.target.value, 10) || 0 }))}
               className="w-full px-3 py-2 border rounded-lg"
             />
+            <p className="text-xs text-gray-500 mt-1">Tarifa mínima al 100% antes del descuento.</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">PYG/km 100%</label>
@@ -137,16 +144,31 @@ export default function AdminPricingPage() {
             />
           </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Descuento % (0–100)</label>
-          <input
-            type="number"
-            min={0}
-            max={100}
-            value={form.discount_percent}
-            onChange={(e) => setForm((f) => ({ ...f, discount_percent: parseInt(e.target.value, 10) || 0 }))}
-            className="w-full px-3 py-2 border rounded-lg"
-          />
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Descuento % (0–100)</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={form.discount_percent}
+              onChange={(e) => setForm((f) => ({ ...f, discount_percent: parseInt(e.target.value, 10) || 0 }))}
+              className="w-full px-3 py-2 border rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Piso tarifa mínima efectiva (PYG)</label>
+            <input
+              type="number"
+              min={0}
+              value={form.min_fare_floor_pyg}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, min_fare_floor_pyg: parseInt(e.target.value, 10) || 0 }))
+              }
+              className="w-full px-3 py-2 border rounded-lg"
+            />
+            <p className="text-xs text-gray-500 mt-1">Nunca menos que esto (ej. 10.000 Gs).</p>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -183,14 +205,24 @@ export default function AdminPricingPage() {
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Fee por viaje completado (PYG)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Fee conductor (% del cobrado)</label>
             <input
               type="number"
               min={0}
-              value={form.driver_fee_per_completed_ride}
-              onChange={(e) => setForm((f) => ({ ...f, driver_fee_per_completed_ride: parseInt(e.target.value, 10) || 0 }))}
+              max={100}
+              value={form.driver_fee_percent_of_collected}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  driver_fee_percent_of_collected: Math.min(
+                    100,
+                    Math.max(0, parseInt(e.target.value, 10) || 0)
+                  ),
+                }))
+              }
               className="w-full px-3 py-2 border rounded-lg"
             />
+            <p className="text-xs text-gray-500 mt-1">Sobre la suma de precios pagados (reservas no canceladas).</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Límite deuda default (PYG)</label>

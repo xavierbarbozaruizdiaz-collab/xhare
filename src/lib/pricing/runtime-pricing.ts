@@ -13,7 +13,9 @@ export interface PricingSettingsRow {
   round_to: number;
   block_size: number;
   block_multiplier: number;
-  driver_fee_per_completed_ride?: number;
+  /** Piso PYG para tarifa mínima efectiva (tras descuento y redondeo). */
+  min_fare_floor_pyg?: number;
+  driver_fee_percent_of_collected?: number;
   driver_debt_limit_default?: number;
   is_active: boolean;
   created_at: string;
@@ -44,7 +46,9 @@ export async function loadActivePricingSettings(): Promise<PricingSettingsRow | 
   }
   const { data, error } = await supabase
     .from('pricing_settings')
-    .select('id, min_fare_100, pyg_per_km_100, discount_percent, round_to, block_size, block_multiplier, driver_fee_per_completed_ride, driver_debt_limit_default, is_active, created_at')
+    .select(
+      'id, min_fare_100, pyg_per_km_100, discount_percent, round_to, block_size, block_multiplier, min_fare_floor_pyg, driver_fee_percent_of_collected, driver_debt_limit_default, is_active, created_at'
+    )
     .eq('is_active', true)
     .limit(1)
     .maybeSingle();
@@ -65,7 +69,9 @@ export async function loadActivePricingSettings(): Promise<PricingSettingsRow | 
 export function computeEffectivePricing(settings: PricingSettingsRow): EffectivePricing {
   const d = 1 - (settings.discount_percent ?? 0) / 100;
   const roundTo = Math.max(1, settings.round_to ?? 100);
-  const minFare = Math.round((settings.min_fare_100 * d) / roundTo) * roundTo;
+  const computedMin = Math.round((settings.min_fare_100 * d) / roundTo) * roundTo;
+  const floor = Math.max(0, settings.min_fare_floor_pyg ?? 10000);
+  const minFare = Math.max(floor, computedMin);
   const pygPerKm = Math.round((settings.pyg_per_km_100 * d) / roundTo) * roundTo;
   return {
     minFarePyg: minFare,

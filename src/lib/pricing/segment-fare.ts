@@ -6,7 +6,7 @@
 
 import type { EffectivePricing } from './runtime-pricing';
 
-export const MIN_FARE_PYG = 7140; // 60% de 11.900
+export const MIN_FARE_PYG = 10000; // Fallback alineado al piso típico cuando no hay pricing_settings activo
 export const PYG_PER_KM = 2780;   // 60% de (13.900 / 3)
 const DEFAULT_ROUND = 100;
 const DEFAULT_BLOCK_SIZE = 4;

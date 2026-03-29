@@ -3,7 +3,7 @@
  */
 import type { EffectivePricing } from './runtime-pricing';
 
-export const MIN_FARE_PYG = 7140;
+export const MIN_FARE_PYG = 10000;
 export const PYG_PER_KM = 2780;
 
 export function baseFareFromDistanceKmWithPricing(distanceKm: number, pricing: EffectivePricing): number {
