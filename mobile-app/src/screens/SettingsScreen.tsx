@@ -11,6 +11,7 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -20,6 +21,7 @@ import { requestLocationPermission, getLocationPermissionStatus } from '../permi
 import { useEffect } from 'react';
 import type { MainStackParamList } from '../navigation/types';
 import { getAppFlavor } from '../core/flavor';
+import { supabase } from '../backend/supabase';
 
 const NAV_OPTIONS: { value: NavPreference; label: string }[] = [
   { value: 'google_maps', label: 'Google Maps' },
@@ -36,6 +38,9 @@ export function SettingsScreen() {
   const [navPref, setNavPref] = useState<NavPreference>('google_maps');
   const [locationStatus, setLocationStatus] = useState<string>('');
   const [signingOut, setSigningOut] = useState(false);
+  const [loadingProfilePhotos, setLoadingProfilePhotos] = useState(false);
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
+  const [vehiclePhotoUrl, setVehiclePhotoUrl] = useState<string | null>(null);
   const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
   const handleSignOut = async () => {
@@ -55,6 +60,38 @@ export function SettingsScreen() {
     );
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const userId = session?.id;
+    if (!userId || flavor !== 'driver') {
+      setProfileAvatarUrl(null);
+      setVehiclePhotoUrl(null);
+      return;
+    }
+
+    setLoadingProfilePhotos(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('avatar_url, vehicle_photo_url')
+        .eq('id', userId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        setProfileAvatarUrl(null);
+        setVehiclePhotoUrl(null);
+      } else {
+        setProfileAvatarUrl((data?.avatar_url as string | null) ?? null);
+        setVehiclePhotoUrl((data?.vehicle_photo_url as string | null) ?? null);
+      }
+      setLoadingProfilePhotos(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.id, flavor]);
+
   const handleRequestLocation = async () => {
     const granted = await requestLocationPermission();
     const s = await getLocationPermissionStatus();
@@ -66,6 +103,41 @@ export function SettingsScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {session?.email ? (
         <Text style={styles.email}>{session.email}</Text>
+      ) : null}
+
+      {flavor === 'driver' ? (
+        <>
+          <Text style={styles.sectionTitle}>Perfil</Text>
+          {loadingProfilePhotos ? (
+            <View style={styles.profileCard}>
+              <ActivityIndicator size="small" color="#166534" />
+              <Text style={styles.profileHint}>Cargando fotos...</Text>
+            </View>
+          ) : (
+            <View style={styles.profileCard}>
+              <View style={styles.photoBlock}>
+                <Text style={styles.photoLabel}>Foto de perfil</Text>
+                {profileAvatarUrl ? (
+                  <Image source={{ uri: profileAvatarUrl }} style={styles.profilePhoto} />
+                ) : (
+                  <View style={[styles.profilePhoto, styles.photoPlaceholder]}>
+                    <Text style={styles.photoPlaceholderText}>Sin foto</Text>
+                  </View>
+                )}
+              </View>
+              <View style={styles.photoBlock}>
+                <Text style={styles.photoLabel}>Foto del vehículo</Text>
+                {vehiclePhotoUrl ? (
+                  <Image source={{ uri: vehiclePhotoUrl }} style={styles.vehiclePhoto} />
+                ) : (
+                  <View style={[styles.vehiclePhoto, styles.photoPlaceholder]}>
+                    <Text style={styles.photoPlaceholderText}>Sin foto</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
+        </>
       ) : null}
 
       <Text style={styles.sectionTitle}>Navegación externa</Text>
@@ -149,6 +221,39 @@ const styles = StyleSheet.create({
   content: { padding: 24, paddingBottom: 40 },
   email: { fontSize: 14, color: '#666', marginBottom: 24 },
   sectionTitle: { fontSize: 16, fontWeight: '600', color: '#111', marginTop: 16, marginBottom: 8 },
+  profileCard: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: 12,
+    gap: 12,
+    marginBottom: 8,
+  },
+  photoBlock: { gap: 6 },
+  photoLabel: { fontSize: 13, color: '#374151', fontWeight: '600' },
+  profilePhoto: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+  },
+  vehiclePhoto: {
+    width: '100%',
+    height: 140,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+  },
+  photoPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoPlaceholderText: { color: '#6b7280', fontSize: 12 },
+  profileHint: { fontSize: 12, color: '#6b7280' },
   hint: { fontSize: 13, color: '#666', marginBottom: 12 },
   radioRow: {
     flexDirection: 'row',
