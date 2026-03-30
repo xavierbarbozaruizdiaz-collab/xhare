@@ -487,7 +487,7 @@ export async function fetchRideForReserve(rideId: string): Promise<{
       description, estimated_duration_minutes, flexible_departure, started_at, vehicle_info,
       driver_lat, driver_lng, driver_location_updated_at,
       current_stop_index, awaiting_stop_confirmation,
-      driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count),
+      driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, vehicle_photo_url, rating_average, rating_count),
       ride_stops(id, lat, lng, label, stop_order, arrived_at)
     `)
     .eq('id', rideId)
@@ -655,6 +655,23 @@ function buildTripRequestRow(params: {
   return row;
 }
 
+function humanizeTripRequestInsertError(message: string): string {
+  const m = String(message ?? '').toLowerCase();
+  if (
+    (m.includes('user_id') && (m.includes('foreign key') || m.includes('fkey'))) ||
+    m.includes('trip_requests_user_id_fkey')
+  ) {
+    return 'Volvé a iniciar sesión e intentá de nuevo.';
+  }
+  if (m.includes('does not exist') && m.includes('column')) {
+    return 'Error del servidor. Intentá más tarde.';
+  }
+  if (m.includes('violates check constraint')) {
+    return 'Revisá fecha, hora y precio.';
+  }
+  return 'No se pudo guardar.';
+}
+
 /** Save trip request (passenger): when no rides match, save origin/destination/date for drivers to see. */
 export async function saveTripRequest(params: {
   accessToken: string;
@@ -685,6 +702,15 @@ export async function saveTripRequest(params: {
   const token = params.accessToken?.trim();
 
   if (base && token) {
+    let bearer = token;
+    try {
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      const next = refreshed.session?.access_token?.trim();
+      if (next) bearer = next;
+    } catch {
+      // usar token recibido del caller
+    }
+
     const raw = { ...row };
     delete raw.user_id;
     const apiBody: Record<string, unknown> = {};
@@ -704,7 +730,7 @@ export async function saveTripRequest(params: {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${bearer}`,
         },
         body: JSON.stringify(apiBody),
         signal: controller.signal,
@@ -720,42 +746,46 @@ export async function saveTripRequest(params: {
         }
       }
       if (res.ok) return { ok: true };
-      if (res.status === 401) {
-        return { ok: false, error: 'Sesión expirada. Volvé a iniciar sesión.' };
+      // 401/404: el JWT suele no coincidir con el proyecto del Next o la ruta no existe; el cliente Supabase puede guardar igual.
+      if (res.status !== 401 && res.status !== 404) {
+        const brief =
+          res.status === 400 && typeof data.error === 'string' && data.error.length <= 72
+            ? data.error
+            : 'No se pudo guardar.';
+        return { ok: false, error: brief };
       }
-      if (res.status !== 404) {
-        return { ok: false, error: data.error ?? 'No se pudo guardar la solicitud.' };
-      }
-    } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') {
-        return {
-          ok: false,
-          error: 'Tardó demasiado al guardar. Revisá tu conexión e intentá de nuevo.',
-        };
-      }
+    } catch {
+      // Red lenta u otro fallo de fetch: intentar insert directo abajo.
     } finally {
       clearTimeout(t);
     }
   }
 
-  const insertBuilder = supabase.from('trip_requests').insert(row);
-  const { error } = await raceWithTimeout(
-    insertBuilder,
-    SAVE_TRIP_REQUEST_INSERT_TIMEOUT_MS,
-    () =>
-      ({
-        data: null,
-        error: { message: 'SUPABASE_INSERT_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
-      }) as Awaited<typeof insertBuilder>
-  );
-  if (error?.message === 'SUPABASE_INSERT_TIMEOUT') {
+  try {
+    const insertBuilder = supabase.from('trip_requests').insert(row);
+    const { error } = await raceWithTimeout(
+      insertBuilder,
+      SAVE_TRIP_REQUEST_INSERT_TIMEOUT_MS,
+      () =>
+        ({
+          data: null,
+          error: { message: 'SUPABASE_INSERT_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+        }) as Awaited<typeof insertBuilder>
+    );
+    if (error?.message === 'SUPABASE_INSERT_TIMEOUT') {
+      return { ok: false, error: 'Sin respuesta. Reintentá.' };
+    }
+    if (error) return { ok: false, error: humanizeTripRequestInsertError(error.message) };
+    return { ok: true };
+  } catch (e) {
     return {
       ok: false,
-      error: 'Tardó demasiado al guardar. Revisá tu conexión e intentá de nuevo.',
+      error:
+        e instanceof Error
+          ? humanizeTripRequestInsertError(e.message)
+          : 'No se pudo guardar la solicitud. Revisá tu conexión.',
     };
   }
-  if (error) return { ok: false, error: error.message };
-  return { ok: true };
 }
 
 const OFFER_QUERY_TIMEOUT_MS = 20_000;
@@ -887,7 +917,7 @@ export async function fetchMyBookings(passengerId: string) {
       id, ride_id, seats_count, price_paid, status, pickup_label, dropoff_label, created_at,
       ride:rides(
         id, status, origin_label, destination_label, departure_time, price_per_seat,
-        driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, rating_average, rating_count)
+        driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, vehicle_photo_url, rating_average, rating_count)
       )
     `
     )

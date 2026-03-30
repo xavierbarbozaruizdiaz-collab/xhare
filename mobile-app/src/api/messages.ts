@@ -54,3 +54,37 @@ export async function markConversationRead(conversationId: string, userId: strin
     .eq('conversation_id', conversationId)
     .eq('user_id', userId);
 }
+
+export async function ensureRideContactConversation(rideId: string): Promise<{
+  conversationId: string | null;
+  errorCode?: string;
+  errorMessage?: string;
+}> {
+  const { data, error } = await supabase.rpc('get_or_create_ride_contact_conversation', {
+    p_ride_id: rideId,
+  });
+  if (error) {
+    return {
+      conversationId: null,
+      errorCode: 'rpc_error',
+      errorMessage: error.message || 'No se pudo preparar el contacto.',
+    };
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  const conversationId =
+    row && typeof row === 'object' && row.conversation_id
+      ? String((row as { conversation_id: string }).conversation_id)
+      : null;
+  if (conversationId) return { conversationId };
+  return {
+    conversationId: null,
+    errorCode:
+      row && typeof row === 'object' && (row as { error_code?: string }).error_code
+        ? String((row as { error_code: string }).error_code)
+        : 'unknown',
+    errorMessage:
+      row && typeof row === 'object' && (row as { error_message?: string }).error_message
+        ? String((row as { error_message: string }).error_message)
+        : 'No se pudo abrir el chat con el conductor.',
+  };
+}

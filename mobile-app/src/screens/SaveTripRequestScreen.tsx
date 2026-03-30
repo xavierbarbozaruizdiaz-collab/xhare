@@ -208,19 +208,29 @@ export function SaveTripRequestScreen() {
     };
   }, [pricingKind, originLat, originLng, destinationLat, destinationLng, seats]);
 
+  const hasValidCoords =
+    originLat != null &&
+    originLng != null &&
+    destinationLat != null &&
+    destinationLng != null &&
+    Number.isFinite(originLat) &&
+    Number.isFinite(originLng) &&
+    Number.isFinite(destinationLat) &&
+    Number.isFinite(destinationLng);
+
   const submit = useCallback(async () => {
     if (!session?.id || !session.access_token) {
-      Alert.alert('Sesión', 'Iniciá sesión para guardar la solicitud.');
+      Alert.alert('Sesión', 'Iniciá sesión.');
       return;
     }
-    if (originLat == null || originLng == null || destinationLat == null || destinationLng == null || !requestedDate.trim()) {
-      Alert.alert('Faltan datos', 'Completá origen, destino y fecha (elegí direcciones de la lista si faltan coordenadas).');
+    if (!hasValidCoords || !requestedDate.trim()) {
+      Alert.alert('Datos', 'Elegí origen y destino de la lista.');
       return;
     }
     if (pricingKind === 'long_distance') {
       const n = parseInt(desiredPriceGs.replace(/\D/g, ''), 10);
       if (!Number.isFinite(n) || n <= 0) {
-        Alert.alert('Precio', 'Indicá cuánto querés pagar por asiento (en guaraníes).');
+        Alert.alert('Precio', 'Indicá precio por asiento.');
         return;
       }
     }
@@ -272,18 +282,19 @@ export function SaveTripRequestScreen() {
       });
 
       if (!res.ok) {
-        Alert.alert('Error', res.error ?? 'No se pudo guardar la solicitud.');
+        Alert.alert('Error', res.error ?? 'No se pudo guardar.');
         return;
       }
-      Alert.alert('Listo', 'Tu solicitud quedó guardada. Los conductores pueden verla y publicar un viaje.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      Alert.alert('Listo', 'Solicitud guardada.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Reintentá.');
     } finally {
       setSubmitting(false);
     }
   }, [
     session?.id,
     session?.access_token,
+    hasValidCoords,
     originLat,
     originLng,
     destinationLat,
@@ -489,7 +500,7 @@ export function SaveTripRequestScreen() {
       <TouchableOpacity
         style={[styles.submitBtn, submitting && styles.submitBtnDisabled]}
         onPress={() => void submit()}
-        disabled={submitting || !originLat || !destinationLat || !requestedDate}
+        disabled={submitting || !hasValidCoords || !requestedDate.trim()}
       >
         {submitting ? (
           <ActivityIndicator color="#fff" />

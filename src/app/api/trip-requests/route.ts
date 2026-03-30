@@ -50,7 +50,19 @@ export async function POST(request: NextRequest) {
     const raw = await request.json();
     const parsed = insertBodySchema.safeParse(raw);
     if (!parsed.success) {
-      return NextResponse.json({ error: 'Datos inválidos', details: parsed.error.flatten() }, { status: 400 });
+      const flat = parsed.error.flatten();
+      let hint = '';
+      for (const [key, msgs] of Object.entries(flat.fieldErrors)) {
+        if (msgs && msgs[0]) {
+          hint = `${key}: ${msgs[0]}`;
+          break;
+        }
+      }
+      if (!hint && flat.formErrors[0]) hint = flat.formErrors[0];
+      return NextResponse.json(
+        { error: hint || 'Datos inválidos', details: flat },
+        { status: 400 }
+      );
     }
 
     const p = parsed.data;

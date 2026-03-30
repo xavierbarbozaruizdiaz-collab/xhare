@@ -12,6 +12,7 @@ import {
   Alert,
   Modal,
   Platform,
+  Image,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -26,6 +27,7 @@ import {
   fetchRidePublicMapPoints,
   type RideStopForReserve,
 } from '../rides/api';
+import { ensureRideContactConversation } from '../api/messages';
 import type { MainStackParamList } from '../navigation/types';
 import { rideStatusConfig, formatRideDate, formatRideTime } from '../ui/rideStatusConfig';
 import { openNavigation, openNavigationErrorMessage } from '../external-navigation';
@@ -341,6 +343,7 @@ export function RideDetailScreen() {
   const [rideStops, setRideStops] = useState<RideStopForReserve[]>([]);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [cancellingBooking, setCancellingBooking] = useState(false);
+  const [contactingDriver, setContactingDriver] = useState(false);
   const [passengerBooking, setPassengerBooking] = useState<PassengerBookingSummary | null>(null);
   const [passengerExtrasGeo, setPassengerExtrasGeo] = useState<Point[]>([]);
   const [driverBookingPins, setDriverBookingPins] = useState<Array<{ pickup: Point; dropoff: Point }>>([]);
@@ -839,6 +842,52 @@ export function RideDetailScreen() {
     return externalNavTargetForStop(currentNav, driverRideBookings);
   }, [ride, rideStops, mapVisitOrderRows, mapVisitProgressList, driverRideBookings]);
 
+  /** Antes de cualquier return: useCallback no puede ir después de branches (Rules of Hooks). */
+  const canContactDriver = useMemo(() => {
+    if (!ride) return false;
+    const isOwnPassengerView = Boolean(session?.id && ride.driver_id === session.id);
+    if (isOwnPassengerView || !passengerBooking) return false;
+    const st = String(ride.status ?? '');
+    if (st !== 'published' && st !== 'booked' && st !== 'en_route') return false;
+    if (st === 'en_route') return true;
+    const depIso = ride.departure_time ? String(ride.departure_time) : '';
+    const departureAt = depIso ? new Date(depIso) : null;
+    const nowMs = Date.now();
+    const contactWindowStartMs = departureAt ? departureAt.getTime() - 20 * 60 * 1000 : null;
+    return contactWindowStartMs != null && nowMs >= contactWindowStartMs;
+  }, [ride, passengerBooking, session?.id]);
+
+  const handleContactDriver = useCallback(async () => {
+    if (!canContactDriver || contactingDriver) return;
+    setContactingDriver(true);
+    try {
+      const r = await ensureRideContactConversation(rideId);
+      if (r.conversationId) {
+        navigation.navigate('Chat', { conversationId: r.conversationId });
+        return;
+      }
+      Alert.alert('Contacto no disponible', r.errorMessage ?? 'No se pudo abrir el chat con el conductor.');
+    } finally {
+      setContactingDriver(false);
+    }
+  }, [canContactDriver, contactingDriver, rideId, navigation]);
+
+  /** Botón bajo perfil del conductor: visible con reserva válida; atenuado hasta la ventana de contacto. */
+  const passengerDriverContactInCard = useMemo(() => {
+    if (!ride) return { show: false as const };
+    const isOwnPassengerView = Boolean(session?.id && ride.driver_id === session.id);
+    if (isOwnPassengerView || !passengerBooking) return { show: false as const };
+    const bst = String(passengerBooking.status ?? '');
+    if (bst !== 'pending' && bst !== 'confirmed') return { show: false as const };
+    const st = String(ride.status ?? '');
+    if (st !== 'published' && st !== 'booked' && st !== 'en_route') return { show: false as const };
+    return {
+      show: true as const,
+      enabled: canContactDriver,
+      hintDisabled: 'Se habilita 20 minutos antes de iniciar el viaje.',
+    };
+  }, [ride, passengerBooking, session?.id, canContactDriver]);
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -858,7 +907,12 @@ export function RideDetailScreen() {
     );
   }
 
-  const driver = ride.driver as { full_name?: string; rating_average?: number } | null;
+  const driver = ride.driver as {
+    full_name?: string;
+    rating_average?: number;
+    avatar_url?: string | null;
+    vehicle_photo_url?: string | null;
+  } | null;
   const isOwn = Boolean(session?.id && ride.driver_id === session.id);
   const available = Math.max(0, Number(ride.available_seats ?? 0));
   const totalSeats = Math.max(0, Number(ride.total_seats ?? 0));
@@ -1359,6 +1413,13 @@ export function RideDetailScreen() {
               <Text style={styles.bodyLine}>{vehicleLine}</Text>
             </>
           ) : null}
+          {driver?.vehicle_photo_url ? (
+            <Image
+              source={{ uri: String(driver.vehicle_photo_url) }}
+              style={styles.vehiclePhoto}
+              resizeMode="cover"
+            />
+          ) : null}
           {description ? (
             <>
               <Text style={styles.sectionLabel}>Descripción</Text>
@@ -1381,10 +1442,47 @@ export function RideDetailScreen() {
           {driver ? (
             <View style={styles.card}>
               <Text style={styles.cardLabel}>Conductor</Text>
+              {driver.avatar_url ? (
+                <Image source={{ uri: String(driver.avatar_url) }} style={styles.driverAvatar} resizeMode="cover" />
+              ) : null}
               <Text style={styles.cardValue}>{driver.full_name ?? '—'}</Text>
               {driver.rating_average != null && (
                 <Text style={styles.meta}>★ {Number(driver.rating_average).toFixed(1)}</Text>
               )}
+              {passengerDriverContactInCard.show ? (
+                <View style={styles.driverCardContactWrap}>
+                  <TouchableOpacity
+                    style={[
+                      styles.contactBtnInCard,
+                      (!passengerDriverContactInCard.enabled || contactingDriver) && styles.contactBtnInCardDisabled,
+                    ]}
+                    onPress={() => void handleContactDriver()}
+                    disabled={!passengerDriverContactInCard.enabled || contactingDriver}
+                    accessibilityRole="button"
+                    accessibilityState={{
+                      disabled: !passengerDriverContactInCard.enabled || contactingDriver,
+                    }}
+                    accessibilityLabel={
+                      passengerDriverContactInCard.enabled
+                        ? 'Contactar conductor'
+                        : 'Contactar conductor, disponible 20 minutos antes del viaje'
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.contactBtnInCardText,
+                        (!passengerDriverContactInCard.enabled || contactingDriver) &&
+                          styles.contactBtnInCardTextDisabled,
+                      ]}
+                    >
+                      {contactingDriver ? 'Abriendo chat…' : 'Mensaje al conductor'}
+                    </Text>
+                  </TouchableOpacity>
+                  {!passengerDriverContactInCard.enabled ? (
+                    <Text style={styles.contactBtnHint}>{passengerDriverContactInCard.hintDisabled}</Text>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           ) : null}
         </>
@@ -1793,6 +1891,24 @@ const styles = StyleSheet.create({
   modalSub: { marginTop: 8, fontSize: 13, color: '#6b7280', textAlign: 'center' },
   meta: { fontSize: 14, color: '#6b7280', marginTop: 6 },
   card: { backgroundColor: '#f9fafb', padding: 14, borderRadius: 10, marginTop: 16 },
+  driverAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    marginBottom: 10,
+    backgroundColor: '#fff',
+  },
+  vehiclePhoto: {
+    width: '100%',
+    height: 170,
+    borderRadius: 10,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+  },
   bookingCard: {
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
@@ -1812,6 +1928,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelBookingBtnText: { color: '#b91c1c', fontWeight: '700', fontSize: 15 },
+  driverCardContactWrap: { marginTop: 14, width: '100%' },
+  contactBtnInCard: {
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#2563eb',
+    alignItems: 'center',
+  },
+  contactBtnInCardDisabled: {
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  contactBtnInCardText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  contactBtnInCardTextDisabled: { color: '#9ca3af', fontWeight: '600' },
+  contactBtnHint: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#9ca3af',
+    lineHeight: 17,
+    textAlign: 'center',
+  },
   cardLabel: { fontSize: 12, color: '#6b7280', textTransform: 'uppercase' },
   cardValue: { fontSize: 17, fontWeight: '600', marginTop: 4 },
   actions: { marginTop: 24, gap: 0 },
