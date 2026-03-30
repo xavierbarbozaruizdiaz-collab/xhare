@@ -11,6 +11,7 @@ type Profile = {
   address: string | null;
   city: string | null;
   avatar_url: string | null;
+  vehicle_photo_url: string | null;
   role: string;
   created_at?: string;
 };
@@ -29,6 +30,7 @@ export default function AdminDriversPage() {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [uploadingAvatarFor, setUploadingAvatarFor] = useState<string | null>(null);
+  const [uploadingVehiclePhotoFor, setUploadingVehiclePhotoFor] = useState<string | null>(null);
 
   useEffect(() => {
     loadPending();
@@ -38,7 +40,7 @@ export default function AdminDriversPage() {
   async function loadApproved() {
     const { data: drivers } = await supabase
       .from('profiles')
-      .select('id, full_name, phone, address, city, avatar_url, role, created_at')
+      .select('id, full_name, phone, address, city, avatar_url, vehicle_photo_url, role, created_at')
       .eq('role', 'driver')
       .order('full_name');
     const { data: accounts } = await supabase
@@ -53,16 +55,16 @@ export default function AdminDriversPage() {
     setLoading(true);
     let { data, error } = await supabase
       .from('profiles')
-      .select('id, full_name, phone, address, city, avatar_url, role, created_at')
+      .select('id, full_name, phone, address, city, avatar_url, vehicle_photo_url, role, created_at')
       .eq('role', 'driver_pending')
       .order('created_at', { ascending: false });
     if (error?.code === '42703' || error?.message?.includes('column')) {
       const res = await supabase
         .from('profiles')
-        .select('id, full_name, phone, avatar_url, role, created_at')
+        .select('id, full_name, phone, avatar_url, vehicle_photo_url, role, created_at')
         .eq('role', 'driver_pending')
         .order('created_at', { ascending: false });
-      data = (res.data ?? []).map((r) => ({ ...r, address: null, city: null, avatar_url: null }));
+      data = (res.data ?? []).map((r) => ({ ...r, address: null, city: null, avatar_url: null, vehicle_photo_url: null }));
     }
     setPending(data ?? []);
     setLoading(false);
@@ -105,9 +107,9 @@ export default function AdminDriversPage() {
     return 'jpg';
   }
 
-  function pathFromPublicAvatarUrl(url: string | null): string | null {
+  function pathFromPublicUrl(url: string | null, bucket: string): string | null {
     if (!url) return null;
-    const marker = '/storage/v1/object/public/driver-avatars/';
+    const marker = `/storage/v1/object/public/${bucket}/`;
     const idx = url.indexOf(marker);
     if (idx < 0) return null;
     const tail = url.slice(idx + marker.length);
@@ -129,7 +131,7 @@ export default function AdminDriversPage() {
     try {
       const ext = extFromFile(file);
       const objectPath = `drivers/${driver.id}/avatar-${Date.now()}.${ext}`;
-      const oldPath = pathFromPublicAvatarUrl(driver.avatar_url);
+      const oldPath = pathFromPublicUrl(driver.avatar_url, 'driver-avatars');
 
       const { error: upErr } = await supabase.storage.from('driver-avatars').upload(objectPath, file, {
         contentType: file.type,
@@ -159,7 +161,7 @@ export default function AdminDriversPage() {
   async function removeAvatar(driver: Profile) {
     setUploadingAvatarFor(driver.id);
     try {
-      const oldPath = pathFromPublicAvatarUrl(driver.avatar_url);
+      const oldPath = pathFromPublicUrl(driver.avatar_url, 'driver-avatars');
       const { error: profileErr } = await supabase.from('profiles').update({ avatar_url: null }).eq('id', driver.id);
       if (profileErr) throw profileErr;
       if (oldPath) {
@@ -170,6 +172,65 @@ export default function AdminDriversPage() {
       alert(err?.message ?? 'No se pudo quitar la foto.');
     } finally {
       setUploadingAvatarFor(null);
+    }
+  }
+
+  async function uploadVehiclePhoto(driver: Profile, file: File) {
+    const isImage = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.type === 'image/png' || file.type === 'image/webp';
+    if (!isImage) {
+      alert('Formato no permitido. Usá JPG, PNG o WEBP.');
+      return;
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      alert('La imagen supera 3MB.');
+      return;
+    }
+
+    setUploadingVehiclePhotoFor(driver.id);
+    try {
+      const ext = extFromFile(file);
+      const objectPath = `drivers/${driver.id}/vehicle-${Date.now()}.${ext}`;
+      const oldPath = pathFromPublicUrl(driver.vehicle_photo_url, 'driver-vehicles');
+
+      const { error: upErr } = await supabase.storage.from('driver-vehicles').upload(objectPath, file, {
+        contentType: file.type,
+        cacheControl: '3600',
+        upsert: true,
+      });
+      if (upErr) throw upErr;
+
+      const { data } = supabase.storage.from('driver-vehicles').getPublicUrl(objectPath);
+      const newUrl = data.publicUrl;
+
+      const { error: profileErr } = await supabase.from('profiles').update({ vehicle_photo_url: newUrl }).eq('id', driver.id);
+      if (profileErr) throw profileErr;
+
+      if (oldPath && oldPath !== objectPath) {
+        await supabase.storage.from('driver-vehicles').remove([oldPath]);
+      }
+
+      await loadApproved();
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudo subir la foto del vehículo.');
+    } finally {
+      setUploadingVehiclePhotoFor(null);
+    }
+  }
+
+  async function removeVehiclePhoto(driver: Profile) {
+    setUploadingVehiclePhotoFor(driver.id);
+    try {
+      const oldPath = pathFromPublicUrl(driver.vehicle_photo_url, 'driver-vehicles');
+      const { error: profileErr } = await supabase.from('profiles').update({ vehicle_photo_url: null }).eq('id', driver.id);
+      if (profileErr) throw profileErr;
+      if (oldPath) {
+        await supabase.storage.from('driver-vehicles').remove([oldPath]);
+      }
+      await loadApproved();
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudo quitar la foto del vehículo.');
+    } finally {
+      setUploadingVehiclePhotoFor(null);
     }
   }
 
@@ -292,12 +353,12 @@ export default function AdminDriversPage() {
                         </button>
                       )}
                       <label className="text-blue-600 hover:underline text-sm font-medium cursor-pointer">
-                        {uploadingAvatarFor === d.id ? 'Subiendo...' : 'Subir foto'}
+                        {uploadingAvatarFor === d.id ? 'Subiendo...' : 'Subir foto perfil'}
                         <input
                           type="file"
                           accept="image/png,image/jpeg,image/webp"
                           className="hidden"
-                          disabled={uploadingAvatarFor !== null}
+                          disabled={uploadingAvatarFor !== null || uploadingVehiclePhotoFor !== null}
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             e.currentTarget.value = '';
@@ -314,6 +375,40 @@ export default function AdminDriversPage() {
                         >
                           Quitar foto
                         </button>
+                      ) : null}
+                      <label className="text-indigo-600 hover:underline text-sm font-medium cursor-pointer">
+                        {uploadingVehiclePhotoFor === d.id ? 'Subiendo...' : 'Subir foto vehículo'}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          className="hidden"
+                          disabled={uploadingAvatarFor !== null || uploadingVehiclePhotoFor !== null}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.currentTarget.value = '';
+                            if (file) uploadVehiclePhoto(d, file);
+                          }}
+                        />
+                      </label>
+                      {d.vehicle_photo_url ? (
+                        <>
+                          <a
+                            href={d.vehicle_photo_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-gray-600 hover:underline text-sm font-medium"
+                          >
+                            Ver foto vehículo
+                          </a>
+                          <button
+                            type="button"
+                            disabled={uploadingAvatarFor !== null || uploadingVehiclePhotoFor !== null}
+                            onClick={() => removeVehiclePhoto(d)}
+                            className="text-red-700 hover:underline text-sm font-medium disabled:opacity-50"
+                          >
+                            Quitar foto vehículo
+                          </button>
+                        </>
                       ) : null}
                     </div>
                   </td>
