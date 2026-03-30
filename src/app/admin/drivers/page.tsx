@@ -10,6 +10,7 @@ type Profile = {
   phone: string | null;
   address: string | null;
   city: string | null;
+  avatar_url: string | null;
   role: string;
   created_at?: string;
 };
@@ -27,6 +28,7 @@ export default function AdminDriversPage() {
   const [approved, setApproved] = useState<Array<Profile & { account?: DriverAccount | null }>>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
+  const [uploadingAvatarFor, setUploadingAvatarFor] = useState<string | null>(null);
 
   useEffect(() => {
     loadPending();
@@ -36,7 +38,7 @@ export default function AdminDriversPage() {
   async function loadApproved() {
     const { data: drivers } = await supabase
       .from('profiles')
-      .select('id, full_name, phone, address, city, role, created_at')
+      .select('id, full_name, phone, address, city, avatar_url, role, created_at')
       .eq('role', 'driver')
       .order('full_name');
     const { data: accounts } = await supabase
@@ -51,16 +53,16 @@ export default function AdminDriversPage() {
     setLoading(true);
     let { data, error } = await supabase
       .from('profiles')
-      .select('id, full_name, phone, address, city, role, created_at')
+      .select('id, full_name, phone, address, city, avatar_url, role, created_at')
       .eq('role', 'driver_pending')
       .order('created_at', { ascending: false });
     if (error?.code === '42703' || error?.message?.includes('column')) {
       const res = await supabase
         .from('profiles')
-        .select('id, full_name, phone, role, created_at')
+        .select('id, full_name, phone, avatar_url, role, created_at')
         .eq('role', 'driver_pending')
         .order('created_at', { ascending: false });
-      data = (res.data ?? []).map((r) => ({ ...r, address: null, city: null }));
+      data = (res.data ?? []).map((r) => ({ ...r, address: null, city: null, avatar_url: null }));
     }
     setPending(data ?? []);
     setLoading(false);
@@ -95,6 +97,80 @@ export default function AdminDriversPage() {
     }
     setActing(null);
     loadApproved();
+  }
+
+  function extFromFile(file: File): string {
+    if (file.type === 'image/png') return 'png';
+    if (file.type === 'image/webp') return 'webp';
+    return 'jpg';
+  }
+
+  function pathFromPublicAvatarUrl(url: string | null): string | null {
+    if (!url) return null;
+    const marker = '/storage/v1/object/public/driver-avatars/';
+    const idx = url.indexOf(marker);
+    if (idx < 0) return null;
+    const tail = url.slice(idx + marker.length);
+    return tail ? tail.split('?')[0] : null;
+  }
+
+  async function uploadAvatar(driver: Profile, file: File) {
+    const isImage = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.type === 'image/png' || file.type === 'image/webp';
+    if (!isImage) {
+      alert('Formato no permitido. Usá JPG, PNG o WEBP.');
+      return;
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      alert('La imagen supera 3MB.');
+      return;
+    }
+
+    setUploadingAvatarFor(driver.id);
+    try {
+      const ext = extFromFile(file);
+      const objectPath = `drivers/${driver.id}/avatar-${Date.now()}.${ext}`;
+      const oldPath = pathFromPublicAvatarUrl(driver.avatar_url);
+
+      const { error: upErr } = await supabase.storage.from('driver-avatars').upload(objectPath, file, {
+        contentType: file.type,
+        cacheControl: '3600',
+        upsert: true,
+      });
+      if (upErr) throw upErr;
+
+      const { data } = supabase.storage.from('driver-avatars').getPublicUrl(objectPath);
+      const newUrl = data.publicUrl;
+
+      const { error: profileErr } = await supabase.from('profiles').update({ avatar_url: newUrl }).eq('id', driver.id);
+      if (profileErr) throw profileErr;
+
+      if (oldPath && oldPath !== objectPath) {
+        await supabase.storage.from('driver-avatars').remove([oldPath]);
+      }
+
+      await loadApproved();
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudo subir la foto.');
+    } finally {
+      setUploadingAvatarFor(null);
+    }
+  }
+
+  async function removeAvatar(driver: Profile) {
+    setUploadingAvatarFor(driver.id);
+    try {
+      const oldPath = pathFromPublicAvatarUrl(driver.avatar_url);
+      const { error: profileErr } = await supabase.from('profiles').update({ avatar_url: null }).eq('id', driver.id);
+      if (profileErr) throw profileErr;
+      if (oldPath) {
+        await supabase.storage.from('driver-avatars').remove([oldPath]);
+      }
+      await loadApproved();
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudo quitar la foto.');
+    } finally {
+      setUploadingAvatarFor(null);
+    }
   }
 
   return (
@@ -175,7 +251,18 @@ export default function AdminDriversPage() {
             ) : (
               approved.map((d) => (
                 <tr key={d.id} className="border-b border-gray-100">
-                  <td className="p-3">{d.full_name || d.id.slice(0, 8)}</td>
+                  <td className="p-3">
+                    <div className="flex items-center gap-3">
+                      {d.avatar_url ? (
+                        <img src={d.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover border border-gray-200" />
+                      ) : (
+                        <div className="w-9 h-9 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center text-xs text-gray-500">
+                          {(d.full_name || '?').charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <span>{d.full_name || d.id.slice(0, 8)}</span>
+                    </div>
+                  </td>
                   <td className="p-3 text-right">{(d.account?.debt_pyg ?? 0).toLocaleString('es-PY')}</td>
                   <td className="p-3 text-right">{(d.account?.debt_limit_pyg ?? 50000).toLocaleString('es-PY')}</td>
                   <td className="p-3">
@@ -184,25 +271,51 @@ export default function AdminDriversPage() {
                     </span>
                   </td>
                   <td className="p-3">
-                    {d.account?.account_status === 'suspended' ? (
-                      <button
-                        type="button"
-                        disabled={acting !== null}
-                        onClick={() => setAccountStatus(d.id, 'active')}
-                        className="text-green-600 hover:underline text-sm font-medium disabled:opacity-50"
-                      >
-                        {acting === d.id ? '...' : 'Reactivar'}
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={acting !== null}
-                        onClick={() => setAccountStatus(d.id, 'suspended')}
-                        className="text-amber-600 hover:underline text-sm font-medium disabled:opacity-50"
-                      >
-                        {acting === d.id ? '...' : 'Suspender'}
-                      </button>
-                    )}
+                    <div className="flex flex-wrap items-center gap-3">
+                      {d.account?.account_status === 'suspended' ? (
+                        <button
+                          type="button"
+                          disabled={acting !== null}
+                          onClick={() => setAccountStatus(d.id, 'active')}
+                          className="text-green-600 hover:underline text-sm font-medium disabled:opacity-50"
+                        >
+                          {acting === d.id ? '...' : 'Reactivar'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={acting !== null}
+                          onClick={() => setAccountStatus(d.id, 'suspended')}
+                          className="text-amber-600 hover:underline text-sm font-medium disabled:opacity-50"
+                        >
+                          {acting === d.id ? '...' : 'Suspender'}
+                        </button>
+                      )}
+                      <label className="text-blue-600 hover:underline text-sm font-medium cursor-pointer">
+                        {uploadingAvatarFor === d.id ? 'Subiendo...' : 'Subir foto'}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          className="hidden"
+                          disabled={uploadingAvatarFor !== null}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.currentTarget.value = '';
+                            if (file) uploadAvatar(d, file);
+                          }}
+                        />
+                      </label>
+                      {d.avatar_url ? (
+                        <button
+                          type="button"
+                          disabled={uploadingAvatarFor !== null}
+                          onClick={() => removeAvatar(d)}
+                          className="text-red-600 hover:underline text-sm font-medium disabled:opacity-50"
+                        >
+                          Quitar foto
+                        </button>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))
