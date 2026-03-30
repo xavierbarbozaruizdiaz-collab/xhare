@@ -281,6 +281,14 @@ export function PickupDropoffMapView({
     onExtraStopsChange(next);
   };
 
+  const removeExtraAt = (idx: number) => {
+    if (!onExtraStopsChange || idx < 0 || idx >= extraStops.length) return;
+    const next = extraStops
+      .filter((_, i) => i !== idx)
+      .map((s, i) => ({ ...s, order: i + 1 }));
+    onExtraStopsChange(next);
+  };
+
   const openFull = useCallback((nextMode?: typeof mode) => {
     if (nextMode) setMode(nextMode);
     setFullVisible(true);
@@ -496,9 +504,26 @@ export function PickupDropoffMapView({
       </View>
 
       {hasExtras && extraStops.length > 0 ? (
-        <TouchableOpacity style={styles.removeExtraBtn} onPress={removeLastExtra}>
-          <Text style={styles.removeExtraText}>Quitar última parada intermedia</Text>
-        </TouchableOpacity>
+        <>
+          <View style={styles.extraList}>
+            {extraStops.map((_, i) => (
+              <View key={`extra-pill-${i}`} style={styles.extraPill}>
+                <Text style={styles.extraPillText}>Parada {i + 1}</Text>
+                <TouchableOpacity
+                  onPress={() => removeExtraAt(i)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Quitar parada ${i + 1}`}
+                >
+                  <Text style={styles.extraPillRemove}>×</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+          <TouchableOpacity style={styles.removeExtraBtn} onPress={removeLastExtra}>
+            <Text style={styles.removeExtraText}>Quitar última parada intermedia</Text>
+          </TouchableOpacity>
+        </>
       ) : null}
 
       <Modal visible={fullVisible} animationType="slide" onRequestClose={() => setFullVisible(false)} statusBarTranslucent>
@@ -617,6 +642,34 @@ const styles = StyleSheet.create({
   previewChipText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   removeExtraBtn: { marginTop: 8, alignSelf: 'flex-start' },
   removeExtraText: { fontSize: 13, color: '#2563eb', fontWeight: '600' },
+  extraList: {
+    marginTop: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  extraPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#eef2ff',
+    borderColor: '#c7d2fe',
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  extraPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#3730a3',
+  },
+  extraPillRemove: {
+    fontSize: 17,
+    lineHeight: 17,
+    fontWeight: '800',
+    color: '#b91c1c',
+  },
   modalSafe: { flex: 1, backgroundColor: '#fff' },
   modalHeader: {
     flexDirection: 'row',
