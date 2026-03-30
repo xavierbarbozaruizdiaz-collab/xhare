@@ -675,12 +675,36 @@ export function BookRideScreen() {
           )}
 
           <Text style={styles.label}>Asientos</Text>
-          <TextInput
-            style={styles.input}
-            value={String(seats)}
-            onChangeText={(t) => setSeats(Math.min(maxSeats, Math.max(1, parseInt(t.replace(/\D/g, ''), 10) || 1)))}
-            keyboardType="number-pad"
-          />
+          <View style={styles.seatsStepper}>
+            <TouchableOpacity
+              style={[styles.seatStepHit, seats <= 1 && styles.seatStepHitDisabled]}
+              onPress={() => setSeats((s) => Math.max(1, s - 1))}
+              disabled={seats <= 1}
+              accessibilityRole="button"
+              accessibilityLabel="Menos un asiento"
+            >
+              <Text style={[styles.seatStepSymbol, seats <= 1 && styles.seatStepSymbolDisabled]}>−</Text>
+            </TouchableOpacity>
+            <TextInput
+              style={styles.seatStepInput}
+              value={String(seats)}
+              onChangeText={(t) =>
+                setSeats(Math.min(maxSeats, Math.max(1, parseInt(t.replace(/\D/g, ''), 10) || 1)))
+              }
+              keyboardType="number-pad"
+              selectTextOnFocus
+              accessibilityLabel="Cantidad de asientos"
+            />
+            <TouchableOpacity
+              style={[styles.seatStepHit, seats >= maxSeats && styles.seatStepHitDisabled]}
+              onPress={() => setSeats((s) => Math.min(maxSeats, s + 1))}
+              disabled={seats >= maxSeats}
+              accessibilityRole="button"
+              accessibilityLabel="Más un asiento"
+            >
+              <Text style={[styles.seatStepSymbol, seats >= maxSeats && styles.seatStepSymbolDisabled]}>+</Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.hintSmall}>Disponibles: {maxSeats}</Text>
 
           {mapDisplayRoute.length >= 2 && (!pickup || !dropoff) ? (
@@ -735,6 +759,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
+  },
+  seatsStepper: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+  },
+  seatStepHit: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    minWidth: 52,
+    backgroundColor: '#f0fdf4',
+  },
+  seatStepHitDisabled: {
+    backgroundColor: '#f3f4f6',
+  },
+  seatStepSymbol: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#166534',
+    lineHeight: 28,
+  },
+  seatStepSymbolDisabled: {
+    color: '#9ca3af',
+  },
+  seatStepInput: {
+    flex: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    fontSize: 18,
+    fontWeight: '600',
+    textAlign: 'center',
+    color: '#111827',
   },
   hintSmall: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
   priceBox: { backgroundColor: '#ecfdf5', padding: 14, borderRadius: 10, marginTop: 16 },
