@@ -22,7 +22,9 @@
     "check": "npm run check:ts",
     "check:ts": "tsc --noEmit",
     "icons:android": "cross-env APP_FLAVOR=passenger node scripts/sync-android-launcher-icons.cjs",
-    "build:android:release": "cd android && gradlew.bat clean && cd .. && npx expo run:android --variant release -p 8082",
+    "build:android:release": "node scripts/run-android-release-flavor.cjs both",
+    "build:android:release:passenger": "node scripts/run-android-release-flavor.cjs passenger",
+    "build:android:release:driver": "node scripts/run-android-release-flavor.cjs driver",
     "build:android:cloud:apk:preview": "eas build --platform android --profile preview",
     "build:android:cloud:apk:production": "eas build --platform android --profile production"
   },

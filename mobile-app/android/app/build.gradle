@@ -153,10 +153,27 @@ android {
         // Launcher/Application alineados con applicationId: Expo ejecuta {applicationId}/.MainActivity
         def mainActivityClass = appFlavor == 'driver' ? 'com.xhare.driver.MainActivity' : 'com.xhare.app.MainActivity'
         def mainApplicationClass = appFlavor == 'driver' ? 'com.xhare.driver.MainApplication' : 'com.xhare.app.MainApplication'
-        // Misma key que en .env (GOOGLE_MAPS_ANDROID_API_KEY). En Google Cloud: restricciones para com.xhare.app Y com.xhare.driver + SHA del keystore.
+        // Maps SDK: misma variable que en mobile-app/.env y EAS Secrets. Nunca commitear la key en este repo.
+        // Orden: env del proceso → -P / gradle.properties del proyecto → android/local.properties (gitignored).
         def envMapsKey = (System.getenv('GOOGLE_MAPS_ANDROID_API_KEY') ?: '').trim()
         def propMapsKey = (findProperty('GOOGLE_MAPS_ANDROID_API_KEY') ?: '').toString().trim()
-        def mapsKey = envMapsKey ?: propMapsKey ?: 'AIzaSyDNVDhi14ZYC7aMPVEtqWLm3tZi4vUA-KA'
+        def localMapsKey = ''
+        def lp = rootProject.file('local.properties')
+        if (lp.exists()) {
+            def p = new Properties()
+            lp.withInputStream { p.load(it) }
+            localMapsKey = (p.getProperty('GOOGLE_MAPS_ANDROID_API_KEY') ?: '').trim()
+        }
+        def mapsKey = envMapsKey ?: propMapsKey ?: localMapsKey
+        if (!mapsKey) {
+            throw new GradleException(
+                'GOOGLE_MAPS_ANDROID_API_KEY no está definida. Definila en:\n' +
+                '  • variable de entorno GOOGLE_MAPS_ANDROID_API_KEY, o\n' +
+                '  • mobile-app/android/local.properties: GOOGLE_MAPS_ANDROID_API_KEY=… (archivo ignorado por git), o\n' +
+                '  • ./gradlew -PGOOGLE_MAPS_ANDROID_API_KEY=…\n' +
+                'Expo/EAS: misma variable en .env local o EAS Secrets para que prebuild/app.config la inyecte.'
+            )
+        }
         manifestPlaceholders = [
             mainActivityClass     : mainActivityClass,
             mainApplicationClass  : mainApplicationClass,
