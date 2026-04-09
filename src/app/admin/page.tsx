@@ -42,6 +42,12 @@ export default function AdminDashboardPage() {
         <h2 className="font-semibold text-gray-900 mb-2">Accesos rápidos</h2>
         <ul className="space-y-2 text-sm">
           <li>
+            <Link href="/admin/dispatch-map" className="text-green-600 hover:underline font-medium">
+              Mapa de despacho
+            </Link>
+            — Pedidos en mapa, filtros y generar viaje desde grupo
+          </li>
+          <li>
             <Link href="/admin/drivers" className="text-green-600 hover:underline">
               Solicitudes de conductores
             </Link>
