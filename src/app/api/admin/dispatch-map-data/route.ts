@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
           service
             .from('trip_requests')
             .select(
-              'id, origin_lat, origin_lng, destination_lat, destination_lng, origin_label, destination_label, requested_date, requested_time, status, pricing_kind, passenger_desired_price_per_seat_gs'
+              'id, origin_lat, origin_lng, destination_lat, destination_lng, origin_label, destination_label, requested_date, requested_time, requested_time_start, requested_time_end, status, pricing_kind, passenger_desired_price_per_seat_gs'
             )
             .in('status', [...DEMAND_STATUSES])
             .gte('requested_date', from)

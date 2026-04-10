@@ -25,6 +25,9 @@ type TripRow = {
   destination_label: string | null;
   requested_date: string;
   requested_time: string;
+  /** Ventana horaria (timestamptz) si existe en la base. */
+  requested_time_start?: string | null;
+  requested_time_end?: string | null;
   status: string;
   pricing_kind: string | null;
   passenger_desired_price_per_seat_gs?: number | null;
@@ -57,13 +60,10 @@ type GroupRow = {
 
 type RouteStop = { key: string; lat: number; lng: number; label: string };
 
+/** Origen = naranja, destino = rojo (todos los tipos). */
 const COL = {
-  intOrig: '#14532d',
-  intDest: '#22c55e',
-  longOrig: '#1e3a8a',
-  longDest: '#60a5fa',
-  sysOrig: '#6b21a8',
-  sysDest: '#c084fc',
+  origin: '#f97316',
+  destination: '#dc2626',
 };
 
 function isLong(t: TripRow): boolean {
@@ -81,6 +81,80 @@ function fmtWhen(d: string, t: string): string {
   return `${date} · ${time}`;
 }
 
+function fmtTimeInAsuncion(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('es-PY', {
+    timeZone: 'America/Asuncion',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Minutos desde medianoche para la hora que cargó el cliente (requested_time). */
+function pickupTimeToMinutes(t: string | null | undefined): number | null {
+  const m = String(t ?? '').match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  return h * 60 + min;
+}
+
+/** Hora de salida del viaje sistema en America/Asuncion. */
+function rideDepartureMinutesAsuncion(iso: string): number | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Asuncion',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const h = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '', 10);
+  const m = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '', 10);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+function parseFilterTimeHHMM(s: string): number | null {
+  const v = s?.trim();
+  if (!v) return null;
+  const m = v.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return h * 60 + min;
+}
+
+function passesTimeWindowMinutes(
+  minutes: number | null,
+  fromStr: string,
+  toStr: string
+): boolean {
+  const fromM = parseFilterTimeHHMM(fromStr);
+  const toM = parseFilterTimeHHMM(toStr);
+  if (fromM == null && toM == null) return true;
+  if (minutes == null) return true;
+  if (fromM != null && toM != null) {
+    if (fromM <= toM) return minutes >= fromM && minutes <= toM;
+    return minutes >= fromM || minutes <= toM;
+  }
+  if (fromM != null) return minutes >= fromM;
+  return minutes <= toM!;
+}
+
+function tripTimeSubtitle(tr: TripRow): string {
+  const base = fmtWhen(tr.requested_date, tr.requested_time);
+  const end = fmtTimeInAsuncion(tr.requested_time_end ?? null);
+  if (end) {
+    return `${base} · llegada / fin ventana ${end}`;
+  }
+  return base;
+}
+
 export default function AdminDispatchMapPage() {
   const { accessToken, ready, isAdmin, refetch } = useAdminAuth();
   const [from, setFrom] = useState(() => new Date().toISOString().slice(0, 10));
@@ -92,6 +166,9 @@ export default function AdminDispatchMapPage() {
   const [showInternal, setShowInternal] = useState(true);
   const [showLong, setShowLong] = useState(true);
   const [showSystem, setShowSystem] = useState(true);
+  /** Filtro por la hora que cargó el cliente (requested_time), HH:mm. */
+  const [timeFilterFrom, setTimeFilterFrom] = useState('');
+  const [timeFilterTo, setTimeFilterTo] = useState('');
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [rides, setRides] = useState<SystemRideRow[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
@@ -155,34 +232,56 @@ export default function AdminDispatchMapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- evitar refetch en cada tecla en from/to
   }, [ready, isAdmin, accessToken]);
 
+  const tripsFiltered = useMemo(() => {
+    return trips.filter((tr) => {
+      const mins = pickupTimeToMinutes(tr.requested_time);
+      return passesTimeWindowMinutes(mins, timeFilterFrom, timeFilterTo);
+    });
+  }, [trips, timeFilterFrom, timeFilterTo]);
+
+  const ridesFiltered = useMemo(() => {
+    return rides.filter((r) => {
+      const mins = rideDepartureMinutesAsuncion(r.departure_time);
+      return passesTimeWindowMinutes(mins, timeFilterFrom, timeFilterTo);
+    });
+  }, [rides, timeFilterFrom, timeFilterTo]);
+
+  const groupsFiltered = useMemo(() => {
+    return groups.filter((g) => {
+      const mins = pickupTimeToMinutes(g.requested_time);
+      return passesTimeWindowMinutes(mins, timeFilterFrom, timeFilterTo);
+    });
+  }, [groups, timeFilterFrom, timeFilterTo]);
+
   const markers = useMemo((): DispatchMapMarker[] => {
     const out: DispatchMapMarker[] = [];
-    for (const tr of trips) {
+    for (const tr of tripsFiltered) {
       const long = isLong(tr);
       if (long && !showLong) continue;
       if (!long && !showInternal) continue;
-      const when = fmtWhen(tr.requested_date, tr.requested_time);
+      const timeLine = tripTimeSubtitle(tr);
       const kind = long ? 'Larga distancia' : 'Interno';
       out.push({
         id: `${tr.id}-o`,
         lat: Number(tr.origin_lat),
         lng: Number(tr.origin_lng),
-        color: long ? COL.longOrig : COL.intOrig,
+        color: COL.origin,
         title: `Origen · ${kind}`,
-        subtitle: `${when} · ${(tr.origin_label ?? 'Origen').slice(0, 48)} → ${(tr.destination_label ?? 'Destino').slice(0, 48)} · status ${tr.status}`,
+        subtitle: `${timeLine} · ${(tr.origin_label ?? 'Origen').slice(0, 40)} → ${(tr.destination_label ?? 'Destino').slice(0, 40)} · ${tr.status}`,
       });
       out.push({
         id: `${tr.id}-d`,
         lat: Number(tr.destination_lat),
         lng: Number(tr.destination_lng),
-        color: long ? COL.longDest : COL.intDest,
+        color: COL.destination,
         title: `Destino · ${kind}`,
-        subtitle: `${when} · pedido ${tr.id.slice(0, 8)}…`,
+        subtitle: `${timeLine} · pedido ${tr.id.slice(0, 8)}…`,
       });
     }
     if (showSystem) {
-      for (const r of rides) {
+      for (const r of ridesFiltered) {
         const when = new Date(r.departure_time).toLocaleString('es-PY', {
+          timeZone: 'America/Asuncion',
           weekday: 'short',
           day: 'numeric',
           month: 'short',
@@ -193,7 +292,7 @@ export default function AdminDispatchMapPage() {
           id: `${r.id}-o`,
           lat: Number(r.origin_lat),
           lng: Number(r.origin_lng),
-          color: COL.sysOrig,
+          color: COL.origin,
           title: 'Origen · Generado por sistema',
           subtitle: `${when} · ${(r.origin_label ?? '').slice(0, 40)} → ${(r.destination_label ?? '').slice(0, 40)}`,
         });
@@ -201,14 +300,14 @@ export default function AdminDispatchMapPage() {
           id: `${r.id}-d`,
           lat: Number(r.destination_lat),
           lng: Number(r.destination_lng),
-          color: COL.sysDest,
+          color: COL.destination,
           title: 'Destino · Generado por sistema',
           subtitle: `${when} · ride ${r.id.slice(0, 8)}… · cupo ${r.available_seats ?? r.total_seats ?? '—'}`,
         });
       }
     }
     return out;
-  }, [trips, rides, showInternal, showLong, showSystem]);
+  }, [tripsFiltered, ridesFiltered, showInternal, showLong, showSystem]);
 
   const appendStop = useCallback((m: DispatchMapMarker) => {
     setRouteStops((prev) => [
@@ -319,26 +418,51 @@ export default function AdminDispatchMapPage() {
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
           />
         </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Hora desde (cliente)</label>
+          <input
+            type="time"
+            value={timeFilterFrom}
+            onChange={(e) => setTimeFilterFrom(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Hora hasta (cliente)</label>
+          <input
+            type="time"
+            value={timeFilterTo}
+            onChange={(e) => setTimeFilterTo(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
         <button type="button" onClick={() => void load()} className="btn-primary text-sm py-2 px-4" disabled={loading}>
           {loading ? 'Cargando…' : 'Actualizar datos'}
         </button>
       </div>
+      <p className="text-xs text-gray-500 mb-3 -mt-2">
+        El filtro de hora usa la hora que cargó el pasajero (<code className="bg-gray-100 px-1 rounded">requested_time</code>
+        ). Si hay ventana en base, en el mapa verás también el fin de ventana / llegada máxima.
+      </p>
 
-      <div className="flex flex-wrap gap-3 mb-4">
+      <div className="flex flex-wrap gap-3 mb-4 items-center">
+        <span className="text-xs text-gray-600 mr-2">
+          Mapa: <span className="inline-block w-3 h-3 rounded-full align-middle ml-1 mr-0.5" style={{ background: COL.origin }} />
+          origen
+          <span className="inline-block w-3 h-3 rounded-full align-middle ml-2 mr-0.5" style={{ background: COL.destination }} />
+          destino
+        </span>
         <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
           <input type="checkbox" checked={showInternal} onChange={(e) => setShowInternal(e.target.checked)} />
           <span className="font-medium text-gray-800">Internos</span>
-          <span className="w-3 h-3 rounded-full" style={{ background: COL.intOrig }} />
         </label>
         <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
           <input type="checkbox" checked={showLong} onChange={(e) => setShowLong(e.target.checked)} />
           <span className="font-medium text-gray-800">Larga distancia</span>
-          <span className="w-3 h-3 rounded-full" style={{ background: COL.longOrig }} />
         </label>
         <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
           <input type="checkbox" checked={showSystem} onChange={(e) => setShowSystem(e.target.checked)} />
           <span className="font-medium text-gray-800">Generados por sistema</span>
-          <span className="w-3 h-3 rounded-full" style={{ background: COL.sysOrig }} />
         </label>
       </div>
 
@@ -400,15 +524,15 @@ export default function AdminDispatchMapPage() {
           </div>
 
           <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <h2 className="font-semibold text-gray-900 mb-2">Grupos de demanda ({groups.length})</h2>
+            <h2 className="font-semibold text-gray-900 mb-2">Grupos de demanda ({groupsFiltered.length})</h2>
             <p className="text-xs text-gray-500 mb-3">
               Si el grupo tiene solicitudes en estado agrupado, podés generar el viaje del sistema desde aquí.
             </p>
-            {groups.length === 0 ? (
-              <p className="text-sm text-gray-500">No hay grupos en el rango de fechas.</p>
+            {groupsFiltered.length === 0 ? (
+              <p className="text-sm text-gray-500">No hay grupos en el rango de fechas o en el filtro de hora.</p>
             ) : (
               <ul className="space-y-3 text-sm">
-                {groups.map((g) => (
+                {groupsFiltered.map((g) => (
                   <li key={g.id} className="border border-gray-100 rounded-lg p-3">
                     <div className="font-medium text-gray-900">
                       {(g.origin_city ?? 'Origen') + ' → ' + (g.destination_city ?? 'Destino')}
