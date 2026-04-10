@@ -101,23 +101,27 @@ export default function AdminDispatchMapPage() {
   const [actingGroup, setActingGroup] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!accessToken) return;
-    setLoading(true);
-    setErr(null);
-    try {
-      let token = accessToken;
-      let res = await fetch(`/api/admin/dispatch-map-data?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.status === 401) {
-        token = (await refetch()) ?? '';
-        if (token) {
-          res = await fetch(`/api/admin/dispatch-map-data?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
+  const load = useCallback(
+    async (tokenOverride?: string | null) => {
+      const initial = tokenOverride ?? accessToken;
+      if (!initial) return;
+      setLoading(true);
+      setErr(null);
+      try {
+        let token = initial;
+        let res = await fetch(`/api/admin/dispatch-map-data?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
+          credentials: 'include',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 401) {
+          token = (await refetch()) ?? '';
+          if (token) {
+            res = await fetch(`/api/admin/dispatch-map-data?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
+              credentials: 'include',
+              headers: { Authorization: `Bearer ${token}` },
+            });
+          }
         }
-      }
       const body = (await res.json()) as Record<string, unknown>;
       if (!res.ok) {
         setErr(typeof body.error === 'string' ? body.error : 'No se pudo cargar');
@@ -134,11 +138,19 @@ export default function AdminDispatchMapPage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, from, to, refetch]);
+  },
+  [accessToken, from, to, refetch]);
 
   useEffect(() => {
-    if (!ready || !isAdmin || !accessToken) return;
-    void load();
+    if (!ready || !isAdmin) return;
+    (async () => {
+      let token = accessToken;
+      if (!token) {
+        token = (await refetch()) ?? null;
+      }
+      if (!token) return;
+      await load(token);
+    })();
     // Carga inicial al entrar; cambiar fechas y pulsar «Actualizar datos».
     // eslint-disable-next-line react-hooks/exhaustive-deps -- evitar refetch en cada tecla en from/to
   }, [ready, isAdmin, accessToken]);
@@ -234,6 +246,7 @@ export default function AdminDispatchMapPage() {
       try {
         let res = await fetch('/api/rides/create-from-group', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ group_id: groupId }),
         });
@@ -242,6 +255,7 @@ export default function AdminDispatchMapPage() {
           if (token) {
             res = await fetch('/api/rides/create-from-group', {
               method: 'POST',
+              credentials: 'include',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
               body: JSON.stringify({ group_id: groupId }),
             });

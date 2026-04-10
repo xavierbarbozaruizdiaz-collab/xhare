@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, createServiceClient } from '@/lib/supabase/server';
 
@@ -14,6 +15,29 @@ function getJwtFromRequest(request: NextRequest): string | null {
 }
 
 /**
+ * Valida el JWT del header sin reutilizar createServerClient(request) con ese mismo header:
+ * mezclar Bearer global + getUser(jwt) en servidor fallaba en algunos despliegues (401 Unauthorized).
+ */
+async function getUserFromBearerJwt(jwt: string): Promise<{
+  user: AdminUser | null;
+  error: Error | null;
+}> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+  if (!url || !anon) {
+    return { user: null, error: new Error('Missing NEXT_PUBLIC_SUPABASE_URL or ANON_KEY') };
+  }
+  const client = createClient(url, anon, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await client.auth.getUser(jwt);
+  return {
+    user: data.user ? { id: data.user.id } : null,
+    error: error ?? null,
+  };
+}
+
+/**
  * Valida JWT o sesión, comprueba rol admin en profiles.
  * Si todo es correcto llama a handler(request, user); si no, responde 401/403.
  */
@@ -22,19 +46,19 @@ export async function withAdminAuth(
   handler: (req: NextRequest, user: AdminUser) => Promise<NextResponse>
 ): Promise<NextResponse> {
   const jwt = getJwtFromRequest(request);
-  const supabaseAuth = createServerClient(request);
 
   let user: AdminUser | null = null;
   let authError: Error | null = null;
 
   if (jwt) {
-    const res = await supabaseAuth.auth.getUser(jwt);
-    user = res.data.user ?? null;
-    authError = res.error ?? null;
+    const res = await getUserFromBearerJwt(jwt);
+    user = res.user;
+    authError = res.error;
   }
   if (!user) {
+    const supabaseAuth = createServerClient(request);
     const res = await supabaseAuth.auth.getUser();
-    user = res.data.user ?? null;
+    user = res.data.user ? { id: res.data.user.id } : null;
     authError = res.error ?? null;
   }
 
