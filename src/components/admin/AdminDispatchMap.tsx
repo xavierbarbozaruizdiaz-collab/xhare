@@ -23,13 +23,23 @@ function escapePopup(s: string): string {
 
 type Props = {
   markers: DispatchMapMarker[];
-  routePoints: Array<{ lat: number; lng: number }>;
+  /** Geometría a dibujar (OSRM por calles o recta entre paradas). */
+  routePolyline: Array<{ lat: number; lng: number }>;
+  /** Mientras se espera OSRM, línea punteada sobre trazado provisional. */
+  routePolylineLoading?: boolean;
   onMarkerDoubleClick?: (m: DispatchMapMarker) => void;
   height?: string;
   className?: string;
 };
 
-export default function AdminDispatchMap({ markers, routePoints, onMarkerDoubleClick, height = '480px', className = '' }: Props) {
+export default function AdminDispatchMap({
+  markers,
+  routePolyline,
+  routePolylineLoading = false,
+  onMarkerDoubleClick,
+  height = '480px',
+  className = '',
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
@@ -108,15 +118,20 @@ export default function AdminDispatchMap({ markers, routePoints, onMarkerDoubleC
       bounds.push(L.latLng(m.lat, m.lng));
     }
 
-    if (routePoints.length >= 2) {
-      const ll = routePoints.map((p) => [p.lat, p.lng] as L.LatLngExpression);
-      routeLineRef.current = L.polyline(ll, { color: '#0f766e', weight: 5, opacity: 0.85 }).addTo(map);
+    if (routePolyline.length >= 2) {
+      const ll = routePolyline.map((p) => [p.lat, p.lng] as L.LatLngExpression);
+      routeLineRef.current = L.polyline(ll, {
+        color: '#0f766e',
+        weight: 5,
+        opacity: routePolylineLoading ? 0.55 : 0.9,
+        dashArray: routePolylineLoading ? '10 8' : undefined,
+      }).addTo(map);
     }
 
     if (bounds.length > 0) {
       map.fitBounds(L.latLngBounds(bounds), { padding: [48, 48], maxZoom: 13 });
     }
-  }, [markers, routePoints]);
+  }, [markers, routePolyline, routePolylineLoading]);
 
   return <div ref={containerRef} className={`w-full z-0 ${className}`} style={{ height, minHeight: 280 }} />;
 }

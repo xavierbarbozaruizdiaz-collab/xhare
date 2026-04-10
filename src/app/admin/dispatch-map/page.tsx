@@ -177,6 +177,9 @@ export default function AdminDispatchMapPage() {
   const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
   const [actingGroup, setActingGroup] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [routePolyline, setRoutePolyline] = useState<Array<{ lat: number; lng: number }>>([]);
+  const [routeLineLoading, setRouteLineLoading] = useState(false);
+  const [routeLineHint, setRouteLineHint] = useState<string | null>(null);
 
   const load = useCallback(
     async (tokenOverride?: string | null) => {
@@ -334,7 +337,89 @@ export default function AdminDispatchMapPage() {
 
   const clearRoute = useCallback(() => setRouteStops([]), []);
 
-  const routePoints = useMemo(() => routeStops.map((s) => ({ lat: s.lat, lng: s.lng })), [routeStops]);
+  useEffect(() => {
+    const waypoints = routeStops.map((s) => ({ lat: s.lat, lng: s.lng }));
+    if (waypoints.length < 2) {
+      setRoutePolyline([]);
+      setRouteLineHint(null);
+      setRouteLineLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const straight = waypoints;
+
+    const t = setTimeout(() => {
+      void (async () => {
+        if (cancelled) return;
+        setRouteLineLoading(true);
+        setRoutePolyline(straight);
+        setRouteLineHint('Calculando ruta por calles (OSRM)…');
+
+        let token = accessToken ?? (await refetch()) ?? '';
+        if (!token) {
+          if (!cancelled) {
+            setRouteLineLoading(false);
+            setRouteLineHint('No hay sesión para calcular la ruta en el servidor.');
+          }
+          return;
+        }
+
+        try {
+          let res = await fetch('/api/admin/dispatch-osrm-route', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ points: waypoints }),
+          });
+          if (res.status === 401) {
+            token = (await refetch()) ?? '';
+            if (token) {
+              res = await fetch('/api/admin/dispatch-osrm-route', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ points: waypoints }),
+              });
+            }
+          }
+          const data = (await res.json()) as {
+            polyline?: Array<{ lat: number; lng: number }>;
+            source?: string;
+            warning?: string;
+            error?: string;
+          };
+          if (cancelled) return;
+          if (!res.ok) {
+            setRoutePolyline(straight);
+            setRouteLineHint(typeof data.error === 'string' ? data.error : 'No se pudo obtener la ruta.');
+            return;
+          }
+          if (Array.isArray(data.polyline) && data.polyline.length >= 2) {
+            setRoutePolyline(data.polyline);
+            setRouteLineHint(
+              data.source === 'osrm' ? null : data.warning ?? 'Ruta aproximada (recta entre paradas).'
+            );
+          } else {
+            setRoutePolyline(straight);
+            setRouteLineHint('Respuesta inválida; línea recta entre paradas.');
+          }
+        } catch {
+          if (!cancelled) {
+            setRoutePolyline(straight);
+            setRouteLineHint('Error de red al calcular la ruta.');
+          }
+        } finally {
+          if (!cancelled) setRouteLineLoading(false);
+        }
+      })();
+    }, 280);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [routeStops, accessToken, refetch]);
 
   const createFromGroup = useCallback(
     async (groupId: string) => {
@@ -475,10 +560,19 @@ export default function AdminDispatchMapPage() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="xl:col-span-2 order-2 xl:order-1">
-          <AdminDispatchMap markers={markers} routePoints={routePoints} onMarkerDoubleClick={appendStop} height="min(70vh, 560px)" />
+          <AdminDispatchMap
+            markers={markers}
+            routePolyline={routePolyline}
+            routePolylineLoading={routeLineLoading}
+            onMarkerDoubleClick={appendStop}
+            height="min(70vh, 560px)"
+          />
           <p className="text-xs text-gray-500 mt-2">
-            <strong>Ruta manual:</strong> tocá un punto (origen o destino), abrí el globo y pulsá <strong>Añadir a la ruta</strong>. La línea verde une las paradas en orden. Zoom con +/− o la rueda del mouse (el doble clic en el mapa no agranda para no confundir).
+            <strong>Ruta manual:</strong> tocá un punto (origen o destino), abrí el globo y pulsá <strong>Añadir a la ruta</strong>. La línea verde sigue calles vía OSRM cuando el servidor responde; si falla, verás rectas entre paradas. Zoom con +/− o la rueda.
           </p>
+          {routeLineHint && (
+            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">{routeLineHint}</p>
+          )}
         </div>
         <div className="space-y-4 order-1 xl:order-2 max-h-[85vh] overflow-y-auto pr-1">
           <div className="bg-white rounded-xl border border-gray-200 p-4">
