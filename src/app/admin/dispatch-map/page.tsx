@@ -477,14 +477,16 @@ export default function AdminDispatchMapPage() {
         <div className="xl:col-span-2 order-2 xl:order-1">
           <AdminDispatchMap markers={markers} routePoints={routePoints} onMarkerDoubleClick={appendStop} height="min(70vh, 560px)" />
           <p className="text-xs text-gray-500 mt-2">
-            <strong>Ruta manual:</strong> doble clic en un punto del mapa para encadenarlo. La línea verde une las paradas en orden.
+            <strong>Ruta manual:</strong> tocá un punto (origen o destino), abrí el globo y pulsá <strong>Añadir a la ruta</strong>. La línea verde une las paradas en orden. Zoom con +/− o la rueda del mouse (el doble clic en el mapa no agranda para no confundir).
           </p>
         </div>
         <div className="space-y-4 order-1 xl:order-2 max-h-[85vh] overflow-y-auto pr-1">
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <h2 className="font-semibold text-gray-900 mb-2">Paradas de la ruta ({routeStops.length})</h2>
             {routeStops.length === 0 ? (
-              <p className="text-sm text-gray-500">Todavía no añadiste puntos. Usá doble clic en el mapa.</p>
+              <p className="text-sm text-gray-500">
+                Todavía no añadiste puntos. Tocá un marcador en el mapa y en el globo elegí <strong>Añadir a la ruta</strong>.
+              </p>
             ) : (
               <ul className="space-y-2 text-sm">
                 {routeStops.map((s, i) => (

@@ -40,6 +40,8 @@ export default function AdminDispatchMap({ markers, routePoints, onMarkerDoubleC
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = L.map(containerRef.current, { zoomControl: true }).setView([-25.2637, -57.5759], 11);
+    /** Evita que doble clic en el mapa haga zoom (choca con “añadir parada”). Zoom: +/− o rueda. */
+    map.doubleClickZoom.disable();
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap',
       maxZoom: 19,
@@ -79,16 +81,30 @@ export default function AdminDispatchMap({ markers, routePoints, onMarkerDoubleC
         iconAnchor: [7, 7],
       });
       const mk = L.marker([m.lat, m.lng], { icon }).addTo(group);
-      mk.bindPopup(
-        `<div style="min-width:160px"><strong>${escapePopup(m.title)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(m.subtitle)}</span><br/><em style="font-size:11px;color:#666">Doble clic en el punto para añadirlo a la ruta.</em></div>`
-      );
       const h = handlerRef.current;
+      const wrap = L.DomUtil.create('div');
+      wrap.style.minWidth = '200px';
+      wrap.innerHTML = `<strong>${escapePopup(m.title)}</strong><br/><span style="font-size:12px;color:#444;line-height:1.35">${escapePopup(m.subtitle)}</span>`;
       if (h) {
-        mk.on('dblclick', (ev) => {
-          L.DomEvent.stopPropagation(ev);
+        const btn = L.DomUtil.create('button', '', wrap) as HTMLButtonElement;
+        btn.type = 'button';
+        btn.textContent = 'Añadir a la ruta';
+        btn.style.marginTop = '10px';
+        btn.style.padding = '8px 14px';
+        btn.style.borderRadius = '8px';
+        btn.style.background = '#166534';
+        btn.style.color = '#fff';
+        btn.style.border = 'none';
+        btn.style.cursor = 'pointer';
+        btn.style.fontWeight = '600';
+        btn.style.fontSize = '13px';
+        L.DomEvent.on(btn, 'click', (domEv) => {
+          L.DomEvent.stop(domEv);
           h(m);
+          mk.closePopup();
         });
       }
+      mk.bindPopup(wrap);
       bounds.push(L.latLng(m.lat, m.lng));
     }
 
