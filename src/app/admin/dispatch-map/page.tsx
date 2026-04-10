@@ -1,9 +1,19 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useAdminAuth } from '../AdminAuthContext';
-import AdminDispatchMap, { type DispatchMapMarker } from '@/components/admin/AdminDispatchMap';
+import type { DispatchMapMarker } from '@/components/admin/AdminDispatchMap';
+
+const AdminDispatchMap = dynamic(() => import('@/components/admin/AdminDispatchMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="min-h-[280px] flex items-center justify-center bg-gray-100 rounded-xl border border-gray-200 text-gray-500 text-sm">
+      Cargando mapa…
+    </div>
+  ),
+});
 
 type TripRow = {
   id: string;
