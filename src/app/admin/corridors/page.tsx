@@ -1,8 +1,18 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useAdminAuth } from '../AdminAuthContext';
+
+const AdminCorridorsMap = dynamic(() => import('@/components/admin/AdminCorridorsMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="min-h-[280px] flex items-center justify-center bg-gray-100 rounded-xl border border-gray-200 text-gray-500 text-sm">
+      Cargando mapa…
+    </div>
+  ),
+});
 
 type CorridorZone = {
   minLat?: unknown;
@@ -150,9 +160,39 @@ export default function AdminCorridorsPage() {
       )}
 
       {rows.length > 0 && (
+        <div className="mb-8 space-y-3">
+          <h2 className="text-lg font-semibold text-gray-900">Vista en mapa</h2>
+          <p className="text-sm text-gray-600">
+            Rectángulos <span className="font-medium text-sky-800">azul</span> = zona donde debe caer el{' '}
+            <strong>origen</strong> del pedido; <span className="font-medium text-orange-800">naranja</span> = zona del{' '}
+            <strong>destino</strong>. Si las dos cajas son iguales (viaje local), se superponen: tocá el rectángulo para
+            ver si el globo dice Origen o Destino.
+          </p>
+          <div className="flex flex-wrap gap-4 text-xs text-gray-600 mb-1">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block w-4 h-3 rounded border-2 border-sky-800 bg-sky-500/30" /> Zona origen
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block w-4 h-3 rounded border-2 border-orange-700 bg-orange-500/30" /> Zona destino
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block w-4 h-3 rounded border border-gray-400 border-dashed bg-gray-200/80" />{' '}
+              Corredor inactivo (más tenue)
+            </span>
+          </div>
+          <AdminCorridorsMap corridors={rows} />
+        </div>
+      )}
+
+      {rows.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead>
+              <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                <th className="px-4 py-3 font-semibold text-gray-900" colSpan={6}>
+                  Detalle en tabla
+                </th>
+              </tr>
               <tr className="bg-gray-50 border-b border-gray-200 text-left">
                 <th className="px-4 py-3 font-semibold text-gray-900">Nombre</th>
                 <th className="px-4 py-3 font-semibold text-gray-900">Slug</th>
