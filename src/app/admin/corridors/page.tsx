@@ -392,7 +392,7 @@ export default function AdminCorridorsPage() {
         </div>
       )}
 
-      {rows.length > 0 && (
+      {(rows.length > 0 || showDemandTubes) && (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead>
@@ -413,6 +413,14 @@ export default function AdminCorridorsPage() {
               </tr>
             </thead>
             <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-6 text-gray-600 text-center">
+                    Sin filas en <code className="bg-gray-100 px-1 rounded text-xs">corridors</code>. Aplicá la
+                    migración 058 en Supabase o insertá corredores.
+                  </td>
+                </tr>
+              )}
               {rows.map((r) => (
                 <tr key={r.id} className="border-b border-gray-100 last:border-0 align-top">
                   <td className="px-4 py-3 font-medium text-gray-900">{r.name}</td>

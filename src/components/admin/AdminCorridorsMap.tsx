@@ -115,7 +115,6 @@ export default function AdminCorridorsMap({
   const mapRef = useRef<L.Map | null>(null);
   const overlayRef = useRef<L.LayerGroup | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const didInitialFitRef = useRef(false);
   const onZoneEditedRef = useRef(onZoneEdited);
   onZoneEditedRef.current = onZoneEdited;
 
@@ -149,7 +148,6 @@ export default function AdminCorridorsMap({
       map.remove();
       mapRef.current = null;
       overlayRef.current = null;
-      didInitialFitRef.current = false;
     };
   }, []);
 
@@ -231,12 +229,10 @@ export default function AdminCorridorsMap({
       }
     }
 
-    if (allCorners.length > 0 && !didInitialFitRef.current) {
+    if (allCorners.length > 0) {
       map.fitBounds(L.latLngBounds(allCorners), { padding: [40, 40], maxZoom: 11 });
-      didInitialFitRef.current = true;
-    }
-    if (corridors.length === 0 && (!showDemandTubes || demandTubes.length === 0)) {
-      didInitialFitRef.current = false;
+    } else {
+      map.setView([-25.35, -57.45], 9);
     }
 
     const mpm = (map as MapWithPm).pm;
@@ -244,20 +240,14 @@ export default function AdminCorridorsMap({
     if (corridors.length > 0) {
       mpm?.enableGlobalEditMode({ snappable: true });
     }
+
+    const inv = window.setTimeout(() => map.invalidateSize(), 100);
+    return () => clearTimeout(inv);
   }, [corridors, visibility, scheduleCommit, demandTubes, showDemandTubes]);
 
   const hasCorridors = corridors.length > 0;
   const hasTubes = showDemandTubes && (demandTubes?.length ?? 0) > 0;
-  if (!hasCorridors && !hasTubes) {
-    return (
-      <div
-        className={`rounded-xl border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-gray-500 text-sm ${className}`}
-        style={{ height, minHeight: 200 }}
-      >
-        Sin corredores ni tubos para dibujar. Marcá «Ver tubos» y rango de fechas o cargá corredores.
-      </div>
-    );
-  }
+  const showNoDataOverlay = !hasCorridors && !hasTubes;
 
   return (
     <div className="space-y-2">
@@ -268,10 +258,28 @@ export default function AdminCorridorsMap({
         vértices). Los tubos no se editan acá.
       </p>
       <div
-        ref={containerRef}
-        className={`w-full z-0 rounded-xl overflow-hidden border border-gray-200 ${className}`}
+        className={`relative w-full z-0 rounded-xl overflow-hidden border border-gray-200 ${className}`}
         style={{ height, minHeight: 280 }}
-      />
+      >
+        {showNoDataOverlay && (
+          <div className="absolute inset-0 z-[400] flex items-center justify-center bg-white/90 p-4 text-center text-sm text-gray-700 pointer-events-none">
+            <div className="max-w-md">
+              <p className="font-semibold text-gray-900 mb-2">No hay capas que dibujar todavía</p>
+              <p className="mb-1">
+                Si la tabla de corredores está vacía: en Supabase falta la migración{' '}
+                <code className="text-xs bg-gray-100 px-1 rounded">058_corridors…</code> o no hay filas en{' '}
+                <code className="text-xs bg-gray-100 px-1 rounded">corridors</code>.
+              </p>
+              <p>
+                Si esperabas <strong>tubos violeta</strong>: en esas fechas no hay grupos con{' '}
+                <code className="text-xs bg-gray-100 px-1 rounded">base_polyline</code>. Corré el sync geográfico de
+                demanda o ampliá el rango de fechas.
+              </p>
+            </div>
+          </div>
+        )}
+        <div ref={containerRef} className="w-full h-full min-h-[280px]" style={{ height }} />
+      </div>
     </div>
   );
 }
