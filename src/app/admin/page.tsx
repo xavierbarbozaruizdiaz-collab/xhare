@@ -48,6 +48,12 @@ export default function AdminDashboardPage() {
             — Pedidos en mapa, filtros y generar viaje desde grupo
           </li>
           <li>
+            <Link href="/admin/corridors" className="text-green-600 hover:underline font-medium">
+              Corredores de demanda
+            </Link>
+            — Zonas geográficas que definen clasificación y agrupación automática
+          </li>
+          <li>
             <Link href="/admin/drivers" className="text-green-600 hover:underline">
               Solicitudes de conductores
             </Link>
