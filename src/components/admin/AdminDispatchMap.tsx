@@ -23,9 +23,9 @@ function escapePopup(s: string): string {
 
 type Props = {
   markers: DispatchMapMarker[];
-  /** Geometría a dibujar (OSRM por calles o recta entre paradas). */
+  /** Geometría a dibujar (Google Routes por calles o recta entre paradas). */
   routePolyline: Array<{ lat: number; lng: number }>;
-  /** Mientras se espera OSRM, línea punteada sobre trazado provisional. */
+  /** Mientras se calcula la ruta, línea punteada sobre trazado provisional. */
   routePolylineLoading?: boolean;
   onMarkerDoubleClick?: (m: DispatchMapMarker) => void;
   height?: string;

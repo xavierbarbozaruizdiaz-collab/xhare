@@ -418,7 +418,7 @@ export default function AdminDispatchMapPage() {
         if (cancelled) return;
         setRouteLineLoading(true);
         setRoutePolyline(straight);
-        setRouteLineHint('Calculando ruta por calles (OSRM)…');
+        setRouteLineHint('Calculando ruta por calles (Google Routes)…');
 
         let token = accessToken ?? (await refetch()) ?? '';
         if (!token) {
@@ -462,7 +462,7 @@ export default function AdminDispatchMapPage() {
           if (Array.isArray(data.polyline) && data.polyline.length >= 2) {
             setRoutePolyline(data.polyline);
             setRouteLineHint(
-              data.source === 'osrm' ? null : data.warning ?? 'Ruta aproximada (recta entre paradas).'
+              data.source === 'google' ? null : data.warning ?? 'Ruta aproximada (recta entre paradas).'
             );
           } else {
             setRoutePolyline(straight);
@@ -669,8 +669,9 @@ export default function AdminDispatchMapPage() {
           />
           <p className="text-xs text-gray-500 mt-2">
             <strong>Ruta manual:</strong> tocá un punto (origen o destino), abrí el globo y pulsá <strong>Añadir a la ruta</strong>, o
-            hacé <strong>doble clic</strong> en el pin. La línea verde no bloquea los clics en los marcadores. La ruta sigue calles vía OSRM
-            cuando el servidor responde; si falla, verás rectas entre paradas. Zoom con +/− o la rueda.
+            hacé <strong>doble clic</strong> en el pin. La línea verde no bloquea los clics en los marcadores. La ruta sigue
+            calles vía <strong>Google Routes</strong> (misma API que publicar / reservar en la web); si falla,
+            verás rectas entre paradas. Zoom con +/− o la rueda.
           </p>
           {routeLineHint && (
             <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">{routeLineHint}</p>

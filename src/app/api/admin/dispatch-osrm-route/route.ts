@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withAdminAuth } from '@/lib/admin-auth';
-import { getOsrmBaseUrl, getOsrmRequestTimeoutMs } from '@/lib/osrm-routing';
+import { computeGoogleDrivingRoute } from '@/lib/google-routes-polyline';
 
 type Point = { lat: number; lng: number };
 
@@ -8,8 +8,11 @@ const MAX_POINTS = 25;
 
 /**
  * POST /api/admin/dispatch-osrm-route
- * Body: { points: { lat, lng }[] } en orden (mínimo 2).
- * Devuelve polyline siguiendo calles vía motor OSRM-compatible (overview=full, geojson).
+ * Ruta histórica del nombre (antes OSRM público). **Mismo motor que `/api/route/polyline`:** Google Routes
+ * (`computeGoogleDrivingRoute`, `GOOGLE_MAPS_API_KEY`).
+ *
+ * Body: { points: { lat, lng }[] } en orden (mínimo 2, máximo 25). Primer punto = origen, último = destino,
+ * intermedios = waypoints.
  */
 export async function POST(request: NextRequest) {
   return withAdminAuth(request, async () => {
@@ -35,65 +38,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Coordenadas inválidas' }, { status: 400 });
     }
 
-    const straightFallback = (): NextResponse => {
-      return NextResponse.json({
+    const straightResponse = (warning: string): NextResponse =>
+      NextResponse.json({
         polyline: coords,
         source: 'straight' as const,
-        warning: 'No se pudo calcular ruta por calles; se muestra línea recta entre paradas.',
+        warning,
       });
-    };
 
-    const path = coords.map((p) => `${p.lng},${p.lat}`).join(';');
-    const base = getOsrmBaseUrl();
-    const timeoutMs = getOsrmRequestTimeoutMs();
-    const url = `${base}/route/v1/driving/${path}?overview=full&geometries=geojson`;
-
-    try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), timeoutMs);
-      const res = await fetch(url, {
-        cache: 'no-store',
-        signal: controller.signal,
-        headers: { Accept: 'application/json' },
-      }).finally(() => clearTimeout(t));
-
-      if (!res.ok) {
-        return NextResponse.json({
-          polyline: coords,
-          source: 'straight' as const,
-          warning: `OSRM respondió ${res.status}. Configurá OSRM_BASE_URL en producción si el demo falla.`,
-        });
-      }
-
-      const data = (await res.json()) as {
-        code?: string;
-        message?: string;
-        routes?: Array<{ geometry?: { coordinates?: number[][] } }>;
-      };
-
-      if (data.code !== 'Ok' || !data.routes?.[0]?.geometry?.coordinates) {
-        return NextResponse.json({
-          polyline: coords,
-          source: 'straight' as const,
-          warning: data.message ?? 'OSRM no devolvió geometría para esta secuencia de puntos.',
-        });
-      }
-
-      const ring = data.routes[0].geometry!.coordinates!;
-      const polyline = ring.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) })).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
-
-      if (polyline.length < 2) {
-        return straightFallback();
-      }
-
-      return NextResponse.json({ polyline, source: 'osrm' as const });
-    } catch {
-      return NextResponse.json({
-        polyline: coords,
-        source: 'straight' as const,
-        warning:
-          'OSRM no respondió a tiempo o hubo error de red. En producción usá OSRM_BASE_URL propio (ver comentarios en src/lib/osrm-routing.ts).',
-      });
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
+    if (!apiKey) {
+      return straightResponse(
+        'Falta GOOGLE_MAPS_API_KEY en el servidor (misma variable que /api/route/polyline). Se muestra línea recta entre paradas.'
+      );
     }
+
+    const origin = coords[0]!;
+    const destination = coords[coords.length - 1]!;
+    const waypoints = coords.length > 2 ? coords.slice(1, -1) : [];
+
+    const google = await computeGoogleDrivingRoute(apiKey, origin, destination, waypoints);
+    if (!google || google.polyline.length < 2) {
+      return straightResponse(
+        'Google Routes no devolvió una ruta por calles para esta secuencia. Revisá cuotas o la clave; se muestra línea recta.'
+      );
+    }
+
+    return NextResponse.json({ polyline: google.polyline, source: 'google' as const });
   });
 }
