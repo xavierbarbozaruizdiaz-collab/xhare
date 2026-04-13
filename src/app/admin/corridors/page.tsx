@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useAdminAuth } from '../AdminAuthContext';
+import type { CorridorLayerVisibility, CorridorZoneBox } from '@/components/admin/AdminCorridorsMap';
 
 const AdminCorridorsMap = dynamic(() => import('@/components/admin/AdminCorridorsMap'), {
   ssr: false,
@@ -44,6 +45,10 @@ export default function AdminCorridorsPage() {
   const [rows, setRows] = useState<CorridorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [visibility, setVisibility] = useState<CorridorLayerVisibility>({});
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -87,6 +92,83 @@ export default function AdminCorridorsPage() {
     void load();
   }, [ready, isAdmin, load]);
 
+  useEffect(() => {
+    setVisibility((prev) => {
+      const next: CorridorLayerVisibility = { ...prev };
+      for (const r of rows) {
+        if (!next[r.id]) next[r.id] = { origin: true, dest: true };
+      }
+      for (const id of Object.keys(next)) {
+        if (!rows.some((r) => r.id === id)) delete next[id];
+      }
+      return next;
+    });
+  }, [rows]);
+
+  const patchZone = useCallback(
+    async (corridorId: string, kind: 'origin' | 'destination', box: CorridorZoneBox) => {
+      setSaveMsg(null);
+      setSaveErr(null);
+      setSaving(true);
+      let token = accessToken ?? (await refetch()) ?? '';
+      if (!token) {
+        setSaveErr('No hay sesión.');
+        setSaving(false);
+        return;
+      }
+      const body = kind === 'origin' ? { origin_zone: box } : { destination_zone: box };
+      try {
+        let res = await fetch(`/api/admin/corridors/${corridorId}`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(body),
+        });
+        if (res.status === 401) {
+          token = (await refetch()) ?? '';
+          if (token) {
+            res = await fetch(`/api/admin/corridors/${corridorId}`, {
+              method: 'PATCH',
+              credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify(body),
+            });
+          }
+        }
+        const data = (await res.json()) as { corridor?: CorridorRow; error?: string };
+        if (!res.ok) {
+          setSaveErr(typeof data.error === 'string' ? data.error : `Error ${res.status}`);
+          return;
+        }
+        if (data.corridor) {
+          setRows((prev) => prev.map((r) => (r.id === data.corridor!.id ? { ...data.corridor! } : r)));
+        }
+        setSaveMsg('Zona guardada en la base.');
+      } catch (e) {
+        setSaveErr(e instanceof Error ? e.message : 'Error de red');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [accessToken, refetch]
+  );
+
+  const setLayerVis = useCallback((id: string, key: 'origin' | 'dest', value: boolean) => {
+    setVisibility((p) => ({
+      ...p,
+      [id]: {
+        origin: key === 'origin' ? value : (p[id]?.origin ?? true),
+        dest: key === 'dest' ? value : (p[id]?.dest ?? true),
+      },
+    }));
+  }, []);
+
   if (!ready) {
     return <p className="text-gray-500">Cargando…</p>;
   }
@@ -126,12 +208,13 @@ export default function AdminCorridorsPage() {
             corredor; el horario se agrupa en bloques de <strong>15 minutos</strong> (Paraguay).
           </li>
           <li>
-            Cambiar zonas o desactivar un corredor cambia <strong>de inmediato</strong> qué pedidos futuros se
-            clasifican; los ya guardados no se recalculan solos salvo procesos de mantenimiento en base de datos.
+            Podés <strong>redimensionar las cajas en el mapa</strong>; al soltar se guardan en la tabla{' '}
+            <code className="bg-amber-100/80 px-1 rounded text-xs">corridors</code>. Los pedidos ya guardados no se
+            reclasifican solos: hace falta mantenimiento o nuevos inserts.
           </li>
           <li>
-            Los corredores viven en la tabla <code className="bg-amber-100/80 px-1 rounded text-xs">corridors</code>;
-            para editarlos hoy se usa SQL o migraciones (esta pantalla es lectura para transparencia operativa).
+            Usá <strong>Capas</strong> en la tabla para mostrar u ocultar origen/destino cuando se superponen varias
+            cajas.
           </li>
         </ul>
       </div>
@@ -146,10 +229,19 @@ export default function AdminCorridorsPage() {
           Actualizar
         </button>
         {loading && <span className="text-sm text-gray-500">Cargando…</span>}
+        {saving && <span className="text-sm text-teal-700">Guardando zona…</span>}
       </div>
 
       {err && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</div>
+      )}
+      {saveErr && (
+        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{saveErr}</div>
+      )}
+      {saveMsg && !saveErr && (
+        <div className="mb-4 text-sm text-gray-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+          {saveMsg}
+        </div>
       )}
 
       {!loading && rows.length === 0 && !err && (
@@ -165,8 +257,8 @@ export default function AdminCorridorsPage() {
           <p className="text-sm text-gray-600">
             Rectángulos <span className="font-medium text-sky-800">azul</span> = zona donde debe caer el{' '}
             <strong>origen</strong> del pedido; <span className="font-medium text-orange-800">naranja</span> = zona del{' '}
-            <strong>destino</strong>. Si las dos cajas son iguales (viaje local), se superponen: tocá el rectángulo para
-            ver si el globo dice Origen o Destino.
+            <strong>destino</strong>. Si las dos cajas son iguales (viaje local), se superponen: usá las casillas de
+            capas en la tabla para aislar origen o destino.
           </p>
           <div className="flex flex-wrap gap-4 text-xs text-gray-600 mb-1">
             <span className="inline-flex items-center gap-1.5">
@@ -180,7 +272,7 @@ export default function AdminCorridorsPage() {
               Corredor inactivo (más tenue)
             </span>
           </div>
-          <AdminCorridorsMap corridors={rows} />
+          <AdminCorridorsMap corridors={rows} visibility={visibility} onZoneEdited={patchZone} />
         </div>
       )}
 
@@ -189,8 +281,8 @@ export default function AdminCorridorsPage() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                <th className="px-4 py-3 font-semibold text-gray-900" colSpan={6}>
-                  Detalle en tabla
+                <th className="px-4 py-3 font-semibold text-gray-900" colSpan={8}>
+                  Detalle en tabla y capas en el mapa
                 </th>
               </tr>
               <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -198,6 +290,8 @@ export default function AdminCorridorsPage() {
                 <th className="px-4 py-3 font-semibold text-gray-900">Slug</th>
                 <th className="px-4 py-3 font-semibold text-gray-900">Activo</th>
                 <th className="px-4 py-3 font-semibold text-gray-900">Prioridad</th>
+                <th className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">Capa origen</th>
+                <th className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">Capa destino</th>
                 <th className="px-4 py-3 font-semibold text-gray-900">Zona origen (bbox)</th>
                 <th className="px-4 py-3 font-semibold text-gray-900">Zona destino (bbox)</th>
               </tr>
@@ -215,10 +309,30 @@ export default function AdminCorridorsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-800">{r.sort_priority}</td>
-                  <td className="px-4 py-3 text-gray-600 max-w-[220px]">
+                  <td className="px-4 py-3">
+                    <label className="inline-flex items-center gap-2 cursor-pointer text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={visibility[r.id]?.origin !== false}
+                        onChange={(e) => setLayerVis(r.id, 'origin', e.target.checked)}
+                      />
+                      <span className="text-xs">Ver</span>
+                    </label>
+                  </td>
+                  <td className="px-4 py-3">
+                    <label className="inline-flex items-center gap-2 cursor-pointer text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={visibility[r.id]?.dest !== false}
+                        onChange={(e) => setLayerVis(r.id, 'dest', e.target.checked)}
+                      />
+                      <span className="text-xs">Ver</span>
+                    </label>
+                  </td>
+                  <td className="px-4 py-3 text-gray-600 max-w-[200px]">
                     <span className="break-words">{zoneSummary(r.origin_zone)}</span>
                   </td>
-                  <td className="px-4 py-3 text-gray-600 max-w-[220px]">
+                  <td className="px-4 py-3 text-gray-600 max-w-[200px]">
                     <span className="break-words">{zoneSummary(r.destination_zone)}</span>
                   </td>
                 </tr>

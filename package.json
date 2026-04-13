@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@geoman-io/leaflet-geoman-free": "^2.19.3",
     "@supabase/supabase-js": "^2.39.0",
     "jwt-decode": "^4.0.0",
     "leaflet": "^1.9.4",
