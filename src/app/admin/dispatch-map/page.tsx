@@ -545,7 +545,8 @@ export default function AdminDispatchMapPage() {
           <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 mt-3 max-w-3xl">
             Los atajos Casa↔Trabajo con <strong>switch activo</strong> se guardan en la tabla{' '}
             <code className="bg-sky-100 px-1 rounded">passenger_home_map_shortcuts</code> (migración 065) con la sesión
-            Supabase de la app y aparecen en violeta. Requieren coordenadas en el favorito. El resto de la vista sigue
+            Supabase de la app (origen/destino con los mismos colores que el resto del mapa). Requieren coordenadas en el
+            favorito. El resto de la vista sigue
             siendo solicitudes de viaje, demanda y viajes sistema.
           </p>
         </div>
@@ -667,7 +668,9 @@ export default function AdminDispatchMapPage() {
             height="min(70vh, 560px)"
           />
           <p className="text-xs text-gray-500 mt-2">
-            <strong>Ruta manual:</strong> tocá un punto (origen o destino), abrí el globo y pulsá <strong>Añadir a la ruta</strong>. La línea verde sigue calles vía OSRM cuando el servidor responde; si falla, verás rectas entre paradas. Zoom con +/− o la rueda.
+            <strong>Ruta manual:</strong> tocá un punto (origen o destino), abrí el globo y pulsá <strong>Añadir a la ruta</strong>, o
+            hacé <strong>doble clic</strong> en el pin. La línea verde no bloquea los clics en los marcadores. La ruta sigue calles vía OSRM
+            cuando el servidor responde; si falla, verás rectas entre paradas. Zoom con +/− o la rueda.
           </p>
           {routeLineHint && (
             <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">{routeLineHint}</p>

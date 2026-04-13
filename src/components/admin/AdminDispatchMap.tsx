@@ -96,6 +96,12 @@ export default function AdminDispatchMap({
       wrap.style.minWidth = '200px';
       wrap.innerHTML = `<strong>${escapePopup(m.title)}</strong><br/><span style="font-size:12px;color:#444;line-height:1.35">${escapePopup(m.subtitle)}</span>`;
       if (h) {
+        /** Doble clic en el pin = misma acción que el botón (la polilínea encima bloqueaba re-tocar el pin). */
+        mk.on('dblclick', (ev) => {
+          L.DomEvent.stop(ev);
+          h(m);
+          mk.closePopup();
+        });
         const btn = L.DomUtil.create('button', '', wrap) as HTMLButtonElement;
         btn.type = 'button';
         btn.textContent = 'Añadir a la ruta';
@@ -125,6 +131,8 @@ export default function AdminDispatchMap({
         weight: 5,
         opacity: routePolylineLoading ? 0.55 : 0.9,
         dashArray: routePolylineLoading ? '10 8' : undefined,
+        /** Sin esto la línea queda encima del layer de pins y “come” los clics: no se abre el globo ni se añaden paradas. */
+        interactive: false,
       }).addTo(map);
     }
 
