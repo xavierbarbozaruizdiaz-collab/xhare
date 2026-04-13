@@ -63,6 +63,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ polyline: google.polyline, source: 'google' as const });
+    return NextResponse.json({
+      polyline: google.polyline,
+      source: 'google' as const,
+      durationSeconds: google.durationSeconds,
+      distanceMeters: google.distanceMeters,
+    });
   });
 }

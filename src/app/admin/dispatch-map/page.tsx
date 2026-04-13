@@ -58,7 +58,105 @@ type GroupRow = {
   base_trip_request_id: string | null;
 };
 
-type RouteStop = { key: string; lat: number; lng: number; label: string };
+type RouteStop = {
+  key: string;
+  lat: number;
+  lng: number;
+  /** Texto largo para popup / depuración. */
+  label: string;
+  placeName?: string;
+  clientTimeHm?: string | null;
+};
+
+function requestedTimeToHm(t: string | null | undefined): string | null {
+  const m = String(t ?? '').match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+function hmInAsuncionFromIso(iso: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Asuncion',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const h = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '', 10);
+  const min = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '', 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/** `requested_time` HH:mm o fin de ventana en ISO (timestamptz). */
+function tripClientHm(t: string | null | undefined): string | null {
+  const s = String(t ?? '').trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return hmInAsuncionFromIso(s);
+  return requestedTimeToHm(s);
+}
+
+function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLon = ((b.lng - a.lng) * Math.PI) / 180;
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function hmToMinutes(hm: string): number | null {
+  const m = hm.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  return h * 60 + min;
+}
+
+function minutesToHm(mins: number): string {
+  const w = ((Math.round(mins) % (24 * 60)) + (24 * 60)) % (24 * 60);
+  return `${String(Math.floor(w / 60)).padStart(2, '0')}:${String(w % 60).padStart(2, '0')}`;
+}
+
+/** Reparte la duración total del trazado entre tramos proporcional a distancia recta entre paradas; ancla en la primera parada con `clientTimeHm`. */
+function cumulativeEtaHmForStops(
+  stops: Array<{ lat: number; lng: number; clientTimeHm?: string | null }>,
+  routeDurationMinutes: number | null
+): string[] {
+  const n = stops.length;
+  const dash = () => Array.from({ length: n }, () => '—');
+  if (routeDurationMinutes == null || routeDurationMinutes <= 0 || n === 0) return dash();
+
+  const legKm: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    legKm.push(haversineKm(stops[i]!, stops[i + 1]!));
+  }
+  const totalKm = legKm.reduce((a, b) => a + b, 0);
+  if (totalKm <= 0) return dash();
+
+  const legMin = legKm.map((km) => (km / totalKm) * routeDurationMinutes);
+  const cum: number[] = [0];
+  for (let i = 1; i < n; i++) {
+    cum.push(cum[i - 1]! + legMin[i - 1]!);
+  }
+
+  let anchor = 0;
+  while (anchor < n && !stops[anchor]?.clientTimeHm?.trim()) anchor++;
+  if (anchor >= n) return dash();
+  const anchorM = hmToMinutes(stops[anchor]!.clientTimeHm!.trim());
+  if (anchorM == null) return dash();
+
+  return stops.map((_, i) => {
+    const delta = cum[i]! - cum[anchor]!;
+    return minutesToHm(anchorM + delta);
+  });
+}
 
 /** Marcadores del mapa van en pares `…-o` / `…-d` (pedido, ride sistema, atajo). */
 function dispatchMarkerPartnerId(id: string): string | null {
@@ -73,6 +171,8 @@ function routeStopFromDispatchMarker(m: DispatchMapMarker, keySuffix: string): R
     lat: m.lat,
     lng: m.lng,
     label: `${m.title}: ${m.subtitle.slice(0, 80)}`,
+    placeName: m.placeName?.trim() || undefined,
+    clientTimeHm: m.clientTimeHm ?? null,
   };
 }
 
@@ -218,8 +318,15 @@ export default function AdminDispatchMapPage() {
   const [actingGroup, setActingGroup] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [routePolyline, setRoutePolyline] = useState<Array<{ lat: number; lng: number }>>([]);
+  /** Duración total del trazado verde (Google), en minutos; para ETA por parada en la lista. */
+  const [routeDurationMinutes, setRouteDurationMinutes] = useState<number | null>(null);
   const [routeLineLoading, setRouteLineLoading] = useState(false);
   const [routeLineHint, setRouteLineHint] = useState<string | null>(null);
+
+  const routeStopEtas = useMemo(
+    () => cumulativeEtaHmForStops(routeStops, routeDurationMinutes),
+    [routeStops, routeDurationMinutes]
+  );
 
   const load = useCallback(
     async (tokenOverride?: string | null) => {
@@ -318,6 +425,8 @@ export default function AdminDispatchMapPage() {
         color: COL.origin,
         title: `Origen · ${kind}`,
         subtitle: `${timeLine} · ${(tr.origin_label ?? 'Origen').slice(0, 40)} → ${(tr.destination_label ?? 'Destino').slice(0, 40)} · ${tr.status}`,
+        placeName: (tr.origin_label ?? 'Origen').slice(0, 56),
+        clientTimeHm: tripClientHm(tr.requested_time),
       });
       out.push({
         id: `${tr.id}-d`,
@@ -326,6 +435,8 @@ export default function AdminDispatchMapPage() {
         color: COL.destination,
         title: `Destino · ${kind}`,
         subtitle: `${timeLine} · pedido ${tr.id.slice(0, 8)}…`,
+        placeName: (tr.destination_label ?? 'Destino').slice(0, 56),
+        clientTimeHm: tripClientHm(tr.requested_time_end ?? tr.requested_time),
       });
     }
     if (showSystem) {
@@ -338,6 +449,7 @@ export default function AdminDispatchMapPage() {
           hour: '2-digit',
           minute: '2-digit',
         });
+        const rideHm = hmInAsuncionFromIso(r.departure_time);
         out.push({
           id: `${r.id}-o`,
           lat: Number(r.origin_lat),
@@ -345,6 +457,8 @@ export default function AdminDispatchMapPage() {
           color: COL.origin,
           title: 'Origen · Generado por sistema',
           subtitle: `${when} · ${(r.origin_label ?? '').slice(0, 40)} → ${(r.destination_label ?? '').slice(0, 40)}`,
+          placeName: (r.origin_label ?? 'Origen').slice(0, 56),
+          clientTimeHm: rideHm,
         });
         out.push({
           id: `${r.id}-d`,
@@ -353,6 +467,8 @@ export default function AdminDispatchMapPage() {
           color: COL.destination,
           title: 'Destino · Generado por sistema',
           subtitle: `${when} · ride ${r.id.slice(0, 8)}… · cupo ${r.available_seats ?? r.total_seats ?? '—'}`,
+          placeName: (r.destination_label ?? 'Destino').slice(0, 56),
+          clientTimeHm: rideHm,
         });
       }
     }
@@ -363,6 +479,7 @@ export default function AdminDispatchMapPage() {
         const daily = s.schedule_daily ? ' · diario' : '';
         const route = `${(s.origin_label ?? 'Origen').slice(0, 36)} → ${(s.destination_label ?? 'Destino').slice(0, 36)}`;
         const uidShort = s.user_id.length >= 8 ? `${s.user_id.slice(0, 8)}…` : s.user_id;
+        const shortcutHm = requestedTimeToHm(s.scheduled_time);
         out.push({
           id: `shortcut-${s.user_id}-${s.slot}-o`,
           lat: Number(s.origin_lat),
@@ -370,6 +487,8 @@ export default function AdminDispatchMapPage() {
           color: COL.origin,
           title: 'Origen · Atajo app (switch activo)',
           subtitle: `${when}${daily} · ${shortcutSlotLabel(s.slot)} · ${route} · usr ${uidShort}`,
+          placeName: (s.origin_label ?? 'Origen').slice(0, 56),
+          clientTimeHm: shortcutHm,
         });
         out.push({
           id: `shortcut-${s.user_id}-${s.slot}-d`,
@@ -378,6 +497,8 @@ export default function AdminDispatchMapPage() {
           color: COL.destination,
           title: 'Destino · Atajo app (switch activo)',
           subtitle: `${when}${daily} · ${shortcutSlotLabel(s.slot)} · usr ${uidShort}`,
+          placeName: (s.destination_label ?? 'Destino').slice(0, 56),
+          clientTimeHm: shortcutHm,
         });
       }
     }
@@ -435,6 +556,7 @@ export default function AdminDispatchMapPage() {
     const waypoints = routeStops.map((s) => ({ lat: s.lat, lng: s.lng }));
     if (waypoints.length < 2) {
       setRoutePolyline([]);
+      setRouteDurationMinutes(null);
       setRouteLineHint(null);
       setRouteLineLoading(false);
       return;
@@ -448,12 +570,14 @@ export default function AdminDispatchMapPage() {
         if (cancelled) return;
         setRouteLineLoading(true);
         setRoutePolyline(straight);
+        setRouteDurationMinutes(null);
         setRouteLineHint('Calculando ruta por calles (Google Routes)…');
 
         let token = accessToken ?? (await refetch()) ?? '';
         if (!token) {
           if (!cancelled) {
             setRouteLineLoading(false);
+            setRouteDurationMinutes(null);
             setRouteLineHint('No hay sesión para calcular la ruta en el servidor.');
           }
           return;
@@ -482,25 +606,37 @@ export default function AdminDispatchMapPage() {
             source?: string;
             warning?: string;
             error?: string;
+            durationSeconds?: number;
           };
           if (cancelled) return;
           if (!res.ok) {
             setRoutePolyline(straight);
+            setRouteDurationMinutes(null);
             setRouteLineHint(typeof data.error === 'string' ? data.error : 'No se pudo obtener la ruta.');
             return;
           }
           if (Array.isArray(data.polyline) && data.polyline.length >= 2) {
             setRoutePolyline(data.polyline);
+            const dm =
+              data.source === 'google' &&
+              typeof data.durationSeconds === 'number' &&
+              Number.isFinite(data.durationSeconds) &&
+              data.durationSeconds > 0
+                ? Math.max(1, Math.round(data.durationSeconds / 60))
+                : null;
+            setRouteDurationMinutes(dm);
             setRouteLineHint(
               data.source === 'google' ? null : data.warning ?? 'Ruta aproximada (recta entre paradas).'
             );
           } else {
             setRoutePolyline(straight);
+            setRouteDurationMinutes(null);
             setRouteLineHint('Respuesta inválida; línea recta entre paradas.');
           }
         } catch {
           if (!cancelled) {
             setRoutePolyline(straight);
+            setRouteDurationMinutes(null);
             setRouteLineHint('Error de red al calcular la ruta.');
           }
         } finally {
@@ -716,32 +852,46 @@ export default function AdminDispatchMapPage() {
                 Todavía no añadiste puntos. Tocá un marcador en el mapa y en el globo elegí <strong>Añadir a la ruta</strong>.
               </p>
             ) : (
-              <ul className="space-y-2 text-sm">
-                {routeStops.map((s, i) => (
-                  <li key={s.key} className="flex flex-col gap-1 border-b border-gray-100 pb-2">
-                    <span className="text-gray-700 font-medium">
-                      {i + 1}. {s.label.slice(0, 120)}
-                      {s.label.length > 120 ? '…' : ''}
-                    </span>
-                    <div className="flex gap-2">
-                      <button type="button" className="text-xs text-gray-600 underline" onClick={() => moveStop(i, -1)} disabled={i === 0}>
-                        Subir
-                      </button>
-                      <button
-                        type="button"
-                        className="text-xs text-gray-600 underline"
-                        onClick={() => moveStop(i, 1)}
-                        disabled={i === routeStops.length - 1}
-                      >
-                        Bajar
-                      </button>
-                      <button type="button" className="text-xs text-red-600 underline" onClick={() => removeStop(i)}>
-                        Quitar
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <p className="text-xs text-gray-500 mb-3">
+                  Por parada: <strong>lugar</strong>, <strong>hora cliente</strong> (dato del mapa) y <strong>hora en ruta</strong>{' '}
+                  (se recalcula al sumar puntos: reparte el tiempo total del trazado verde entre tramos, anclada en la primera
+                  parada con hora cliente).
+                </p>
+                <ul className="space-y-3 text-sm">
+                  {routeStops.map((s, i) => (
+                    <li key={s.key} className="flex flex-col gap-1.5 border-b border-gray-100 pb-3">
+                      <div className="text-gray-900 font-semibold">
+                        {i + 1}. {s.placeName?.trim() || 'Punto'}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        Hora cliente:{' '}
+                        <span className="font-medium text-gray-800">{s.clientTimeHm?.trim() || '—'}</span>
+                      </div>
+                      <div className="text-xs text-emerald-800">
+                        Hora en ruta (estim.):{' '}
+                        <span className="font-semibold">{routeStopEtas[i] ?? '—'}</span>
+                      </div>
+                      <div className="flex gap-2 pt-0.5">
+                        <button type="button" className="text-xs text-gray-600 underline" onClick={() => moveStop(i, -1)} disabled={i === 0}>
+                          Subir
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs text-gray-600 underline"
+                          onClick={() => moveStop(i, 1)}
+                          disabled={i === routeStops.length - 1}
+                        >
+                          Bajar
+                        </button>
+                        <button type="button" className="text-xs text-red-600 underline" onClick={() => removeStop(i)}>
+                          Quitar
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
             <button
               type="button"

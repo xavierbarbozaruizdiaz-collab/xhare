@@ -11,6 +11,10 @@ export type DispatchMapMarker = {
   color: string;
   title: string;
   subtitle: string;
+  /** Nombre corto para lista de paradas (origen/destino). */
+  placeName?: string;
+  /** HH:mm que cargó el cliente (pedido / atajo / salida sistema). */
+  clientTimeHm?: string | null;
 };
 
 function escapePopup(s: string): string {
