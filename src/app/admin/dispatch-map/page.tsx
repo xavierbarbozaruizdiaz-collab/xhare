@@ -328,6 +328,14 @@ export default function AdminDispatchMapPage() {
     [routeStops, routeDurationMinutes]
   );
 
+  const routeStopOrderPins = useMemo(
+    () =>
+      routeStops
+        .map((s, i) => ({ lat: s.lat, lng: s.lng, order: i + 1 }))
+        .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)),
+    [routeStops]
+  );
+
   const load = useCallback(
     async (tokenOverride?: string | null) => {
       const initial = tokenOverride ?? accessToken;
@@ -830,6 +838,7 @@ export default function AdminDispatchMapPage() {
             markers={markers}
             routePolyline={routePolyline}
             routePolylineLoading={routeLineLoading}
+            routeStopOrder={routeStopOrderPins}
             onMarkerDoubleClick={appendStop}
             height="min(70vh, 560px)"
           />

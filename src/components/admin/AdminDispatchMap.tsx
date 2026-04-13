@@ -25,12 +25,16 @@ function escapePopup(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+export type RouteStopOrderPin = { lat: number; lng: number; /** 1-based, coincide con la lista “Paradas de la ruta”. */ order: number };
+
 type Props = {
   markers: DispatchMapMarker[];
   /** Geometría a dibujar (Google Routes por calles o recta entre paradas). */
   routePolyline: Array<{ lat: number; lng: number }>;
   /** Mientras se calcula la ruta, línea punteada sobre trazado provisional. */
   routePolylineLoading?: boolean;
+  /** Solo panel admin despacho: números encima de la secuencia de paradas manuales. */
+  routeStopOrder?: RouteStopOrderPin[];
   onMarkerDoubleClick?: (m: DispatchMapMarker) => void;
   height?: string;
   className?: string;
@@ -40,6 +44,7 @@ export default function AdminDispatchMap({
   markers,
   routePolyline,
   routePolylineLoading = false,
+  routeStopOrder,
   onMarkerDoubleClick,
   height = '480px',
   className = '',
@@ -47,6 +52,7 @@ export default function AdminDispatchMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const routeBadgesLayerRef = useRef<L.LayerGroup | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
   const handlerRef = useRef<typeof onMarkerDoubleClick>(onMarkerDoubleClick);
   handlerRef.current = onMarkerDoubleClick;
@@ -62,6 +68,9 @@ export default function AdminDispatchMap({
     }).addTo(map);
     mapRef.current = map;
     markersLayerRef.current = L.layerGroup().addTo(map);
+    const badgePane = map.createPane('adminRouteBadges');
+    badgePane.style.zIndex = '680';
+    routeBadgesLayerRef.current = L.layerGroup([], { pane: 'adminRouteBadges' }).addTo(map);
     const t = setTimeout(() => map.invalidateSize(), 200);
     return () => {
       clearTimeout(t);
@@ -72,6 +81,7 @@ export default function AdminDispatchMap({
       map.remove();
       mapRef.current = null;
       markersLayerRef.current = null;
+      routeBadgesLayerRef.current = null;
     };
   }, []);
 
@@ -140,10 +150,30 @@ export default function AdminDispatchMap({
       }).addTo(map);
     }
 
+    const badgeGroup = routeBadgesLayerRef.current;
+    if (badgeGroup) {
+      badgeGroup.clearLayers();
+      for (const pin of routeStopOrder ?? []) {
+        if (!Number.isFinite(pin.lat) || !Number.isFinite(pin.lng) || !Number.isFinite(pin.order)) continue;
+        const n = Math.min(99, Math.max(1, Math.floor(pin.order)));
+        const icon = L.divIcon({
+          className: 'admin-dispatch-route-order-badge',
+          html: `<div style="width:22px;height:22px;border-radius:50%;background:#0f766e;color:#fff;font:700 12px/22px ui-sans-serif,system-ui,sans-serif;text-align:center;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45);">${n}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        });
+        L.marker([pin.lat, pin.lng], {
+          icon,
+          interactive: false,
+          zIndexOffset: 900,
+        }).addTo(badgeGroup);
+      }
+    }
+
     if (bounds.length > 0) {
       map.fitBounds(L.latLngBounds(bounds), { padding: [48, 48], maxZoom: 13 });
     }
-  }, [markers, routePolyline, routePolylineLoading]);
+  }, [markers, routePolyline, routePolylineLoading, routeStopOrder]);
 
   return <div ref={containerRef} className={`w-full z-0 ${className}`} style={{ height, minHeight: 280 }} />;
 }

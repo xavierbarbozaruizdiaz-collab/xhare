@@ -1,0 +1,5 @@
+/* Leaflet divIcon añade fondo blanco; los badges de orden van encima de la ruta. */
+.admin-dispatch-route-order-badge {
+  background: transparent !important;
+  border: none !important;
+}
