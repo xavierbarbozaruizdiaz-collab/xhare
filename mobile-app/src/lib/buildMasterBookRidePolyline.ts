@@ -7,7 +7,7 @@
  * Por eso usamos **chunks** (varios waypoints por petición, tope conservador) y solo caemos al
  * encadenamiento de a pares como último recurso antes del polyline solo del conductor.
  */
-import { fetchRoute } from '../backend/routeApi';
+import { fetchRoute, type RouteFetchOptions } from '../backend/routeApi';
 import { distanceMeters, getPositionAlongPolyline, type Point } from './geo';
 
 const DEDUP_M = 12;
@@ -169,10 +169,11 @@ function concatPolylineParts(parts: Point[][]): Point[] | null {
  * Varias peticiones OSRM, cada una con hasta MAX_VIA_PER_REQUEST waypoints.
  * Ej. 40 paradas → ~5 llamadas en lugar de 39 en el encadenamiento de a pares.
  */
-async function fetchChunkedOsrm(ordered: Point[]): Promise<Point[] | null> {
+async function fetchChunkedOsrm(ordered: Point[], routeOpts?: RouteFetchOptions): Promise<Point[] | null> {
   if (ordered.length < 2) return null;
   if (ordered.length === 2) {
-    const r = await fetchRoute(ordered[0], ordered[1], []);
+    const r = await fetchRoute(ordered[0], ordered[1], [], routeOpts);
+    if (r.aborted) return null;
     return r.polyline && r.polyline.length >= 2
       ? r.polyline.map((x) => ({ lat: x.lat, lng: x.lng }))
       : null;
@@ -180,12 +181,14 @@ async function fetchChunkedOsrm(ordered: Point[]): Promise<Point[] | null> {
   const parts: Point[][] = [];
   let i = 0;
   while (i < ordered.length - 1) {
+    if (routeOpts?.signal?.aborted) return null;
     const end = Math.min(i + MAX_VIA_PER_REQUEST + 1, ordered.length - 1);
     const chunk = ordered.slice(i, end + 1);
     const o = chunk[0];
     const d = chunk[chunk.length - 1];
     const wps = chunk.slice(1, -1);
-    const r = await fetchRoute(o, d, wps);
+    const r = await fetchRoute(o, d, wps, routeOpts);
+    if (r.aborted) return null;
     if (r.error || !r.polyline || r.polyline.length < 2) return null;
     parts.push(r.polyline.map((x) => ({ lat: x.lat, lng: x.lng })));
     i = end;
@@ -194,13 +197,15 @@ async function fetchChunkedOsrm(ordered: Point[]): Promise<Point[] | null> {
 }
 
 /** Encadena A→B→C… con OSRM en cada par consecutivo (último recurso; costoso si hay muchas paradas). */
-async function chainOsrmThroughPoints(ordered: Point[]): Promise<Point[] | null> {
+async function chainOsrmThroughPoints(ordered: Point[], routeOpts?: RouteFetchOptions): Promise<Point[] | null> {
   if (ordered.length < 2) return null;
   const parts: Point[][] = [];
   for (let j = 0; j < ordered.length - 1; j++) {
+    if (routeOpts?.signal?.aborted) return null;
     const a = ordered[j];
     const b = ordered[j + 1];
-    const r = await fetchRoute(a, b, []);
+    const r = await fetchRoute(a, b, [], routeOpts);
+    if (r.aborted) return null;
     let seg: Point[] | null =
       r.polyline && r.polyline.length >= 2 ? r.polyline.map((x) => ({ lat: x.lat, lng: x.lng })) : null;
     if (!seg || seg.length < 2) {
@@ -219,9 +224,13 @@ export async function buildMasterBookRidePolyline(params: {
   driverStops: MasterBookRideStop[];
   existingPickups: Array<{ lat: number; lng: number }>;
   existingDropoffs: Array<{ lat: number; lng: number }>;
+  /** Cancelación: al abortar se devuelve la poly base del conductor sin seguir encadenando OSRM. */
+  signal?: AbortSignal;
 }): Promise<Point[]> {
-  const { driverBaseRoute: base, driverStops, existingPickups, existingDropoffs } = params;
+  const { driverBaseRoute: base, driverStops, existingPickups, existingDropoffs, signal } = params;
+  const routeOpts: RouteFetchOptions | undefined = signal ? { signal } : undefined;
   if (base.length < 2) return [];
+  if (signal?.aborted) return [];
 
   const tagged: { p: Point; t: number; ord: number }[] = [];
   let ord = 0;
@@ -258,23 +267,27 @@ export async function buildMasterBookRidePolyline(params: {
 
   const fewStops = waypoints.length <= 5 && deduped.length < 12;
   if (fewStops) {
-    const res = await fetchRoute(origin, destination, waypoints);
-    if (!res.error && res.polyline && res.polyline.length >= 2) {
+    const res = await fetchRoute(origin, destination, waypoints, routeOpts);
+    if (signal?.aborted) return [...base];
+    if (!res.aborted && !res.error && res.polyline && res.polyline.length >= 2) {
       return res.polyline.map((x) => ({ lat: x.lat, lng: x.lng }));
     }
   }
 
-  const chunked = await fetchChunkedOsrm(deduped);
+  const chunked = await fetchChunkedOsrm(deduped, routeOpts);
+  if (signal?.aborted) return [...base];
   if (chunked && chunked.length >= 2) return chunked;
 
   if (!fewStops) {
-    const res = await fetchRoute(origin, destination, waypoints);
-    if (!res.error && res.polyline && res.polyline.length >= 2) {
+    const res = await fetchRoute(origin, destination, waypoints, routeOpts);
+    if (signal?.aborted) return [...base];
+    if (!res.aborted && !res.error && res.polyline && res.polyline.length >= 2) {
       return res.polyline.map((x) => ({ lat: x.lat, lng: x.lng }));
     }
   }
 
-  const chained = await chainOsrmThroughPoints(deduped);
+  const chained = await chainOsrmThroughPoints(deduped, routeOpts);
+  if (signal?.aborted) return [...base];
   if (chained && chained.length >= 2) return chained;
 
   return [...base];

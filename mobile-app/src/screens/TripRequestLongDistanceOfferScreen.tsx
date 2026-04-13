@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  Platform,
   type ViewStyle,
 } from 'react-native';
 import MapView, { Polyline, Marker } from 'react-native-maps';
@@ -20,7 +21,7 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
-import { fetchRoute } from '../backend/routeApi';
+import { fetchRoute, type RouteFetchOptions } from '../backend/routeApi';
 import { raceWithTimeout } from '../backend/withTimeout';
 import { androidMapProvider } from '../lib/androidMapProvider';
 import type { MainStackParamList } from '../navigation/types';
@@ -88,8 +89,17 @@ function TripOfferMapView({
           ]
         : [];
 
+  const mapKey = [
+    origin?.lat ?? '',
+    origin?.lng ?? '',
+    destination?.lat ?? '',
+    destination?.lng ?? '',
+    polyline.length,
+  ].join('|');
+
   return (
     <MapView
+      key={mapKey}
       provider={androidMapProvider}
       style={style}
       initialRegion={region}
@@ -147,8 +157,10 @@ export function TripRequestLongDistanceOfferScreen() {
   }, [mapPolyline, mapOrigin, mapDestination]);
 
   const hasMapCoords = mapOrigin != null && mapDestination != null;
+  /** El mapa dibuja línea recta si no hay polyline (BD u OSRM vía EXPO_PUBLIC_API_BASE_URL); no es fallo del Maps SDK. */
+  const mapShowsStraightLine = hasMapCoords && mapPolyline.length < 2;
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (routeFetchOpts?: RouteFetchOptions) => {
     if (!session?.id) {
       setLoading(false);
       return;
@@ -158,6 +170,7 @@ export function TripRequestLongDistanceOfferScreen() {
     setMapOrigin(null);
     setMapDestination(null);
     setMapPolyline([]);
+    setMapLoading(false);
     try {
       const trQ = supabase
         .from('trip_requests')
@@ -180,12 +193,14 @@ export function TripRequestLongDistanceOfferScreen() {
         setTrip(null);
         setLoadError(trErr?.message === 'timeout' ? 'Tiempo de espera.' : 'Solicitud no disponible.');
         setOffers([]);
+        setMapLoading(false);
         return;
       }
       if (tr.pricing_kind !== 'long_distance') {
         setTrip(null);
         setLoadError('Esta solicitud no es larga distancia.');
         setOffers([]);
+        setMapLoading(false);
         return;
       }
 
@@ -204,8 +219,13 @@ export function TripRequestLongDistanceOfferScreen() {
       if (poly.length < 2 && o && d) {
         setMapLoading(true);
         try {
-          const r = await fetchRoute({ lat: o.lat, lng: o.lng }, { lat: d.lat, lng: d.lng }, []);
-          if (r.polyline && r.polyline.length >= 2) {
+          const r = await fetchRoute(
+            { lat: o.lat, lng: o.lng },
+            { lat: d.lat, lng: d.lng },
+            [],
+            routeFetchOpts
+          );
+          if (!r.aborted && r.polyline && r.polyline.length >= 2) {
             poly = r.polyline.map((p) => ({ lat: p.lat, lng: p.lng }));
           }
         } finally {
@@ -239,11 +259,14 @@ export function TripRequestLongDistanceOfferScreen() {
       }
     } finally {
       setLoading(false);
+      setMapLoading(false);
     }
   }, [session?.id, tripRequestId]);
 
   useEffect(() => {
-    void load();
+    const ac = new AbortController();
+    void load({ signal: ac.signal });
+    return () => ac.abort();
   }, [load]);
 
   const submitOffer = useCallback(async () => {
@@ -252,6 +275,10 @@ export function TripRequestLongDistanceOfferScreen() {
       return;
     }
     const n = parseInt(priceInput.replace(/\D/g, ''), 10);
+    if (!Number.isFinite(n) || n < 1000) {
+      Alert.alert('Precio', 'Indicá al menos 1.000 Gs por asiento.');
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await upsertMyTripRequestDriverOffer({
@@ -318,7 +345,7 @@ export function TripRequestLongDistanceOfferScreen() {
         <Text style={styles.section}>Mapa del trayecto</Text>
         {hasMapCoords ? (
           <View style={styles.mapCard}>
-            <View style={styles.mapWrap}>
+            <View style={styles.mapWrap} collapsable={Platform.OS === 'android' ? false : undefined}>
               {mapLoading ? (
                 <View style={styles.mapLoading}>
                   <ActivityIndicator color="#166534" />
@@ -334,6 +361,11 @@ export function TripRequestLongDistanceOfferScreen() {
                 />
               )}
             </View>
+            {!mapLoading && mapShowsStraightLine ? (
+              <Text style={styles.mapRouteNote}>
+                Línea recta: sin ruta por calles desde el servidor.
+              </Text>
+            ) : null}
             <TouchableOpacity
               style={styles.fullscreenBtn}
               onPress={() => setMapFullVisible(true)}
@@ -462,6 +494,7 @@ const styles = StyleSheet.create({
   mapWrap: {
     width: '100%',
     height: 220,
+    minHeight: 220,
     borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 1,
@@ -476,6 +509,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3f4f6',
   },
   mapLoadingText: { marginTop: 8, fontSize: 13, color: '#6b7280' },
+  mapRouteNote: {
+    fontSize: 12,
+    color: '#92400e',
+    marginTop: 8,
+    lineHeight: 17,
+  },
   fullscreenBtn: {
     marginTop: 10,
     paddingVertical: 12,

@@ -14,7 +14,13 @@ import {
 import { CommonActions, useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
-import { fetchMyRides, fetchBookingsAggregate } from '../rides/api';
+import {
+  fetchMyRides,
+  fetchBookingsAggregate,
+  fetchAwaitingDriverRides,
+  fetchAcceptedTripRequestSeatsByRide,
+} from '../rides/api';
+import { SystemGeneratedRideCard, type SystemGeneratedRideRow } from '../components/SystemGeneratedRideCard';
 import type { MainStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'MyPublishedRides'>;
@@ -68,6 +74,8 @@ function statusLabel(s: string | null | undefined): string {
       return 'Finalizado';
     case 'cancelled':
       return 'Cancelado';
+    case 'awaiting_driver':
+      return 'Sin conductor';
     default:
       return s ?? '—';
   }
@@ -113,6 +121,8 @@ export function MyPublishedRidesScreen() {
   const { session } = useAuth();
 
   const [rows, setRows] = useState<RideRow[]>([]);
+  const [dispatchRows, setDispatchRows] = useState<RideRow[]>([]);
+  const [dispatchSeats, setDispatchSeats] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,14 +133,25 @@ export function MyPublishedRidesScreen() {
       if (alive()) {
         setLoading(false);
         setRows([]);
+        setDispatchRows([]);
+        setDispatchSeats({});
       }
       return;
     }
     if (alive()) setError(null);
     try {
-      const list = await fetchMyRides(session.id);
+      const [list, awaiting] = await Promise.all([
+        fetchMyRides(session.id),
+        fetchAwaitingDriverRides().catch((e) => {
+          if (__DEV__) {
+            console.warn('[RIDES AWAITING] fetch error', e);
+          }
+          return [];
+        }),
+      ]);
       if (!alive()) return;
       const all = list as RideRow[];
+      const ownIds = new Set(all.map((r) => r.id));
       const ids = all.map((r) => r.id);
       const { reservedByRide } = await fetchBookingsAggregate(ids);
       if (!alive()) return;
@@ -140,10 +161,23 @@ export function MyPublishedRidesScreen() {
           reserved: reservedByRide[r.id] ?? 0,
         }))
       );
+      const rawAwaiting = awaiting as RideRow[];
+      const dList = rawAwaiting.filter((r) => !ownIds.has(r.id));
+      if (__DEV__) {
+        console.log('[RIDES AWAITING]', rawAwaiting);
+      }
+      setDispatchRows(dList);
+      const dIds = dList.map((r) => r.id);
+      const seatsMap =
+        dIds.length > 0 ? await fetchAcceptedTripRequestSeatsByRide(dIds).catch(() => ({})) : {};
+      if (!alive()) return;
+      setDispatchSeats(seatsMap as Record<string, number>);
     } catch (e) {
       if (!alive()) return;
       setError(e instanceof Error ? e.message : 'No se pudieron cargar tus viajes');
       setRows([]);
+      setDispatchRows([]);
+      setDispatchSeats({});
     } finally {
       if (alive()) {
         setLoading(false);
@@ -254,7 +288,7 @@ export function MyPublishedRidesScreen() {
     );
   }
 
-  const hasAnyRide =
+  const hasOwnRides =
     buckets.programados.length + buckets.noRealizados.length + buckets.realizados.length > 0;
 
   const listData =
@@ -270,7 +304,23 @@ export function MyPublishedRidesScreen() {
     <View style={styles.container}>
       <Text style={styles.intro}>
         Elegí una categoría para ver la lista. En cada viaje podés abrir detalle, pasajeros y acciones.
+        {dispatchRows.length > 0
+          ? ' Arriba: viajes generados automáticamente desde demanda agrupada (despacho).'
+          : ''}
       </Text>
+      {dispatchRows.length > 0 ? (
+        <View style={styles.dispatchSection}>
+          <Text style={styles.dispatchSectionTitle}>Viajes generados por el sistema</Text>
+          {dispatchRows.map((dr) => (
+            <SystemGeneratedRideCard
+              key={dr.id}
+              r={dr as SystemGeneratedRideRow}
+              passengerSeats={dispatchSeats[dr.id] ?? 0}
+              onOpenDetail={() => navigation.navigate('RideDetail', { rideId: dr.id })}
+            />
+          ))}
+        </View>
+      ) : null}
       {enRouteRide ? (
         <TouchableOpacity
           style={styles.enRouteBanner}
@@ -289,7 +339,7 @@ export function MyPublishedRidesScreen() {
       ) : null}
       {error ? <Text style={styles.err}>{error}</Text> : null}
 
-      {!hasAnyRide ? (
+      {!hasOwnRides && dispatchRows.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>Todavía no tenés viajes registrados.</Text>
           <TouchableOpacity
@@ -302,6 +352,12 @@ export function MyPublishedRidesScreen() {
           >
             <Text style={styles.linkBtnText}>Publicar un viaje</Text>
           </TouchableOpacity>
+        </View>
+      ) : !hasOwnRides ? (
+        <View style={styles.listPlaceholder}>
+          <Text style={styles.listPlaceholderText}>
+            Los viajes generados arriba siguen en despacho hasta asignar conductor (próximamente). También podés publicar un viaje propio.
+          </Text>
         </View>
       ) : (
         <>
@@ -375,6 +431,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   intro: { fontSize: 14, color: '#6b7280', marginBottom: 12, lineHeight: 20 },
+  dispatchSection: { marginBottom: 16 },
+  dispatchSectionTitle: { fontSize: 16, fontWeight: '800', color: '#0f766e', marginBottom: 10 },
   enRouteBanner: {
     backgroundColor: '#eff6ff',
     borderWidth: 2,

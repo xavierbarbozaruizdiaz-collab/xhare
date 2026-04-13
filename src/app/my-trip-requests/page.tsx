@@ -16,6 +16,9 @@ function shortLabel(label: string | null | undefined, max = 50): string {
 function requestStatusConfig(status: string): { label: string; className: string } {
   const map: Record<string, { label: string; className: string }> = {
     pending: { label: 'Pendiente', className: 'bg-amber-100 text-amber-800' },
+    grouping: { label: 'Agrupando', className: 'bg-yellow-100 text-yellow-900' },
+    grouped: { label: 'En grupo', className: 'bg-sky-100 text-sky-900' },
+    group_linked_pending: { label: 'Viaje publicado', className: 'bg-teal-100 text-teal-900' },
     accepted: { label: 'Aceptada', className: 'bg-green-100 text-green-800' },
     expired: { label: 'Expirada', className: 'bg-gray-100 text-gray-600' },
     cancelled: { label: 'Cancelada', className: 'bg-red-100 text-red-800' },

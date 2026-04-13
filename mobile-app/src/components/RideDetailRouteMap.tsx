@@ -108,8 +108,16 @@ export function RideDetailRouteMap({
   const stopsRef = useRef(sortedStops);
   const polylineRef = useRef(polyline);
   const mapRef = useRef<React.ComponentRef<typeof MapView>>(null);
+  const detailPerfT0 = useRef(0);
+  const mapReadyAtRef = useRef(0);
   stopsRef.current = sortedStops;
   polylineRef.current = polyline;
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    detailPerfT0.current = Date.now();
+    console.log('[perf][RideDetailRouteMap] screen mounted', { rideId });
+  }, [rideId]);
 
   /** Evita re-disparar merge por referencia nueva del mismo array de polyline. */
   const polylineSig = useMemo(() => {
@@ -174,6 +182,7 @@ export function RideDetailRouteMap({
     }
     setMasterGreyRoute(pl);
     let cancelled = false;
+    const ac = new AbortController();
     setMasterGreyLoading(true);
     const pickups = [...coPassengerPickups, ...otherBookingsGeo.map((b) => b.pickup)];
     const dropoffs = [...coPassengerDropoffs, ...otherBookingsGeo.map((b) => b.dropoff)];
@@ -182,6 +191,7 @@ export function RideDetailRouteMap({
       driverStops: stopsRef.current,
       existingPickups: pickups,
       existingDropoffs: dropoffs,
+      signal: ac.signal,
     })
       .then((pts) => {
         if (cancelled) return;
@@ -192,6 +202,7 @@ export function RideDetailRouteMap({
       });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [masterInputsKey, hasSharedBookingPoints]);
 
@@ -217,11 +228,12 @@ export function RideDetailRouteMap({
     const { pickup, dropoff, extras = [] } = passengerBookingGeo;
     const stops = stopsRef.current;
     let cancelled = false;
+    const ac = new AbortController();
     setPassengerLineLoading(true);
     try {
       const drv = driverIntermediateStopsBetween(pl, pickup, dropoff, stops);
       const wp = mergeOsrmWaypointsBetween(pl, pickup, dropoff, extras, drv, []);
-      void buildPassengerMergedRoute(pl, pickup, dropoff, wp)
+      void buildPassengerMergedRoute(pl, pickup, dropoff, wp, { signal: ac.signal })
         .then((seg) => {
           if (cancelled) return;
           setPassengerSeg(seg && seg.mid && seg.mid.length >= 2 ? seg : null);
@@ -240,6 +252,7 @@ export function RideDetailRouteMap({
     }
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [pbKey, displayBaseSig, stopsKey]);
 
@@ -310,11 +323,22 @@ export function RideDetailRouteMap({
       .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
       .map((p) => ({ latitude: p.lat, longitude: p.lng }));
     if (coords.length < 2) return;
-    const delayMs = Platform.OS === 'android' ? 650 : 180;
+    // Android: espera mínima para layout del mapa antes de fit; 650ms era muy conservador y retrasa tiles útiles.
+    const delayMs = Platform.OS === 'android' ? 320 : 180;
+    if (__DEV__) {
+      console.log('[perf][RideDetailRouteMap] fit scheduled', { delayMs, mapFitKey: mapFitKey.slice(0, 48) });
+    }
     const t = setTimeout(() => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           try {
+            if (__DEV__) {
+              const now = Date.now();
+              console.log('[perf][RideDetailRouteMap] fitToCoordinates called', {
+                msSinceMapReady: mapReadyAtRef.current ? now - mapReadyAtRef.current : -1,
+                msSinceScreenMount: detailPerfT0.current ? now - detailPerfT0.current : -1,
+              });
+            }
             mapRef.current?.fitToCoordinates(coords, {
               edgePadding: { top: 28, right: 28, bottom: 28, left: 28 },
               animated: Platform.OS !== 'android',
@@ -391,7 +415,15 @@ export function RideDetailRouteMap({
           provider={androidMapProvider}
           style={StyleSheet.absoluteFill}
           initialRegion={region}
-          onMapReady={() => setMapReady(true)}
+          onMapReady={() => {
+            if (__DEV__) {
+              mapReadyAtRef.current = Date.now();
+              console.log('[perf][RideDetailRouteMap] onMapReady', {
+                msSinceScreenMount: detailPerfT0.current ? mapReadyAtRef.current - detailPerfT0.current : -1,
+              });
+            }
+            setMapReady(true);
+          }}
           loadingEnabled={Platform.OS !== 'android'}
           scrollEnabled
           zoomEnabled

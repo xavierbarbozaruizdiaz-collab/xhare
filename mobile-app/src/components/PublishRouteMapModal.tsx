@@ -187,7 +187,7 @@ export function PublishRouteMapModal({
           <View style={styles.headerSpacer} />
         </View>
         <Text style={styles.hint}>
-          Tocá el mapa para colocar el punto. La ruta verde es OSRM (origen → paradas → destino).
+          Tocá el mapa para colocar el punto. La ruta verde es por calles (origen → paradas → destino).
           {mapMode === 'waypoint'
             ? ' Colocá la parada donde quieras (entre origen y destino). Para quitarla, tocá el pin o la etiqueta.'
             : ''}
@@ -206,6 +206,7 @@ export function PublishRouteMapModal({
             pitchEnabled={false}
             showsUserLocation={locationOk}
             showsMyLocationButton={false}
+            loadingEnabled={Platform.OS !== 'android'}
           >
             {polylineCoords.length >= 2 && (
               <Polyline coordinates={polylineCoords} strokeColor={GREEN} strokeWidth={5} />

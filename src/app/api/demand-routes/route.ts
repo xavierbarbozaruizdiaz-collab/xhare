@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGetUser, createServerClient } from '@/lib/supabase/server';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/demand-routes
  * Lista rutas con demanda agrupadas (para conductor y pasajero).

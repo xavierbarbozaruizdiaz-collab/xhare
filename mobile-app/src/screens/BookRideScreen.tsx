@@ -129,8 +129,9 @@ export function BookRideScreen() {
       return;
     }
     let cancelled = false;
+    const ac = new AbortController();
     setRouteResolving(true);
-    void loadRidePolyline(rideRef.current, driverStopsRef.current)
+    void loadRidePolyline(rideRef.current, driverStopsRef.current, { signal: ac.signal })
       .then((r) => {
         if (cancelled) return;
         setResolvedRoute(r.points);
@@ -140,6 +141,7 @@ export function BookRideScreen() {
       });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [rideId, polyLen, stopsKey]);
 
@@ -157,12 +159,14 @@ export function BookRideScreen() {
     }
     setMapDisplayRoute(resolvedRoute);
     let cancelled = false;
+    const ac = new AbortController();
     setMasterGreyResolving(true);
     void buildMasterBookRidePolyline({
       driverBaseRoute: resolvedRoute,
       driverStops,
       existingPickups: existingPickups.map((p) => ({ lat: p.lat, lng: p.lng })),
       existingDropoffs: existingDropoffs.map((p) => ({ lat: p.lat, lng: p.lng })),
+      signal: ac.signal,
     }).then((pts) => {
       if (cancelled) return;
       setMapDisplayRoute(pts.length >= 2 ? pts : resolvedRoute);
@@ -171,6 +175,7 @@ export function BookRideScreen() {
     });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [resolvedRoute, stopsKey, existingPickups, existingDropoffs, env.apiBaseUrl]);
 
@@ -387,13 +392,15 @@ export function BookRideScreen() {
       return;
     }
     let cancelled = false;
+    const ac = new AbortController();
     setPriceLoading(true);
     fetchSegmentStats(
       { lat: pickup.lat, lng: pickup.lng },
       { lat: dropoff.lat, lng: dropoff.lng },
-      waypointsBetween
+      waypointsBetween,
+      { signal: ac.signal }
     ).then((res) => {
-      if (cancelled) return;
+      if (cancelled || res.aborted) return;
       if (res.error || res.distanceKm == null) {
         setSegmentDistanceKm(null);
         return;
@@ -404,6 +411,7 @@ export function BookRideScreen() {
     });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, waypointsBetween, usesDriverSeatPrice]);
 
@@ -422,9 +430,10 @@ export function BookRideScreen() {
     }
 
     let cancelled = false;
+    const ac = new AbortController();
     const wpsFingerprint = (wps: Point[]) => wps.map((p) => `${p.lat},${p.lng}`).join(';');
     const tryMerge = (wps: Point[], isMinimalRetry: boolean) => {
-      void buildPassengerMergedRoute(mapDisplayRoute, pickup, dropoff, wps).then((seg) => {
+      void buildPassengerMergedRoute(mapDisplayRoute, pickup, dropoff, wps, { signal: ac.signal }).then((seg) => {
         if (cancelled) return;
         const ok = Boolean(seg && seg.mid && seg.mid.length >= 2);
         const fp = wpsFingerprint(wps);
@@ -455,6 +464,7 @@ export function BookRideScreen() {
     return () => {
       cancelled = true;
       clearTimeout(handle);
+      ac.abort();
     };
   }, [mergeStableKey, waypointsBetweenKey, waypointsBetween, pickup, dropoff, mapDisplayRoute]);
 

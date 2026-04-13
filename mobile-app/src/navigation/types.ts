@@ -1,6 +1,7 @@
 /**
  * Navigation param lists for type-safe routes.
  */
+import type { PassengerFavoriteSlot } from '../lib/passengerFavorites';
 
 /** Params para Main cuando se navega por deep link a una pantalla anidada. */
 export type MainScreenParams =
@@ -26,7 +27,8 @@ export type MainStackParamList = {
         suggestedSeatPriceGs?: number;
       }
     | undefined;
-  SearchPublishedRides: undefined;
+  /** `favoriteSlot`: mismo formulario que buscar, con acción principal “Guardar favorito”. */
+  SearchPublishedRides: { favoriteSlot?: PassengerFavoriteSlot };
   /** Lista del día: viajes publicados con cupos (sin pantalla de filtros). */
   AvailableRides: undefined;
   /** Viajes en curso cerca: mapa + lista (filtros en API). */

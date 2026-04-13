@@ -150,9 +150,10 @@ android {
         // Usamos resValue porque app_name viene de strings.xml generado.
         resValue "string", "app_name", (appFlavor == 'driver' ? 'Xhare Driver' : 'Xhare')
 
-        // Launcher/Application alineados con applicationId: Expo ejecuta {applicationId}/.MainActivity
-        def mainActivityClass = appFlavor == 'driver' ? 'com.xhare.driver.MainActivity' : 'com.xhare.app.MainActivity'
-        def mainApplicationClass = appFlavor == 'driver' ? 'com.xhare.driver.MainApplication' : 'com.xhare.app.MainApplication'
+        // Misma implementación RN/Expo para ambos flavors; solo cambia applicationId y nombre en launcher.
+        // (Las clases com.xhare.driver.* ya no existen en el árbol de fuentes; duplicarlas rompe release driver.)
+        def mainActivityClass = 'com.xhare.app.MainActivity'
+        def mainApplicationClass = 'com.xhare.app.MainApplication'
         // Maps SDK: misma variable que en mobile-app/.env y EAS Secrets. Nunca commitear la key en este repo.
         // Orden: env del proceso → -P / gradle.properties del proyecto → android/local.properties (gitignored).
         def envMapsKey = (System.getenv('GOOGLE_MAPS_ANDROID_API_KEY') ?: '').trim()

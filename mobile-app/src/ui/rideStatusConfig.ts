@@ -4,6 +4,7 @@
 export function rideStatusConfig(status: string): { label: string; color: string } {
   const map: Record<string, { label: string; color: string }> = {
     draft: { label: 'Borrador', color: '#6b7280' },
+    awaiting_driver: { label: 'Disponible', color: '#0d9488' },
     published: { label: 'Publicado', color: '#166534' },
     booked: { label: 'Con reservas', color: '#b45309' },
     en_route: { label: 'En camino', color: '#1d4ed8' },

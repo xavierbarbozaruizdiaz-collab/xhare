@@ -2,7 +2,7 @@
  * Conductor: publicar viaje (mapa, fecha/hora, flexibilidad, asientos del vehículo, descripción).
  * Alineado al flujo de web `src/app/publish/page.tsx`: insert en `rides` + `ride_stops`, vincular `trip_requests`.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -30,6 +30,9 @@ import { getPositionAlongPolyline, snapToPolyline, type Point as GeoPoint } from
 import { PublishRouteMapModal, type PublishMapMode } from '../components/PublishRouteMapModal';
 import type { MainStackParamList } from '../navigation/types';
 import { MAX_DRIVER_PUBLISH_WAYPOINTS } from '../core/publishRouteLimits';
+
+/** Solo timing interno: reduce ráfagas a OSRM al ajustar paradas; imperceptible en uso normal. */
+const PUBLISH_ROUTE_DEBOUNCE_MS = 220;
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'PublishRide'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'PublishRide'>;
@@ -155,6 +158,13 @@ export function PublishRideScreen() {
   const [publishMapMode, setPublishMapMode] = useState<PublishMapMode>('origin');
   const [mapModalVisible, setMapModalVisible] = useState(false);
 
+  /** Origen de tiempos para logs [perf][PublishRide] (solo __DEV__). */
+  const publishPerfT0 = useRef(0);
+  useEffect(() => {
+    if (!__DEV__) return;
+    publishPerfT0.current = Date.now();
+    console.log('[perf][PublishRide] screen mounted');
+  }, []);
 
   const mapRegion = useMemo(
     () => regionForPublishFocus(origin, destination, waypoints),
@@ -165,17 +175,28 @@ export function PublishRideScreen() {
     [routePolyline]
   );
 
+  const waypointsRouteKey = useMemo(
+    () => waypoints.map((w) => `${w.lat},${w.lng}`).join(';'),
+    [waypoints]
+  );
+
   const loadGate = useCallback(async () => {
     if (!session?.id) {
       setGateLoading(false);
       return;
     }
     setGateLoading(true);
-    const { data: profile, error: pErr } = await supabase
-      .from('profiles')
-      .select('role, vehicle_seat_count, vehicle_model, vehicle_year, vehicle_seat_layout, driver_approved_at')
-      .eq('id', session.id)
-      .maybeSingle();
+    const gateStartedAt = __DEV__ ? Date.now() : 0;
+    const [profileResult, accountResult] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('role, vehicle_seat_count, vehicle_model, vehicle_year, vehicle_seat_layout, driver_approved_at')
+        .eq('id', session.id)
+        .maybeSingle(),
+      supabase.from('driver_accounts').select('account_status').eq('driver_id', session.id).maybeSingle(),
+    ]);
+    const { data: profile, error: pErr } = profileResult;
+    const { data: account } = accountResult;
 
     if (pErr || !profile) {
       Alert.alert('Sesión', 'No se pudo cargar tu perfil.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
@@ -205,11 +226,6 @@ export function PublishRideScreen() {
       return;
     }
 
-    const { data: account } = await supabase
-      .from('driver_accounts')
-      .select('account_status')
-      .eq('driver_id', session.id)
-      .maybeSingle();
     setDriverSuspended(account?.account_status === 'suspended');
 
     setUserProfile({
@@ -220,6 +236,13 @@ export function PublishRideScreen() {
       vehicle_seat_layout: profile.vehicle_seat_layout ?? { rows: [Number(profile.vehicle_seat_count)] },
       driver_approved_at: profile.driver_approved_at,
     });
+    if (__DEV__ && gateStartedAt) {
+      const now = Date.now();
+      console.log('[perf][PublishRide] loadGate total ms (queries+validation)', now - gateStartedAt);
+      if (publishPerfT0.current) {
+        console.log('[perf][PublishRide] ms from screen mount to gate done', now - publishPerfT0.current);
+      }
+    }
     setGateLoading(false);
   }, [session?.id, navigation]);
 
@@ -309,7 +332,7 @@ export function PublishRideScreen() {
                 'id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_date, requested_time'
               )
               .in('id', [reqId])
-              .eq('status', 'pending');
+              .in('status', ['pending', 'grouped', 'grouping']);
             const first = rows?.[0];
             if (first) {
               setOrigin({
@@ -361,7 +384,7 @@ export function PublishRideScreen() {
             'id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_date, requested_time, pricing_kind, passenger_desired_price_per_seat_gs'
           )
           .eq('id', tripRequestIdParam)
-          .eq('status', 'pending');
+          .in('status', ['pending', 'grouped', 'grouping']);
         const first = rows?.[0] as
           | {
               id: string;
@@ -456,37 +479,53 @@ export function PublishRideScreen() {
     const orderedWps = [...waypoints].sort(
       (a, b) => getPositionAlongPolyline(a, chord) - getPositionAlongPolyline(b, chord)
     );
-    let cancelled = false;
-    (async () => {
-      const r = await fetchRoute(
-        { lat: origin.lat, lng: origin.lng },
-        { lat: destination.lat, lng: destination.lng },
-        orderedWps.map((w) => ({ lat: w.lat, lng: w.lng }))
-      );
-      if (cancelled) return;
-      if (r.error) {
-        setRoutePolyline([
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      void (async () => {
+        const r = await fetchRoute(
           { lat: origin.lat, lng: origin.lng },
-          ...orderedWps,
           { lat: destination.lat, lng: destination.lng },
-        ]);
-        setFormError((prev) => prev ?? r.error ?? null);
-        return;
-      }
-      if (r.polyline && r.polyline.length >= 2) setRoutePolyline(r.polyline);
-      else
-        setRoutePolyline([
-          { lat: origin.lat, lng: origin.lng },
-          ...orderedWps,
-          { lat: destination.lat, lng: destination.lng },
-        ]);
-      if (r.durationMinutes != null) setDurationMin(Math.max(15, Math.min(1440, r.durationMinutes)));
-      if (r.distanceKm != null) setDistanceKm(r.distanceKm);
-    })();
+          orderedWps.map((w) => ({ lat: w.lat, lng: w.lng })),
+          { signal: abort.signal }
+        );
+        if (r.aborted) return;
+        if (r.fallback) {
+          setRoutePolyline([]);
+          setFormError(
+            (prev) =>
+              prev ?? 'No hay ruta por calles disponible ahora. Reintentá en unos segundos o ajustá los puntos.'
+          );
+          if (r.durationMinutes != null) setDurationMin(Math.max(15, Math.min(1440, r.durationMinutes)));
+          if (r.distanceKm != null) setDistanceKm(r.distanceKm);
+          return;
+        }
+        const hasLine = Boolean(r.polyline && r.polyline.length >= 2);
+        if (hasLine) {
+          setRoutePolyline(r.polyline!);
+          if (r.durationMinutes != null) setDurationMin(Math.max(15, Math.min(1440, r.durationMinutes)));
+          if (r.distanceKm != null) setDistanceKm(r.distanceKm);
+          return;
+        }
+        if (r.error) {
+          setRoutePolyline([]);
+          setFormError((prev) =>
+            prev ??
+            r.error ??
+            'No se pudo obtener ruta por calles. Reintentá en unos segundos.'
+          );
+          return;
+        }
+        setRoutePolyline([]);
+        setFormError((prev) =>
+          prev ?? 'No se pudo obtener ruta por calles. Reintentá en unos segundos.'
+        );
+      })();
+    }, PUBLISH_ROUTE_DEBOUNCE_MS);
     return () => {
-      cancelled = true;
+      clearTimeout(timer);
+      abort.abort();
     };
-  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng, waypoints]);
+  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng, waypointsRouteKey]);
 
   const selectSuggestion = (s: GeocodeSuggestion, kind: 'origin' | 'destination') => {
     const point: Point = {
@@ -890,6 +929,15 @@ export function PublishRideScreen() {
           pointerEvents="none"
           scrollEnabled={false}
           zoomEnabled={false}
+          loadingEnabled={Platform.OS !== 'android'}
+          onMapReady={() => {
+            if (__DEV__ && publishPerfT0.current) {
+              console.log(
+                '[perf][PublishRide] map mounted (onMapReady), ms from screen mount',
+                Date.now() - publishPerfT0.current
+              );
+            }
+          }}
         >
           {polylineCoords.length >= 2 && (
             <Polyline coordinates={polylineCoords} strokeColor={GREEN} strokeWidth={4} />

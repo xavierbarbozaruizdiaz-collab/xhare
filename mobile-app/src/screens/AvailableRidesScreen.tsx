@@ -225,7 +225,7 @@ export function AvailableRidesScreen() {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={styles.linkSearch} onPress={() => navigation.navigate('SearchPublishedRides')}>
+      <TouchableOpacity style={styles.linkSearch} onPress={() => navigation.navigate('SearchPublishedRides', {})}>
         <Text style={styles.linkSearchText}>Buscar con filtros (fecha, origen, destino)</Text>
       </TouchableOpacity>
 

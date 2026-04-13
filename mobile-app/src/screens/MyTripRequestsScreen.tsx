@@ -30,6 +30,9 @@ function shortLabel(label: string | null | undefined, max = 50): string {
 function requestStatusConfig(status: string): { label: string; color: string } {
   const map: Record<string, { label: string; color: string }> = {
     pending: { label: 'Pendiente', color: '#b45309' },
+    grouping: { label: 'Agrupando', color: '#854d0e' },
+    grouped: { label: 'En grupo', color: '#0369a1' },
+    group_linked_pending: { label: 'Viaje publicado', color: '#0f766e' },
     accepted: { label: 'Aceptada', color: '#15803d' },
     expired: { label: 'Expirada', color: '#6b7280' },
     cancelled: { label: 'Cancelada', color: '#b91c1c' },
@@ -211,7 +214,7 @@ export function MyTripRequestsScreen() {
       {requests.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>No tenés solicitudes guardadas.</Text>
-          <TouchableOpacity style={styles.searchLink} onPress={() => navigation.navigate('SearchPublishedRides')}>
+          <TouchableOpacity style={styles.searchLink} onPress={() => navigation.navigate('SearchPublishedRides', {})}>
             <Text style={styles.searchLinkText}>Buscar viajes publicados</Text>
           </TouchableOpacity>
         </View>

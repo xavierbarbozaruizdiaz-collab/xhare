@@ -134,6 +134,62 @@ export async function fetchMyRides(driverId: string) {
   return data ?? [];
 }
 
+/**
+ * Viajes generados por despacho (sin depender de driver_id; RLS restringe a conductor/admin/pasajero vinculado).
+ */
+export async function fetchAwaitingDriverRides() {
+  const q = supabase
+    .from('rides')
+    .select('*')
+    .eq('status', 'awaiting_driver')
+    .order('departure_time', { ascending: true })
+    .limit(50);
+  const { data, error } = await raceWithTimeout(
+    q,
+    SUPABASE_QUERY_TIMEOUT_MS,
+    () =>
+      ({
+        data: null,
+        error: { message: 'SUPABASE_QUERY_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+      }) as Awaited<typeof q>
+  );
+  if (error?.message === 'SUPABASE_QUERY_TIMEOUT') {
+    throw new Error('Tiempo de espera al cargar viajes disponibles.');
+  }
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Plazas ya pedidas vía trip_requests aceptadas por ride (despacho). */
+export async function fetchAcceptedTripRequestSeatsByRide(rideIds: string[]) {
+  if (rideIds.length === 0) return {} as Record<string, number>;
+  const q = supabase
+    .from('trip_requests')
+    .select('ride_id, seats')
+    .in('ride_id', rideIds)
+    .eq('status', 'accepted');
+  const { data, error } = await raceWithTimeout(
+    q,
+    SUPABASE_QUERY_TIMEOUT_MS,
+    () =>
+      ({
+        data: null,
+        error: { message: 'SUPABASE_QUERY_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+      }) as Awaited<typeof q>
+  );
+  if (error?.message === 'SUPABASE_QUERY_TIMEOUT') {
+    throw new Error('Tiempo de espera al cargar pasajeros del despacho.');
+  }
+  if (error) throw error;
+  const byRide: Record<string, number> = {};
+  for (const row of data ?? []) {
+    const rid = String((row as { ride_id: string }).ride_id);
+    const s = Number((row as { seats?: number }).seats ?? 1);
+    byRide[rid] = (byRide[rid] ?? 0) + (Number.isFinite(s) ? s : 1);
+  }
+  return byRide;
+}
+
 /** Reserved seats and total amount per ride (for driver list). */
 export async function fetchBookingsAggregate(rideIds: string[]) {
   if (rideIds.length === 0) return { reservedByRide: {} as Record<string, number>, amountByRide: {} as Record<string, number> };
@@ -633,6 +689,7 @@ function buildTripRequestRow(params: {
     destination_label: params.destinationLabel.slice(0, 500),
     requested_date: params.requestedDate,
     requested_time: params.requestedTime,
+    requested_mode: 'scheduled',
     seats: Math.max(1, Math.min(50, params.seats ?? 1)),
     status: 'pending',
     pricing_kind: kind,

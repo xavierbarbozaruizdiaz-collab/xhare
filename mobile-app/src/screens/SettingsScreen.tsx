@@ -140,21 +140,25 @@ export function SettingsScreen() {
         </>
       ) : null}
 
-      <Text style={styles.sectionTitle}>Navegación externa</Text>
-      <Text style={styles.hint}>Al tocar "Abrir en Maps / Waze" en un viaje se usará:</Text>
-      {NAV_OPTIONS.map((opt) => (
-        <TouchableOpacity
-          key={opt.value}
-          style={[styles.radioRow, navPref === opt.value && styles.radioRowActive]}
-          onPress={async () => {
-            await setNavigationPreference(opt.value);
-            setNavPref(opt.value);
-          }}
-        >
-          <Text style={styles.radioLabel}>{opt.label}</Text>
-          {navPref === opt.value ? <Text style={styles.radioCheck}>✓</Text> : null}
-        </TouchableOpacity>
-      ))}
+      {flavor === 'driver' ? (
+        <>
+          <Text style={styles.sectionTitle}>Navegación externa</Text>
+          <Text style={styles.hint}>Al tocar "Abrir en Maps / Waze" en un viaje se usará:</Text>
+          {NAV_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.value}
+              style={[styles.radioRow, navPref === opt.value && styles.radioRowActive]}
+              onPress={async () => {
+                await setNavigationPreference(opt.value);
+                setNavPref(opt.value);
+              }}
+            >
+              <Text style={styles.radioLabel}>{opt.label}</Text>
+              {navPref === opt.value ? <Text style={styles.radioCheck}>✓</Text> : null}
+            </TouchableOpacity>
+          ))}
+        </>
+      ) : null}
 
       <Text style={styles.sectionTitle}>Permisos</Text>
       <View style={styles.permRow}>

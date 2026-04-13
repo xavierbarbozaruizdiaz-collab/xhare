@@ -105,6 +105,11 @@ export async function apiPost(
   return apiRequest(path, { method: 'POST', body });
 }
 
+/** Conductor toma un ride despachado (awaiting_driver) → published + driver_id. Requiere EXPO_PUBLIC_API_BASE_URL. */
+export async function assignDispatchRide(rideId: string) {
+  return apiPost('/api/rides/assign-driver', { ride_id: rideId });
+}
+
 export async function rateDriver(rideId: string, stars: number) {
   return apiPost(`/api/rides/${rideId}/rate-driver`, { stars });
 }

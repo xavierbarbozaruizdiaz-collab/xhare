@@ -60,7 +60,28 @@ type GroupRow = {
 
 type RouteStop = { key: string; lat: number; lng: number; label: string };
 
-/** Origen = naranja, destino = rojo (todos los tipos). */
+type PassengerShortcutRow = {
+  user_id: string;
+  slot: string;
+  origin_lat: number;
+  origin_lng: number;
+  destination_lat: number;
+  destination_lng: number;
+  origin_label: string | null;
+  destination_label: string | null;
+  scheduled_date: string;
+  scheduled_time: string;
+  schedule_daily: boolean;
+  updated_at: string;
+};
+
+function shortcutSlotLabel(slot: string): string {
+  if (slot === 'home_to_work') return 'Casa → Trabajo';
+  if (slot === 'work_to_home') return 'Trabajo → Casa';
+  return slot;
+}
+
+/** Origen = naranja, destino = rojo (pedidos, rides sistema y atajos app: mismo criterio). */
 const COL = {
   origin: '#f97316',
   destination: '#dc2626',
@@ -166,12 +187,15 @@ export default function AdminDispatchMapPage() {
   const [showInternal, setShowInternal] = useState(true);
   const [showLong, setShowLong] = useState(true);
   const [showSystem, setShowSystem] = useState(true);
+  const [showPassengerShortcuts, setShowPassengerShortcuts] = useState(true);
   /** Filtro por la hora que cargó el cliente (requested_time), HH:mm. */
   const [timeFilterFrom, setTimeFilterFrom] = useState('');
   const [timeFilterTo, setTimeFilterTo] = useState('');
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [rides, setRides] = useState<SystemRideRow[]>([]);
   const [groups, setGroups] = useState<GroupRow[]>([]);
+  const [passengerShortcuts, setPassengerShortcuts] = useState<PassengerShortcutRow[]>([]);
+  const [passengerShortcutsLoadError, setPassengerShortcutsLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
@@ -187,6 +211,7 @@ export default function AdminDispatchMapPage() {
       if (!initial) return;
       setLoading(true);
       setErr(null);
+      setPassengerShortcutsLoadError(null);
       try {
         let token = initial;
         let res = await fetch(`/api/admin/dispatch-map-data?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
@@ -208,11 +233,17 @@ export default function AdminDispatchMapPage() {
         setTrips([]);
         setRides([]);
         setGroups([]);
+        setPassengerShortcuts([]);
+        setPassengerShortcutsLoadError(null);
         return;
       }
       setTrips((body.tripRequests as TripRow[]) ?? []);
       setRides((body.systemRides as SystemRideRow[]) ?? []);
       setGroups((body.demandGroups as GroupRow[]) ?? []);
+      setPassengerShortcuts((body.passengerHomeShortcuts as PassengerShortcutRow[]) ?? []);
+      setPassengerShortcutsLoadError(
+        typeof body.passengerHomeShortcutsError === 'string' ? body.passengerHomeShortcutsError : null
+      );
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Error de red');
     } finally {
@@ -309,8 +340,41 @@ export default function AdminDispatchMapPage() {
         });
       }
     }
+    if (showPassengerShortcuts) {
+      /** Los atajos no usan el filtro de hora del mapa (es configuración recurrente, no un pedido puntual). */
+      for (const s of passengerShortcuts) {
+        const when = fmtWhen(s.scheduled_date, s.scheduled_time);
+        const daily = s.schedule_daily ? ' · diario' : '';
+        const route = `${(s.origin_label ?? 'Origen').slice(0, 36)} → ${(s.destination_label ?? 'Destino').slice(0, 36)}`;
+        const uidShort = s.user_id.length >= 8 ? `${s.user_id.slice(0, 8)}…` : s.user_id;
+        out.push({
+          id: `shortcut-${s.user_id}-${s.slot}-o`,
+          lat: Number(s.origin_lat),
+          lng: Number(s.origin_lng),
+          color: COL.origin,
+          title: 'Origen · Atajo app (switch activo)',
+          subtitle: `${when}${daily} · ${shortcutSlotLabel(s.slot)} · ${route} · usr ${uidShort}`,
+        });
+        out.push({
+          id: `shortcut-${s.user_id}-${s.slot}-d`,
+          lat: Number(s.destination_lat),
+          lng: Number(s.destination_lng),
+          color: COL.destination,
+          title: 'Destino · Atajo app (switch activo)',
+          subtitle: `${when}${daily} · ${shortcutSlotLabel(s.slot)} · usr ${uidShort}`,
+        });
+      }
+    }
     return out;
-  }, [tripsFiltered, ridesFiltered, showInternal, showLong, showSystem]);
+  }, [
+    tripsFiltered,
+    ridesFiltered,
+    passengerShortcuts,
+    showInternal,
+    showLong,
+    showSystem,
+    showPassengerShortcuts,
+  ]);
 
   const appendStop = useCallback((m: DispatchMapMarker) => {
     setRouteStops((prev) => [
@@ -478,6 +542,12 @@ export default function AdminDispatchMapPage() {
           <p className="text-gray-600 text-sm mt-1">
             Pedidos en el mapa (origen y destino), filtros por tipo, grupos de demanda y creación de viaje por sistema.
           </p>
+          <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 mt-3 max-w-3xl">
+            Los atajos Casa↔Trabajo con <strong>switch activo</strong> se guardan en la tabla{' '}
+            <code className="bg-sky-100 px-1 rounded">passenger_home_map_shortcuts</code> (migración 065) con la sesión
+            Supabase de la app y aparecen en violeta. Requieren coordenadas en el favorito. El resto de la vista sigue
+            siendo solicitudes de viaje, demanda y viajes sistema.
+          </p>
         </div>
         <Link href="/admin" className="text-sm text-green-600 hover:underline font-medium">
           ← Volver al inicio admin
@@ -527,7 +597,20 @@ export default function AdminDispatchMapPage() {
       </div>
       <p className="text-xs text-gray-500 mb-3 -mt-2">
         El filtro de hora usa la hora que cargó el pasajero (<code className="bg-gray-100 px-1 rounded">requested_time</code>
-        ). Si hay ventana en base, en el mapa verás también el fin de ventana / llegada máxima.
+        ). Si hay ventana en base, en el mapa verás también el fin de ventana / llegada máxima. Los{' '}
+        <strong>atajos app</strong> (mismos colores origen/destino que el resto) no se filtran por esa hora: si hay filas
+        en base, deberían verse siempre
+        con el checkbox activo.
+      </p>
+      <p className="text-xs text-gray-700 mb-3 -mt-2">
+        Atajos sincronizados (activos en base, este rango de carga):{' '}
+        <strong>{passengerShortcuts.length}</strong>
+        {passengerShortcuts.length === 0 && !loading ? (
+          <span className="ml-2">
+            — Si ya aplicaste la migración <code className="bg-gray-100 px-1 rounded">065</code>, abrí Inicio en la app
+            (sesión iniciada, switch activo, pins en el mapa al guardar) y tocá Actualizar acá.
+          </span>
+        ) : null}
       </p>
 
       <div className="flex flex-wrap gap-3 mb-4 items-center">
@@ -536,6 +619,7 @@ export default function AdminDispatchMapPage() {
           origen
           <span className="inline-block w-3 h-3 rounded-full align-middle ml-2 mr-0.5" style={{ background: COL.destination }} />
           destino
+          <span className="text-gray-500 ml-1">(incluye atajos app)</span>
         </span>
         <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
           <input type="checkbox" checked={showInternal} onChange={(e) => setShowInternal(e.target.checked)} />
@@ -549,10 +633,25 @@ export default function AdminDispatchMapPage() {
           <input type="checkbox" checked={showSystem} onChange={(e) => setShowSystem(e.target.checked)} />
           <span className="font-medium text-gray-800">Generados por sistema</span>
         </label>
+        <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showPassengerShortcuts}
+            onChange={(e) => setShowPassengerShortcuts(e.target.checked)}
+          />
+          <span className="font-medium text-gray-800">Atajos app</span>
+        </label>
       </div>
 
       {err && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</div>
+      )}
+      {passengerShortcutsLoadError && (
+        <div className="mb-4 text-sm text-red-800 bg-red-50 border border-red-300 rounded-lg px-3 py-2">
+          <strong>Atajos (Supabase):</strong> {passengerShortcutsLoadError}. Suele indicar que falta la migración{' '}
+          <code className="bg-red-100 px-1 rounded">065_passenger_home_map_shortcuts.sql</code> en este proyecto, o un
+          nombre de tabla distinto.
+        </div>
       )}
       {actionMsg && (
         <div className="mb-4 text-sm text-gray-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{actionMsg}</div>

@@ -60,6 +60,13 @@ function regionFromPoints(a: Point | null, b: Point | null): Region {
   };
 }
 
+/** Métricas de la misma petición de ruta que dibuja el mapa (para ETA en la pantalla de búsqueda). */
+export type SearchRouteEtaState = {
+  loading: boolean;
+  durationMinutes: number | null;
+  distanceKm: number | null;
+};
+
 type Props = {
   origin: Point | null;
   destination: Point | null;
@@ -67,6 +74,8 @@ type Props = {
   onDestinationChange: (p: Point | null) => void;
   onOriginLabelResolved?: (label: string) => void;
   onDestinationLabelResolved?: (label: string) => void;
+  /** Misma ruta que la polyline; no hace un fetch extra. */
+  onRouteEtaChange?: (state: SearchRouteEtaState) => void;
   /** Radio de búsqueda alrededor del pin (según tipo de viaje en la pantalla de búsqueda). */
   proximityRadiusKm?: number;
   height?: number;
@@ -112,10 +121,13 @@ export function SearchOriginDestinationMap({
   onDestinationChange,
   onOriginLabelResolved,
   onDestinationLabelResolved,
+  onRouteEtaChange,
   proximityRadiusKm = 10,
   height = 220,
 }: Props) {
   const mapRef = useRef<MapView>(null);
+  const onRouteEtaChangeRef = useRef(onRouteEtaChange);
+  onRouteEtaChangeRef.current = onRouteEtaChange;
   const [mode, setMode] = useState<'origin' | 'destination'>('origin');
   const [fullVisible, setFullVisible] = useState(false);
   const [geocoding, setGeocoding] = useState(false);
@@ -139,22 +151,45 @@ export function SearchOriginDestinationMap({
     if (!origin || !destination) {
       setOsrmLine([]);
       setRouteLoading(false);
+      onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: null, distanceKm: null });
       return;
     }
     let cancelled = false;
+    const ac = new AbortController();
     setRouteLoading(true);
     setOsrmLine([]);
-    void fetchRoute(origin, destination, []).then((r) => {
-      if (cancelled) return;
-      if (r.polyline && r.polyline.length >= 2) {
-        setOsrmLine(r.polyline.map((p) => ({ lat: p.lat, lng: p.lng })));
-      } else {
-        setOsrmLine([]);
-      }
-      setRouteLoading(false);
-    });
+    onRouteEtaChangeRef.current?.({ loading: true, durationMinutes: null, distanceKm: null });
+    void fetchRoute(origin, destination, [], { signal: ac.signal })
+      .then((r) => {
+        if (cancelled || r.aborted) return;
+        if (r.polyline && r.polyline.length >= 2) {
+          setOsrmLine(r.polyline.map((p) => ({ lat: p.lat, lng: p.lng })));
+        } else {
+          setOsrmLine([]);
+        }
+        const dm =
+          typeof r.durationMinutes === 'number' && Number.isFinite(r.durationMinutes)
+            ? r.durationMinutes
+            : null;
+        const dk =
+          typeof r.distanceKm === 'number' && Number.isFinite(r.distanceKm) ? r.distanceKm : null;
+        if (!r.error && !r.aborted) {
+          onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: dm, distanceKm: dk });
+        } else {
+          onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: null, distanceKm: null });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: null, distanceKm: null });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRouteLoading(false);
+      });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng]);
 
@@ -559,7 +594,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
-  dotOrigin: { backgroundColor: '#15803d' },
+  dotOrigin: { backgroundColor: '#ea580c' },
   dotDest: { backgroundColor: '#b91c1c' },
   clearRow: { marginTop: 8, gap: 6 },
   clearLink: { fontSize: 13, color: GREEN, fontWeight: '600' },

@@ -100,6 +100,7 @@ export async function POST(request: Request) {
         'id, origin_lat, origin_lng, destination_lat, destination_lng, requested_date, requested_time, origin_city, destination_city, origin_department, destination_department, origin_barrio, destination_barrio, route_polyline, route_length_km'
       )
       .eq('status', 'pending')
+      .or('classification_status.is.null,classification_status.eq.unclassified')
       .not('origin_lat', 'is', null)
       .not('destination_lat', 'is', null);
 

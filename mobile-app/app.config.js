@@ -5,6 +5,11 @@
 const path = require('path');
 try {
   require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+  // Overrides para tu máquina (gitignored); mismo patrón que Next.js.
+  require('dotenv').config({
+    path: path.resolve(__dirname, '.env.local'),
+    override: true,
+  });
 } catch (_) {
   // .env optional; use env vars or EAS secrets
 }

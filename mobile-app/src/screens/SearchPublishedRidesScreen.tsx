@@ -1,7 +1,8 @@
 /**
- * Buscar viajes publicados: fecha opcional, hora opcional, origen/destino por texto y/o mapa, tipo de viaje.
+ * Buscar viajes publicados: fecha y hora desde obligatorias; origen/destino por texto y/o mapa; tipo de viaje.
+ * Con `favoriteSlot` en la ruta: mismo formulario solo para guardar trayecto favorito (p. ej. Casa → Trabajo).
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -11,14 +12,29 @@ import {
   ActivityIndicator,
   TextInput,
   Platform,
+  Alert,
+  Switch,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { searchRides } from '../rides/api';
 import type { MainStackParamList } from '../navigation/types';
-import { SearchOriginDestinationMap } from '../components/SearchOriginDestinationMap';
+import {
+  SearchOriginDestinationMap,
+  type SearchRouteEtaState,
+} from '../components/SearchOriginDestinationMap';
 import type { Point } from '../lib/geo';
+import {
+  getPassengerFavorite,
+  loadPassengerFavorites,
+  upsertPassengerFavorite,
+  favoritePairLabel,
+  computeNextTriggerIso,
+} from '../lib/passengerFavorites';
+import { pushPassengerHomeMapShortcuts } from '../backend/passengerHomeMapShortcutSync';
+import { useAuth } from '../auth/AuthContext';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'SearchPublishedRides'>;
 
@@ -27,6 +43,39 @@ function toYmdLocal(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function formatEstimatedArrivalLine(
+  dateYmd: string,
+  fromTimeHm: string,
+  routeEta: SearchRouteEtaState,
+  hasOriginDestPins: boolean
+): { text: string; isPlaceholder: boolean } {
+  if (!hasOriginDestPins) {
+    return { text: 'Marcá origen y destino en el mapa', isPlaceholder: true };
+  }
+  if (!dateYmd.trim() || !fromTimeHm.trim()) {
+    return { text: 'Completá fecha y hora desde para estimar la llegada', isPlaceholder: true };
+  }
+  if (routeEta.loading) {
+    return { text: 'Calculando ruta…', isPlaceholder: true };
+  }
+  if (routeEta.durationMinutes == null) {
+    return { text: 'No disponible (sin duración del trayecto)', isPlaceholder: true };
+  }
+  const [yy, mm, dd] = dateYmd.trim().split('-').map((x) => parseInt(x, 10));
+  const [h, mi] = fromTimeHm.trim().split(':').map((x) => parseInt(x, 10));
+  if (![yy, mm, dd, h, mi].every((n) => Number.isFinite(n))) {
+    return { text: 'Fecha u hora no válida', isPlaceholder: true };
+  }
+  const dep = new Date(yy, mm - 1, dd, h, mi, 0, 0);
+  const arr = new Date(dep.getTime() + routeEta.durationMinutes * 60_000);
+  const hm = arr.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' });
+  const mins = Math.round(routeEta.durationMinutes);
+  return {
+    text: `~${hm} en destino (${mins} min según la ruta del mapa)`,
+    isPlaceholder: false,
+  };
 }
 
 function applyRideKindFilter(
@@ -79,7 +128,7 @@ function SearchEmptyResults({
       originLng: buscoFromSearch.originLng,
       destinationLat: buscoFromSearch.destinationLat,
       destinationLng: buscoFromSearch.destinationLng,
-      requestedDate: buscoFromSearch.requestedDate.trim() || undefined,
+      requestedDate: buscoFromSearch.requestedDate.trim(),
       requestedTime: buscoFromSearch.requestedTime.trim() || '08:00',
       suggestedPricingKind,
     });
@@ -104,7 +153,7 @@ function SearchEmptyResults({
         </TouchableOpacity>
         <Text style={styles.emptyMuted}>
           Vas a confirmar si el trayecto es interno (ya cotizado) o larga distancia (precio que querés pagar por
-          asiento). Si falta fecha u origen/destino en el mapa, completalo en el formulario.
+          asiento). Si falta origen o destino en el mapa, completalo en el formulario.
         </Text>
         <TouchableOpacity
           style={styles.emptyLinkBtn}
@@ -134,9 +183,15 @@ function SearchEmptyResults({
 
 export function SearchPublishedRidesScreen() {
   const navigation = useNavigation<Nav>();
-  const [date, setDate] = useState('');
-  /** HH:MM opcional; solo aplica si hay fecha válida. */
-  const [fromTime, setFromTime] = useState('');
+  const route = useRoute<RouteProp<MainStackParamList, 'SearchPublishedRides'>>();
+  const favoriteSlot = route.params?.favoriteSlot;
+  const isFavoriteMode = favoriteSlot != null;
+  const { session } = useAuth();
+  const userId = session?.id ?? '';
+
+  const [date, setDate] = useState(() => toYmdLocal(new Date()));
+  /** HH:MM (24 h), obligatoria junto con la fecha. */
+  const [fromTime, setFromTime] = useState('08:00');
   const [routeNameQuery, setRouteNameQuery] = useState('');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
@@ -145,8 +200,46 @@ export function SearchPublishedRidesScreen() {
   const [rideKind, setRideKind] = useState<'all' | 'internal' | 'long_distance'>('all');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [scheduleDaily, setScheduleDaily] = useState(false);
+  const [loading, setLoading] = useState(!isFavoriteMode);
   const [list, setList] = useState<Record<string, unknown>[]>([]);
+  const [routeEta, setRouteEta] = useState<SearchRouteEtaState>({
+    loading: false,
+    durationMinutes: null,
+    distanceKm: null,
+  });
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      title: favoriteSlot ? `Favorito: ${favoritePairLabel(favoriteSlot)}` : 'Buscar viajes',
+    });
+  }, [navigation, favoriteSlot]);
+
+  useEffect(() => {
+    if (!favoriteSlot || !userId) return;
+    let cancelled = false;
+    void (async () => {
+      const snap = await getPassengerFavorite(userId, favoriteSlot);
+      if (cancelled || !snap) return;
+      setDate(snap.scheduledDateYmd?.trim() || snap.date);
+      setFromTime(snap.scheduledTimeHm?.trim() || snap.fromTime);
+      setRouteNameQuery(snap.routeNameQuery);
+      setOrigin(snap.origin);
+      setDestination(snap.destination);
+      setOriginGeo(
+        snap.originLat != null && snap.originLng != null ? { lat: snap.originLat, lng: snap.originLng } : null
+      );
+      setDestGeo(
+        snap.destinationLat != null && snap.destinationLng != null
+          ? { lat: snap.destinationLat, lng: snap.destinationLng }
+          : null
+      );
+      setRideKind(snap.rideKind);
+      setScheduleDaily(Boolean(snap.scheduleDaily));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [favoriteSlot, userId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,8 +247,8 @@ export function SearchPublishedRidesScreen() {
     try {
       const mapKm = mapSearchRadiusKmForRideKind(rideKind);
       const rows = (await searchRides({
-        date: date.trim() || undefined,
-        fromTimeLocal: date.trim() && fromTime.trim() ? fromTime.trim() : undefined,
+        date: date.trim(),
+        fromTimeLocal: fromTime.trim() || '08:00',
         routeName: routeNameQuery.trim() || undefined,
         origin: originGeo ? undefined : origin.trim() || undefined,
         destination: destGeo ? undefined : destination.trim() || undefined,
@@ -176,8 +269,73 @@ export function SearchPublishedRidesScreen() {
   }, [date, fromTime, routeNameQuery, origin, destination, originGeo, destGeo, rideKind]);
 
   useEffect(() => {
+    if (isFavoriteMode) return;
     void load();
-  }, [load]);
+  }, [load, isFavoriteMode]);
+
+  const saveFavorite = useCallback(async () => {
+    if (!favoriteSlot) return;
+    if (!userId) {
+      Alert.alert('Sesión', 'Iniciá sesión para guardar favoritos.');
+      return;
+    }
+    if (!date.trim() || !fromTime.trim()) {
+      Alert.alert('Datos incompletos', 'Elegí fecha y hora desde.');
+      return;
+    }
+    const hasOrigin = origin.trim().length > 0 || originGeo != null;
+    const hasDest = destination.trim().length > 0 || destGeo != null;
+    if (!hasOrigin || !hasDest) {
+      Alert.alert('Datos incompletos', 'Indicá origen y destino (texto o mapa).');
+      return;
+    }
+    try {
+      await upsertPassengerFavorite(userId, favoriteSlot, {
+        date: date.trim(),
+        fromTime: fromTime.trim() || '08:00',
+        routeNameQuery: routeNameQuery.trim(),
+        origin: origin.trim(),
+        destination: destination.trim(),
+        originLat: originGeo?.lat ?? null,
+        originLng: originGeo?.lng ?? null,
+        destinationLat: destGeo?.lat ?? null,
+        destinationLng: destGeo?.lng ?? null,
+        rideKind,
+        enabled: true,
+        scheduleDaily,
+        scheduledDateYmd: date.trim(),
+        scheduledTimeHm: fromTime.trim() || '08:00',
+        nextTriggerAtIso:
+          computeNextTriggerIso(new Date(), date.trim(), fromTime.trim() || '08:00', scheduleDaily) ?? undefined,
+      });
+      const store = await loadPassengerFavorites(userId);
+      void pushPassengerHomeMapShortcuts(store);
+      Alert.alert(
+        'Guardado',
+        `Se guardó tu favorito «${favoritePairLabel(favoriteSlot)}» en este dispositivo.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.navigate('MainTabs'),
+          },
+        ]
+      );
+    } catch {
+      Alert.alert('Error', 'No se pudo guardar el favorito. Intentá de nuevo.');
+    }
+  }, [
+    favoriteSlot,
+    userId,
+    date,
+    fromTime,
+    routeNameQuery,
+    origin,
+    destination,
+    originGeo,
+    destGeo,
+    rideKind,
+    scheduleDaily,
+  ]);
 
   const buscoFromSearch = useMemo(
     () => ({
@@ -193,11 +351,15 @@ export function SearchPublishedRidesScreen() {
     [origin, destination, originGeo, destGeo, date, fromTime]
   );
 
+  const estimatedArrival = useMemo(
+    () =>
+      formatEstimatedArrivalLine(date, fromTime, routeEta, Boolean(originGeo && destGeo)),
+    [date, fromTime, routeEta, originGeo, destGeo]
+  );
+
   const activeFilterLabels = useMemo(() => {
     const parts: string[] = [];
-    if (date.trim()) {
-      parts.push(`Fecha: ${date.trim()}${fromTime.trim() ? `, desde ${fromTime.trim()}` : ''}`);
-    }
+    parts.push(`Fecha: ${date.trim()}, desde ${fromTime.trim() || '08:00'}`);
     if (originGeo) {
       const km = mapSearchRadiusKmForRideKind(rideKind);
       parts.push(
@@ -225,31 +387,18 @@ export function SearchPublishedRidesScreen() {
   const listHeader = useMemo(
     () => (
     <View>
-      <Text style={styles.label}>Fecha (opcional)</Text>
+      <Text style={styles.label}>Fecha</Text>
       <TouchableOpacity
         style={styles.pickerRow}
         onPress={() => setShowDatePicker(true)}
         accessibilityRole="button"
         accessibilityLabel="Elegir fecha"
       >
-        <Text style={date.trim() ? styles.pickerValue : styles.pickerPlaceholder}>
-          {date.trim() ? date : 'Vacío = próximos viajes (hasta un año)'}
-        </Text>
+        <Text style={styles.pickerValue}>{date.trim()}</Text>
       </TouchableOpacity>
-      {date.trim() ? (
-        <TouchableOpacity
-          onPress={() => {
-            setDate('');
-            setFromTime('');
-          }}
-          accessibilityRole="button"
-        >
-          <Text style={styles.clearLink}>Quitar fecha</Text>
-        </TouchableOpacity>
-      ) : null}
       {showDatePicker ? (
         <DateTimePicker
-          value={date.trim() ? new Date(date + 'T12:00:00') : new Date()}
+          value={new Date(date.trim() + 'T12:00:00')}
           mode="date"
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={(ev, d) => {
@@ -262,30 +411,15 @@ export function SearchPublishedRidesScreen() {
           }}
         />
       ) : null}
-      <Text style={styles.label}>Hora desde (opcional)</Text>
+      <Text style={styles.label}>Hora desde</Text>
       <TouchableOpacity
-        style={[styles.pickerRow, !date.trim() && styles.pickerRowDisabled]}
-        onPress={() => {
-          if (date.trim()) setShowTimePicker(true);
-        }}
-        disabled={!date.trim()}
+        style={styles.pickerRow}
+        onPress={() => setShowTimePicker(true)}
         accessibilityRole="button"
         accessibilityLabel="Elegir hora desde"
-        accessibilityState={{ disabled: !date.trim() }}
       >
-        <Text style={fromTime.trim() ? styles.pickerValue : styles.pickerPlaceholder}>
-          {!date.trim()
-            ? 'Primero elegí una fecha'
-            : fromTime.trim()
-              ? fromTime.trim()
-              : 'Todo el día — tocá para elegir hora'}
-        </Text>
+        <Text style={styles.pickerValue}>{fromTime.trim() || '08:00'}</Text>
       </TouchableOpacity>
-      {fromTime.trim() ? (
-        <TouchableOpacity onPress={() => setFromTime('')} accessibilityRole="button">
-          <Text style={styles.clearLink}>Quitar hora</Text>
-        </TouchableOpacity>
-      ) : null}
       {showTimePicker ? (
         <DateTimePicker
           value={(() => {
@@ -308,6 +442,39 @@ export function SearchPublishedRidesScreen() {
           }}
         />
       ) : null}
+      {favoriteSlot ? (
+        <View style={styles.dailyRow}>
+          <View style={styles.dailyTextWrap}>
+            <Text style={styles.dailyTitle}>Reprogramar diario</Text>
+            <Text style={styles.dailyHint}>
+              Si activás, se agenda todos los días a esta hora hasta apagar el switch en Inicio.
+            </Text>
+          </View>
+          <Switch
+            value={scheduleDaily}
+            onValueChange={setScheduleDaily}
+            trackColor={{ false: '#d1d5db', true: '#86efac' }}
+            thumbColor={scheduleDaily ? '#166534' : '#f3f4f6'}
+          />
+        </View>
+      ) : null}
+      <Text style={styles.label}>Llegada estimada en destino</Text>
+      <View
+        style={[styles.pickerRow, styles.pickerRowReadOnly]}
+        accessibilityRole="text"
+        accessibilityLabel={`Llegada estimada: ${estimatedArrival.text}`}
+      >
+        <Text
+          style={estimatedArrival.isPlaceholder ? styles.pickerPlaceholder : styles.pickerValue}
+          selectable
+        >
+          {estimatedArrival.text}
+        </Text>
+      </View>
+      <Text style={styles.etaHint}>
+        El horario de llegada es estimado: puede variar según el tráfico, el recorrido real del viaje y otros
+        pasajeros.
+      </Text>
       <Text style={styles.label}>Nombre del viaje (opcional)</Text>
       <TextInput
         style={styles.input}
@@ -346,6 +513,7 @@ export function SearchPublishedRidesScreen() {
         onDestinationChange={setDestGeo}
         onOriginLabelResolved={setOrigin}
         onDestinationLabelResolved={setDestination}
+        onRouteEtaChange={setRouteEta}
         proximityRadiusKm={mapSearchRadiusKmForRideKind(rideKind)}
         height={240}
       />
@@ -377,9 +545,15 @@ export function SearchPublishedRidesScreen() {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={styles.searchBtn} onPress={() => void load()} accessibilityRole="button">
-        <Text style={styles.searchBtnText}>Buscar</Text>
-      </TouchableOpacity>
+      {favoriteSlot ? (
+        <TouchableOpacity style={styles.searchBtn} onPress={() => void saveFavorite()} accessibilityRole="button">
+          <Text style={styles.searchBtnText}>Guardar {favoritePairLabel(favoriteSlot)}</Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity style={styles.searchBtn} onPress={() => void load()} accessibilityRole="button">
+          <Text style={styles.searchBtnText}>Buscar</Text>
+        </TouchableOpacity>
+      )}
     </View>
     ),
     [
@@ -392,8 +566,12 @@ export function SearchPublishedRidesScreen() {
       destGeo,
       rideKind,
       load,
+      saveFavorite,
+      favoriteSlot,
       showDatePicker,
       showTimePicker,
+      scheduleDaily,
+      estimatedArrival,
     ]
   );
 
@@ -408,7 +586,7 @@ export function SearchPublishedRidesScreen() {
         ListEmptyComponent={
           loading ? (
             <ActivityIndicator style={styles.listSpinner} size="large" color="#166534" />
-          ) : (
+          ) : favoriteSlot ? null : (
             <SearchEmptyResults
               navigation={navigation}
               activeFilterLabels={activeFilterLabels}
@@ -457,9 +635,30 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     backgroundColor: '#fff',
   },
-  pickerRowDisabled: {
-    backgroundColor: '#f3f4f6',
-    borderColor: '#e5e7eb',
+  pickerRowReadOnly: {
+    backgroundColor: '#f9fafb',
+  },
+  dailyRow: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    backgroundColor: '#fff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  dailyTextWrap: { flex: 1 },
+  dailyTitle: { fontSize: 14, fontWeight: '700', color: '#14532d' },
+  dailyHint: { fontSize: 12, color: '#6b7280', lineHeight: 17, marginTop: 2 },
+  etaHint: {
+    fontSize: 12,
+    color: '#9ca3af',
+    lineHeight: 17,
+    marginBottom: 10,
+    marginTop: -4,
   },
   pickerValue: { fontSize: 16, color: '#111' },
   pickerPlaceholder: { fontSize: 16, color: '#9ca3af' },

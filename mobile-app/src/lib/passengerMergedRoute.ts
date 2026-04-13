@@ -2,7 +2,7 @@
  * Recorte sobre la polyline gris del mapa (conductor + reservas existentes) + OSRM del tramo del pasajero actual (verde).
  * `waypointsBetween`: extras del pasajero y paradas del conductor entre A y B (no incluir subidas/bajadas de otros: ya están en la gris).
  */
-import { fetchRoute } from '../backend/routeApi';
+import { fetchRoute, type RouteFetchOptions } from '../backend/routeApi';
 import {
   distanceMeters,
   getPositionAlongPolyline,
@@ -36,8 +36,14 @@ function concatPolylines(parts: Point[][], tolM = 14): Point[] {
   return out;
 }
 
-async function osrmOrNull(origin: Point, destination: Point, waypoints: Point[] = []): Promise<Point[] | null> {
-  const r = await fetchRoute(origin, destination, waypoints);
+async function osrmOrNull(
+  origin: Point,
+  destination: Point,
+  waypoints: Point[] = [],
+  routeOpts?: RouteFetchOptions
+): Promise<Point[] | null> {
+  const r = await fetchRoute(origin, destination, waypoints, routeOpts);
+  if (r.aborted) return null;
   if (r.error || !r.polyline || r.polyline.length < 2) return null;
   return r.polyline;
 }
@@ -49,15 +55,17 @@ async function osrmOrNull(origin: Point, destination: Point, waypoints: Point[] 
 async function chainMidThroughWaypoints(
   pickup: Point,
   dropoff: Point,
-  waypointsBetween: Point[]
+  waypointsBetween: Point[],
+  routeOpts?: RouteFetchOptions
 ): Promise<Point[] | null> {
   const chain: Point[] = [pickup, ...waypointsBetween, dropoff];
   if (chain.length < 2) return null;
   const parts: Point[][] = [];
   for (let i = 0; i < chain.length - 1; i++) {
+    if (routeOpts?.signal?.aborted) return null;
     const a = chain[i];
     const b = chain[i + 1];
-    let seg = await osrmOrNull(a, b, []);
+    let seg = await osrmOrNull(a, b, [], routeOpts);
     if (!seg || seg.length < 2) {
       seg = distanceMeters(a, b) < 2 ? [a] : [a, b];
     }
@@ -80,9 +88,11 @@ export async function buildPassengerMergedRoute(
   baseRoute: Point[],
   pickup: Point,
   dropoff: Point,
-  waypointsBetween: Point[]
+  waypointsBetween: Point[],
+  options?: RouteFetchOptions
 ): Promise<PassengerMergedSegments | null> {
   if (baseRoute.length < 2) return null;
+  if (options?.signal?.aborted) return null;
   const tPu = getPositionAlongPolyline(pickup, baseRoute);
   const tDo = getPositionAlongPolyline(dropoff, baseRoute);
   if (tPu >= tDo - 1e-8) return null;
@@ -96,18 +106,18 @@ export async function buildPassengerMergedRoute(
   const bridgeA =
     distanceMeters(joinA, pickup) < BRIDGE_OSRM_MIN_M
       ? shortBridge(joinA, pickup)
-      : (await osrmOrNull(joinA, pickup)) ?? shortBridge(joinA, pickup);
+      : (await osrmOrNull(joinA, pickup, [], options)) ?? shortBridge(joinA, pickup);
 
-  let midCore = await osrmOrNull(pickup, dropoff, waypointsBetween);
+  let midCore = await osrmOrNull(pickup, dropoff, waypointsBetween, options);
   if (!midCore || midCore.length < 2) {
-    midCore = await chainMidThroughWaypoints(pickup, dropoff, waypointsBetween);
+    midCore = await chainMidThroughWaypoints(pickup, dropoff, waypointsBetween, options);
   }
   if (!midCore || midCore.length < 2) return null;
 
   const bridgeB =
     distanceMeters(dropoff, joinB) < BRIDGE_OSRM_MIN_M
       ? shortBridge(dropoff, joinB)
-      : (await osrmOrNull(dropoff, joinB)) ?? shortBridge(dropoff, joinB);
+      : (await osrmOrNull(dropoff, joinB, [], options)) ?? shortBridge(dropoff, joinB);
 
   const mid = concatPolylines([bridgeA, midCore, bridgeB]);
   if (mid.length < 2) return null;

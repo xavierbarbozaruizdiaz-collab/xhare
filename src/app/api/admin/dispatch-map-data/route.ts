@@ -29,8 +29,12 @@ export async function GET(request: NextRequest) {
         toParam ??
         new Date(toDate.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-      const [{ data: tripRows, error: tripErr }, { data: rideRows, error: rideErr }, { data: groupRows, error: groupErr }] =
-        await Promise.all([
+      const [
+        { data: tripRows, error: tripErr },
+        { data: rideRows, error: rideErr },
+        { data: groupRows, error: groupErr },
+        { data: shortcutRowsRaw, error: shortcutErr },
+      ] = await Promise.all([
           service
             .from('trip_requests')
             .select(
@@ -62,6 +66,14 @@ export async function GET(request: NextRequest) {
             .order('requested_date', { ascending: true })
             .order('requested_time', { ascending: true })
             .limit(200),
+          service
+            .from('passenger_home_map_shortcuts')
+            .select(
+              'user_id, slot, origin_lat, origin_lng, destination_lat, destination_lng, origin_label, destination_label, scheduled_date, scheduled_time, schedule_daily, updated_at'
+            )
+            .eq('enabled', true)
+            .order('updated_at', { ascending: false })
+            .limit(500),
         ]);
 
       if (tripErr) {
@@ -76,6 +88,16 @@ export async function GET(request: NextRequest) {
         logBlockError(BLOCK, groupErr.message, groupErr);
         return NextResponse.json({ error: groupErr.message }, { status: 400 });
       }
+      let passengerHomeShortcuts: unknown[] = [];
+      let passengerHomeShortcutsError: string | null = null;
+      if (shortcutErr) {
+        logBlockError(BLOCK, `passenger_home_map_shortcuts (se omite): ${shortcutErr.message}`, shortcutErr);
+        passengerHomeShortcuts = [];
+        passengerHomeShortcutsError = shortcutErr.message;
+      } else {
+        /** Atajos: intención recurrente; no filtrar por ventana de fechas del mapa (evita filas “invisibles”). */
+        passengerHomeShortcuts = shortcutRowsRaw ?? [];
+      }
 
       logBlockOk(BLOCK);
       return NextResponse.json({
@@ -84,6 +106,8 @@ export async function GET(request: NextRequest) {
         tripRequests: tripRows ?? [],
         systemRides: rideRows ?? [],
         demandGroups: groupRows ?? [],
+        passengerHomeShortcuts,
+        passengerHomeShortcutsError,
       });
     } catch (e) {
       logBlockError(BLOCK, e instanceof Error ? e.message : 'unknown', e);

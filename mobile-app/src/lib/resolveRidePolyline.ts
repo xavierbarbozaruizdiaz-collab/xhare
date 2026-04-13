@@ -2,7 +2,7 @@
  * Misma lógica que el detalle del viaje: polyline guardada (OSRM al publicar) o fetch OSRM, o línea entre paradas.
  * BookRide y RideDetail deben usar esto para que la ruta no “cambie” entre pantallas.
  */
-import { fetchRoute } from '../backend/routeApi';
+import { fetchRoute, type RouteFetchOptions } from '../backend/routeApi';
 import { buildPolylineFromRide, type Point } from './geo';
 
 export type RideStopLike = { lat: number; lng: number; stop_order?: number };
@@ -61,7 +61,8 @@ export function resolveOriginDestWaypoints(
 
 export async function loadRidePolyline(
   ride: Record<string, unknown>,
-  stops: RideStopLike[]
+  stops: RideStopLike[],
+  fetchOptions?: RouteFetchOptions
 ): Promise<ResolvedPolyline> {
   const rawPoly = ride.base_route_polyline;
   const coerced = coerceBaseRoutePolylineRaw(rawPoly);
@@ -76,8 +77,10 @@ export async function loadRidePolyline(
 
   const od = resolveOriginDestWaypoints(ride, stops);
   if (od) {
-    const res = await fetchRoute(od.origin, od.destination, od.waypoints);
-    if (res.polyline && res.polyline.length >= 2) {
+    const res = await fetchRoute(od.origin, od.destination, od.waypoints, fetchOptions);
+    if (res.aborted) {
+      /* caller invalidó la petición; mismo desenlace que fallo OSRM: acorde a paradas */
+    } else if (res.polyline && res.polyline.length >= 2) {
       return { points: finitePolyline(res.polyline as Point[]), source: 'osrm' };
     }
   }

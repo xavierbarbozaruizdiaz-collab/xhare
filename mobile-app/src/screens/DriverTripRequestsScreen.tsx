@@ -1,8 +1,8 @@
 /**
- * Solicitudes de viaje (conductor): rutas con demanda agrupadas y, si no hay grupos, trip_requests sueltas.
- * Lista desde Supabase (demand_route_groups); al refrescar intenta sync por API. Tap → detalle → Publicar viaje.
+ * Solicitudes de viaje (conductor): pestañas Interno / Larga distancia / De sistema;
+ * rutas con demanda + solicitudes sueltas + viajes generados (awaiting_driver).
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -20,8 +20,20 @@ import { fetchDemandRoutes, syncDemandRoutes, type DemandRouteGroup } from '../b
 import { raceWithTimeout } from '../backend/withTimeout';
 import { env } from '../core/env';
 import type { MainStackParamList } from '../navigation/types';
+import {
+  fetchMyRides,
+  fetchAwaitingDriverRides,
+  fetchAcceptedTripRequestSeatsByRide,
+} from '../rides/api';
+import { SystemGeneratedRideCard, type SystemGeneratedRideRow } from '../components/SystemGeneratedRideCard';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'DriverTripRequests'>;
+
+type RequestTab = 'internal' | 'long_distance' | 'system';
+
+type InternalListItem =
+  | { kind: 'group'; g: DemandRouteGroup }
+  | { kind: 'request'; r: Record<string, unknown> };
 
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '—';
@@ -46,14 +58,23 @@ function shortLabel(label: string | null | undefined, max = 45): string {
 
 const SUPABASE_QUERY_TIMEOUT_MS = 35_000;
 
+const TAB_LABELS: Record<RequestTab, string> = {
+  internal: 'Interno',
+  long_distance: 'Larga distancia',
+  system: 'De sistema',
+};
+
 export function DriverTripRequestsScreen() {
   const navigation = useNavigation<Nav>();
   const { session } = useAuth();
   const [groups, setGroups] = useState<DemandRouteGroup[]>([]);
   const [fallbackRequests, setFallbackRequests] = useState<Record<string, unknown>[]>([]);
+  const [systemRides, setSystemRides] = useState<SystemGeneratedRideRow[]>([]);
+  const [systemSeats, setSystemSeats] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<RequestTab>('internal');
 
   const load = useCallback(async () => {
     const trace = (...args: unknown[]) => {
@@ -65,6 +86,10 @@ export function DriverTripRequestsScreen() {
       trace('load:abort no session.id');
       setLoading(false);
       setRefreshing(false);
+      setGroups([]);
+      setFallbackRequests([]);
+      setSystemRides([]);
+      setSystemSeats({});
       return;
     }
 
@@ -72,17 +97,6 @@ export function DriverTripRequestsScreen() {
     setApiError(null);
 
     try {
-      trace('load:fetchDemandRoutes start');
-      const { groups: g, error } = await fetchDemandRoutes({ requested_date_from: today });
-      trace('load:fetchDemandRoutes done', { err: error ?? null, count: g?.length ?? 0 });
-      if (error) {
-        setApiError(error);
-        setGroups([]);
-      } else {
-        setGroups(g ?? []);
-      }
-
-      trace('load:supabase trip_requests start');
       const sbQuery = supabase
         .from('trip_requests')
         .select(
@@ -93,29 +107,62 @@ export function DriverTripRequestsScreen() {
         .order('requested_date', { ascending: true })
         .order('created_at', { ascending: false })
         .limit(200);
-      const { data, error: sbError } = await raceWithTimeout(
-        sbQuery,
-        SUPABASE_QUERY_TIMEOUT_MS,
-        () =>
-          ({
-            data: null,
-            error: {
-              message:
-                'Tiempo de espera al cargar solicitudes. Revisá conexión y credenciales de Supabase.',
-            },
-          }) as Awaited<typeof sbQuery>
-      );
-      trace('load:supabase trip_requests done', { err: sbError?.message ?? null, rows: data?.length ?? 0 });
-      if (!sbError) setFallbackRequests(data ?? []);
+
+      const [routesResult, sbResult, myRidesList, awaitingRaw] = await Promise.all([
+        fetchDemandRoutes({ requested_date_from: today }),
+        raceWithTimeout(
+          sbQuery,
+          SUPABASE_QUERY_TIMEOUT_MS,
+          () =>
+            ({
+              data: null,
+              error: {
+                message:
+                  'Tiempo de espera al cargar solicitudes. Revisá conexión y credenciales de Supabase.',
+              },
+            }) as Awaited<typeof sbQuery>
+        ),
+        fetchMyRides(session.id).catch(() => []),
+        fetchAwaitingDriverRides().catch((e) => {
+          if (__DEV__) console.warn('[DriverTripRequests] awaiting rides fetch', e);
+          return [];
+        }),
+      ]);
+
+      trace('load:parallel done');
+
+      if (routesResult.error) {
+        setApiError(routesResult.error);
+        setGroups([]);
+      } else {
+        setGroups(routesResult.groups ?? []);
+      }
+
+      const { data: trData, error: sbError } = sbResult;
+      if (!sbError) setFallbackRequests(trData ?? []);
       else {
         setFallbackRequests([]);
         setApiError((prev) => prev ?? sbError.message);
       }
+
+      const ownIds = new Set((myRidesList as { id: string }[]).map((r) => r.id));
+      const rawAwaiting = awaitingRaw as SystemGeneratedRideRow[];
+      if (__DEV__) {
+        console.log('[RIDES AWAITING][Solicitudes]', rawAwaiting);
+      }
+      const filteredAwaiting = rawAwaiting.filter((r) => !ownIds.has(r.id));
+      setSystemRides(filteredAwaiting);
+      const dIds = filteredAwaiting.map((r) => r.id);
+      const seatsMap =
+        dIds.length > 0 ? await fetchAcceptedTripRequestSeatsByRide(dIds).catch(() => ({})) : {};
+      setSystemSeats(seatsMap as Record<string, number>);
     } catch (e) {
       trace('load:catch', e);
       setApiError(e instanceof Error ? e.message : 'Error al cargar solicitudes');
       setGroups([]);
       setFallbackRequests([]);
+      setSystemRides([]);
+      setSystemSeats({});
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -132,59 +179,67 @@ export function DriverTripRequestsScreen() {
   }, [load]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
-  const showGroups = groups.length > 0;
-  const list = showGroups ? groups : fallbackRequests;
-  const isGroupItem = showGroups;
+  const internalRequests = useMemo(
+    () =>
+      fallbackRequests.filter((r) => (r.pricing_kind as string | undefined) !== 'long_distance'),
+    [fallbackRequests]
+  );
 
-  const renderItem = ({ item }: { item: DemandRouteGroup | Record<string, unknown> }) => {
-    if (isGroupItem) {
-      const g = item as DemandRouteGroup;
+  const longRequests = useMemo(
+    () =>
+      fallbackRequests.filter((r) => (r.pricing_kind as string | undefined) === 'long_distance'),
+    [fallbackRequests]
+  );
+
+  const internalListData: InternalListItem[] = useMemo(() => {
+    const rows: InternalListItem[] = groups.map((g) => ({ kind: 'group', g }));
+    for (const r of internalRequests) {
+      rows.push({ kind: 'request', r });
+    }
+    return rows;
+  }, [groups, internalRequests]);
+
+  const renderInternalItem = useCallback(
+    ({ item }: { item: InternalListItem }) => {
+      if (item.kind === 'group') {
+        const g = item.g;
+        return (
+          <TouchableOpacity
+            style={styles.card}
+            onPress={() => navigation.navigate('DriverRouteGroupDetail', { groupId: g.id })}
+            accessibilityLabel={`Ruta ${g.origin_city ?? 'Origen'} a ${g.destination_city ?? 'Destino'}, ${g.passenger_count} pasajeros`}
+            accessibilityRole="button"
+          >
+            <Text style={styles.origin} numberOfLines={1}>
+              {g.origin_city ?? 'Origen'} → {g.destination_city ?? 'Destino'}
+            </Text>
+            <Text style={styles.meta}>
+              {formatDate(g.requested_date)} · {formatTime(g.requested_time)} · {g.passenger_count} pasajero(s)
+            </Text>
+            <Text style={styles.hint}>Tocá para ver el mapa y publicar un viaje</Text>
+          </TouchableOpacity>
+        );
+      }
+      const r = item.r;
+      const reqId = r.id as string;
       return (
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => navigation.navigate('DriverRouteGroupDetail', { groupId: g.id })}
-          accessibilityLabel={`Ruta ${g.origin_city ?? 'Origen'} a ${g.destination_city ?? 'Destino'}, ${g.passenger_count} pasajeros`}
-          accessibilityRole="button"
-        >
+        <View style={styles.card}>
+          <View style={styles.kindBadgeRow}>
+            <Text style={[styles.kindBadge, styles.kindBadgeInternal]}>Interno</Text>
+          </View>
           <Text style={styles.origin} numberOfLines={1}>
-            {g.origin_city ?? 'Origen'} → {g.destination_city ?? 'Destino'}
+            {shortLabel(r.origin_label as string)}
+          </Text>
+          <Text style={styles.destination} numberOfLines={1}>
+            → {shortLabel(r.destination_label as string)}
           </Text>
           <Text style={styles.meta}>
-            {formatDate(g.requested_date)} · {formatTime(g.requested_time)} · {g.passenger_count} pasajero(s)
+            {formatDate(r.requested_date as string)} · {formatTime(r.requested_time as string)} ·{' '}
+            {Number(r.seats ?? 1)} asiento(s)
           </Text>
-          <Text style={styles.hint}>Tocá para ver mapa y publicar viaje</Text>
-        </TouchableOpacity>
-      );
-    }
-    const r = item as Record<string, unknown>;
-    const kind = r.pricing_kind === 'long_distance' ? 'long_distance' : 'internal';
-    const reqId = r.id as string;
-    return (
-      <View style={styles.card}>
-        <View style={styles.kindBadgeRow}>
-          <Text style={[styles.kindBadge, kind === 'internal' ? styles.kindBadgeInternal : styles.kindBadgeLong]}>
-            {kind === 'internal' ? 'Interno' : 'Larga distancia'}
-          </Text>
-        </View>
-        <Text style={styles.origin} numberOfLines={1}>
-          {shortLabel(r.origin_label as string)}
-        </Text>
-        <Text style={styles.destination} numberOfLines={1}>
-          → {shortLabel(r.destination_label as string)}
-        </Text>
-        <Text style={styles.meta}>
-          {formatDate(r.requested_date as string)} · {formatTime(r.requested_time as string)} · {Number(r.seats ?? 1)}{' '}
-          asiento(s)
-          {kind === 'long_distance' &&
-          r.passenger_desired_price_per_seat_gs != null &&
-          Number(r.passenger_desired_price_per_seat_gs) > 0
-            ? ` · Pasajero: hasta ${Number(r.passenger_desired_price_per_seat_gs).toLocaleString('es-PY')} Gs/asiento`
-            : null}
-        </Text>
-        {kind === 'internal' ? (
           <TouchableOpacity
             style={styles.primaryBtn}
             onPress={() =>
@@ -195,23 +250,59 @@ export function DriverTripRequestsScreen() {
           >
             <Text style={styles.primaryBtnText}>Crear ruta (interno)</Text>
           </TouchableOpacity>
-        ) : (
+        </View>
+      );
+    },
+    [navigation]
+  );
+
+  const renderLongItem = useCallback(
+    ({ item: r }: { item: Record<string, unknown> }) => {
+      const reqId = r.id as string;
+      return (
+        <View style={styles.card}>
+          <View style={styles.kindBadgeRow}>
+            <Text style={[styles.kindBadge, styles.kindBadgeLong]}>Larga distancia</Text>
+          </View>
+          <Text style={styles.origin} numberOfLines={1}>
+            {shortLabel(r.origin_label as string)}
+          </Text>
+          <Text style={styles.destination} numberOfLines={1}>
+            → {shortLabel(r.destination_label as string)}
+          </Text>
+          <Text style={styles.meta}>
+            {formatDate(r.requested_date as string)} · {formatTime(r.requested_time as string)} ·{' '}
+            {Number(r.seats ?? 1)} asiento(s)
+            {r.passenger_desired_price_per_seat_gs != null &&
+            Number(r.passenger_desired_price_per_seat_gs) > 0
+              ? ` · Pasajero: hasta ${Number(r.passenger_desired_price_per_seat_gs).toLocaleString('es-PY')} Gs/asiento`
+              : null}
+          </Text>
           <TouchableOpacity
             style={styles.longDistBtn}
-            onPress={() =>
-              navigation.navigate('TripRequestLongDistanceOffer', { tripRequestId: reqId })
-            }
+            onPress={() => navigation.navigate('TripRequestLongDistanceOffer', { tripRequestId: reqId })}
             accessibilityLabel="Contraoferta y precios de otros conductores"
             accessibilityRole="button"
           >
             <Text style={styles.longDistBtnText}>Contraoferta y precios de otros</Text>
           </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
+        </View>
+      );
+    },
+    [navigation]
+  );
 
-  if (loading && list.length === 0) {
+  const introForTab = useMemo(() => {
+    if (activeTab === 'internal') {
+      return 'Interno: rutas con demanda agrupadas y solicitudes internas pendientes. Deslizá hacia abajo para recalcular grupos.';
+    }
+    if (activeTab === 'long_distance') {
+      return 'Larga distancia: ofertá precio y compará con otros conductores.';
+    }
+    return 'De sistema: viajes creados por despacho sin conductor asignado. También aparecen en Mis viajes publicados.';
+  }, [activeTab]);
+
+  if (loading && !refreshing) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#166534" />
@@ -229,25 +320,82 @@ export function DriverTripRequestsScreen() {
       >
         <Text style={styles.myRidesBtnText}>Mis viajes publicados</Text>
       </TouchableOpacity>
-      <Text style={styles.intro}>
-        {showGroups
-          ? 'Rutas con demanda agrupadas. Actualizá para recalcular grupos; tocá una ruta para ver el mapa y publicar un viaje.'
-          : 'Solicitudes sueltas: interno → creá la ruta con tarifa según plataforma; larga distancia → ofertá precio y mirá lo que ofrecieron otros conductores.'}
-      </Text>
-      {apiError && (
-        <Text style={styles.apiError}>{apiError}</Text>
-      )}
-      {list.length === 0 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyText}>
-            {showGroups ? 'No hay rutas con demanda.' : 'No hay solicitudes pendientes.'}
-          </Text>
-        </View>
-      ) : (
+
+      <View style={styles.tabRow}>
+        {(['internal', 'long_distance', 'system'] as const).map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            style={[styles.tabBtn, activeTab === tab && styles.tabBtnActive]}
+            onPress={() => setActiveTab(tab)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: activeTab === tab }}
+            accessibilityLabel={TAB_LABELS[tab]}
+          >
+            <Text style={[styles.tabBtnText, activeTab === tab && styles.tabBtnTextActive]}>
+              {TAB_LABELS[tab]}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <Text style={styles.intro}>{introForTab}</Text>
+
+      {apiError && <Text style={styles.apiError}>{apiError}</Text>}
+
+      {activeTab === 'internal' &&
+        (internalListData.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>No hay rutas agrupadas ni solicitudes internas pendientes.</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={internalListData}
+            keyExtractor={(item) =>
+              item.kind === 'group' ? item.g.id : String(item.r.id)
+            }
+            renderItem={renderInternalItem}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+            contentContainerStyle={styles.listContent}
+          />
+        ))}
+
+      {activeTab === 'long_distance' &&
+        (longRequests.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>No hay solicitudes larga distancia pendientes.</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={longRequests}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={renderLongItem}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+            contentContainerStyle={styles.listContent}
+          />
+        ))}
+
+      {activeTab === 'system' && (
         <FlatList
-          data={list}
-          keyExtractor={(item) => String((item as DemandRouteGroup).id ?? (item as Record<string, unknown>).id)}
-          renderItem={renderItem}
+          data={systemRides}
+          keyExtractor={(item) => item.id}
+          ListHeaderComponent={
+            <Text style={styles.systemSectionTitle}>Viajes generados por el sistema</Text>
+          }
+          ListEmptyComponent={
+            <View style={styles.systemEmptyWrap}>
+              <Text style={styles.emptyText}>
+                No hay viajes generados por el sistema por ahora. Aparecen cuando el despacho crea un viaje sin
+                conductor asignado (estado awaiting_driver).
+              </Text>
+            </View>
+          }
+          renderItem={({ item }) => (
+            <SystemGeneratedRideCard
+              r={item}
+              passengerSeats={systemSeats[item.id] ?? 0}
+              onOpenDetail={() => navigation.navigate('RideDetail', { rideId: item.id })}
+            />
+          )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           contentContainerStyle={styles.listContent}
         />
@@ -267,11 +415,39 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 10,
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   myRidesBtnText: { color: '#166534', fontSize: 15, fontWeight: '700' },
-  intro: { fontSize: 14, color: '#6b7280', marginBottom: 16 },
+  tabRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+  },
+  tabBtnActive: {
+    borderColor: '#166534',
+    backgroundColor: '#f0fdf4',
+  },
+  tabBtnText: { fontSize: 12, fontWeight: '700', color: '#6b7280', textAlign: 'center' },
+  tabBtnTextActive: { color: '#14532d' },
+  intro: { fontSize: 14, color: '#6b7280', marginBottom: 12 },
   apiError: { fontSize: 13, color: '#b91c1c', marginBottom: 8 },
+  systemSectionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f766e',
+    marginBottom: 12,
+  },
+  systemEmptyWrap: { paddingVertical: 8, paddingHorizontal: 4 },
   listContent: { paddingBottom: 24 },
   card: {
     backgroundColor: '#fff',
@@ -316,5 +492,5 @@ const styles = StyleSheet.create({
   kindBadgeInternal: { backgroundColor: '#dcfce7', color: '#14532d' },
   kindBadgeLong: { backgroundColor: '#ccfbf1', color: '#115e59' },
   empty: { alignItems: 'center', paddingVertical: 32 },
-  emptyText: { fontSize: 16, color: '#6b7280', marginBottom: 16 },
+  emptyText: { fontSize: 15, color: '#6b7280', textAlign: 'center', lineHeight: 22 },
 });

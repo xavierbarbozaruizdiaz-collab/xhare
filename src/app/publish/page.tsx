@@ -83,7 +83,7 @@ export default function PublishRidePage() {
         .from('trip_requests')
         .select('origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_date, requested_time')
         .in('id', tripRequestIds)
-        .eq('status', 'pending');
+        .in('status', ['pending', 'grouped', 'grouping']);
       if (!rows?.length) return;
       const first = rows[0];
       setOrigin({ lat: first.origin_lat, lng: first.origin_lng, label: first.origin_label ?? undefined });

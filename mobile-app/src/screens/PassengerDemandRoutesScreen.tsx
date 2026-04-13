@@ -76,7 +76,7 @@ export function PassengerDemandRoutesScreen() {
       <View style={styles.topActions}>
         <TouchableOpacity
           style={styles.btnOutline}
-          onPress={() => parentNav?.navigate('SearchPublishedRides')}
+          onPress={() => parentNav?.navigate('SearchPublishedRides', {})}
           accessibilityRole="button"
           accessibilityLabel="Buscar viajes con filtros"
         >

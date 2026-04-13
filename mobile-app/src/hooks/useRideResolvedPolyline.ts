@@ -47,8 +47,9 @@ export function useRideResolvedPolyline(
       return;
     }
     let cancelled = false;
+    const ac = new AbortController();
     setState({ loading: true, data: null });
-    void loadRidePolyline(r, stopsRef.current)
+    void loadRidePolyline(r, stopsRef.current, { signal: ac.signal })
       .then((res) => {
         if (!cancelled) setState({ loading: false, data: res });
       })
@@ -57,6 +58,7 @@ export function useRideResolvedPolyline(
       });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [rideId, routePolyDepsKey, stopsKey]);
 
