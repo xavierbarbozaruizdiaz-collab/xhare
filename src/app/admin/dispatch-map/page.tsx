@@ -60,6 +60,22 @@ type GroupRow = {
 
 type RouteStop = { key: string; lat: number; lng: number; label: string };
 
+/** Marcadores del mapa van en pares `…-o` / `…-d` (pedido, ride sistema, atajo). */
+function dispatchMarkerPartnerId(id: string): string | null {
+  if (id.endsWith('-o')) return `${id.slice(0, -1)}d`;
+  if (id.endsWith('-d')) return `${id.slice(0, -1)}o`;
+  return null;
+}
+
+function routeStopFromDispatchMarker(m: DispatchMapMarker, keySuffix: string): RouteStop {
+  return {
+    key: `${m.id}-${keySuffix}`,
+    lat: m.lat,
+    lng: m.lng,
+    label: `${m.title}: ${m.subtitle.slice(0, 80)}`,
+  };
+}
+
 type PassengerShortcutRow = {
   user_id: string;
   slot: string;
@@ -376,12 +392,26 @@ export default function AdminDispatchMapPage() {
     showPassengerShortcuts,
   ]);
 
-  const appendStop = useCallback((m: DispatchMapMarker) => {
-    setRouteStops((prev) => [
-      ...prev,
-      { key: `${m.id}-${prev.length}`, lat: m.lat, lng: m.lng, label: `${m.title}: ${m.subtitle.slice(0, 80)}` },
-    ]);
-  }, []);
+  const appendStop = useCallback(
+    (m: DispatchMapMarker) => {
+      setRouteStops((prev) => {
+        const n = prev.length;
+        const partnerId = dispatchMarkerPartnerId(m.id);
+        const partner = partnerId ? markers.find((x) => x.id === partnerId) : undefined;
+        if (partner) {
+          const origin = m.id.endsWith('-o') ? m : partner;
+          const dest = m.id.endsWith('-d') ? m : partner;
+          return [
+            ...prev,
+            routeStopFromDispatchMarker(origin, String(n)),
+            routeStopFromDispatchMarker(dest, String(n + 1)),
+          ];
+        }
+        return [...prev, routeStopFromDispatchMarker(m, String(n))];
+      });
+    },
+    [markers]
+  );
 
   const moveStop = useCallback((index: number, dir: -1 | 1) => {
     setRouteStops((prev) => {
@@ -669,7 +699,8 @@ export default function AdminDispatchMapPage() {
           />
           <p className="text-xs text-gray-500 mt-2">
             <strong>Ruta manual:</strong> tocá un punto (origen o destino), abrí el globo y pulsá <strong>Añadir a la ruta</strong>, o
-            hacé <strong>doble clic</strong> en el pin. La línea verde no bloquea los clics en los marcadores. La ruta sigue
+            hacé <strong>doble clic</strong> en el pin. En cada pedido, viaje sistema o atajo, <strong>un solo gesto suma origen y destino</strong>{' '}
+            (el otro pin aparece en la lista al instante). La línea verde no bloquea los clics en los marcadores. La ruta sigue
             calles vía <strong>Google Routes</strong> (misma API que publicar / reservar en la web); si falla,
             verás rectas entre paradas. Zoom con +/− o la rueda.
           </p>
