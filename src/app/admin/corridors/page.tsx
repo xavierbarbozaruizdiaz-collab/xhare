@@ -4,7 +4,11 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useAdminAuth } from '../AdminAuthContext';
-import type { CorridorLayerVisibility, CorridorZoneBox } from '@/components/admin/AdminCorridorsMap';
+import type {
+  CorridorLayerVisibility,
+  CorridorZoneBox,
+  DemandTubeLayer,
+} from '@/components/admin/AdminCorridorsMap';
 
 const AdminCorridorsMap = dynamic(() => import('@/components/admin/AdminCorridorsMap'), {
   ssr: false,
@@ -49,6 +53,16 @@ export default function AdminCorridorsPage() {
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [tubeFrom, setTubeFrom] = useState(() => new Date().toISOString().slice(0, 10));
+  const [tubeTo, setTubeTo] = useState(() => {
+    const u = new Date();
+    u.setDate(u.getDate() + 14);
+    return u.toISOString().slice(0, 10);
+  });
+  const [demandTubes, setDemandTubes] = useState<DemandTubeLayer[]>([]);
+  const [showDemandTubes, setShowDemandTubes] = useState(true);
+  const [tubesLoading, setTubesLoading] = useState(false);
+  const [tubesErr, setTubesErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -91,6 +105,49 @@ export default function AdminCorridorsPage() {
     if (!ready || !isAdmin) return;
     void load();
   }, [ready, isAdmin, load]);
+
+  const loadTubes = useCallback(async () => {
+    if (!showDemandTubes) {
+      setDemandTubes([]);
+      return;
+    }
+    if (!accessToken) return;
+    setTubesErr(null);
+    setTubesLoading(true);
+    try {
+      let token = accessToken;
+      let res = await fetch(
+        `/api/admin/demand-route-tubes?from=${encodeURIComponent(tubeFrom)}&to=${encodeURIComponent(tubeTo)}`,
+        { credentials: 'include', headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.status === 401) {
+        token = (await refetch()) ?? '';
+        if (token) {
+          res = await fetch(
+            `/api/admin/demand-route-tubes?from=${encodeURIComponent(tubeFrom)}&to=${encodeURIComponent(tubeTo)}`,
+            { credentials: 'include', headers: { Authorization: `Bearer ${token}` } }
+          );
+        }
+      }
+      const body = (await res.json()) as { tubes?: DemandTubeLayer[]; error?: string };
+      if (!res.ok) {
+        setTubesErr(typeof body.error === 'string' ? body.error : 'No se pudieron cargar los tubos');
+        setDemandTubes([]);
+        return;
+      }
+      setDemandTubes(body.tubes ?? []);
+    } catch (e) {
+      setTubesErr(e instanceof Error ? e.message : 'Error de red');
+      setDemandTubes([]);
+    } finally {
+      setTubesLoading(false);
+    }
+  }, [accessToken, refetch, tubeFrom, tubeTo, showDemandTubes]);
+
+  useEffect(() => {
+    if (!ready || !isAdmin) return;
+    void loadTubes();
+  }, [ready, isAdmin, loadTubes]);
 
   useEffect(() => {
     setVisibility((prev) => {
@@ -216,6 +273,10 @@ export default function AdminCorridorsPage() {
             Usá <strong>Capas</strong> en la tabla para mostrar u ocultar origen/destino cuando se superponen varias
             cajas.
           </li>
+          <li>
+            Los <strong>tubos violeta</strong> son la misma idea de radio (~2 km al eje) que usa el sync geográfico de
+            grupos; son aproximación visual, no el motor exacto celda a celda.
+          </li>
         </ul>
       </div>
 
@@ -251,7 +312,7 @@ export default function AdminCorridorsPage() {
         </p>
       )}
 
-      {rows.length > 0 && (
+      {(rows.length > 0 || showDemandTubes) && (
         <div className="mb-8 space-y-3">
           <h2 className="text-lg font-semibold text-gray-900">Vista en mapa</h2>
           <p className="text-sm text-gray-600">
@@ -260,7 +321,56 @@ export default function AdminCorridorsPage() {
             <strong>destino</strong>. Si las dos cajas son iguales (viaje local), se superponen: usá las casillas de
             capas en la tabla para aislar origen o destino.
           </p>
+          <div className="flex flex-wrap items-end gap-4 p-3 bg-violet-50/80 border border-violet-200 rounded-xl">
+            <label className="inline-flex items-center gap-2 text-sm text-violet-950 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showDemandTubes}
+                onChange={(e) => setShowDemandTubes(e.target.checked)}
+              />
+              Ver tubos sync (2 km)
+            </label>
+            <div>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Tubos — desde</label>
+              <input
+                type="date"
+                value={tubeFrom}
+                onChange={(e) => setTubeFrom(e.target.value)}
+                className="border border-violet-300 rounded-lg px-2 py-1 text-sm"
+                disabled={!showDemandTubes}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Tubos — hasta</label>
+              <input
+                type="date"
+                value={tubeTo}
+                onChange={(e) => setTubeTo(e.target.value)}
+                className="border border-violet-300 rounded-lg px-2 py-1 text-sm"
+                disabled={!showDemandTubes}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadTubes()}
+              className="text-sm font-medium text-violet-800 border border-violet-500 rounded-lg px-3 py-1 hover:bg-violet-100 disabled:opacity-50"
+              disabled={!showDemandTubes || tubesLoading}
+            >
+              {tubesLoading ? 'Cargando tubos…' : 'Recargar tubos'}
+            </button>
+            {demandTubes.length > 0 && (
+              <span className="text-xs text-violet-800">
+                {demandTubes.length} grupo(s) con polilínea en el rango
+              </span>
+            )}
+          </div>
+          {tubesErr && (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{tubesErr}</div>
+          )}
           <div className="flex flex-wrap gap-4 text-xs text-gray-600 mb-1">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block w-4 h-3 rounded border border-violet-700 bg-violet-400/40" /> Tubo sync
+            </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="inline-block w-4 h-3 rounded border-2 border-sky-800 bg-sky-500/30" /> Zona origen
             </span>
@@ -272,7 +382,13 @@ export default function AdminCorridorsPage() {
               Corredor inactivo (más tenue)
             </span>
           </div>
-          <AdminCorridorsMap corridors={rows} visibility={visibility} onZoneEdited={patchZone} />
+          <AdminCorridorsMap
+            corridors={rows}
+            visibility={visibility}
+            onZoneEdited={patchZone}
+            demandTubes={demandTubes}
+            showDemandTubes={showDemandTubes}
+          />
         </div>
       )}
 

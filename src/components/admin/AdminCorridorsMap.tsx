@@ -5,6 +5,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
+import type { Point } from '@/types';
+import { DEMAND_SYNC_CORRIDOR_METERS, tubePolygonFromPolyline } from '@/lib/polylineTube';
 
 export type AdminCorridorMapItem = {
   id: string;
@@ -25,9 +27,20 @@ export type CorridorZoneBox = {
   maxLng: number;
 };
 
+/** Polilínea base de un grupo `demand_route_groups` (sync geo) para el tubo visual. */
+export type DemandTubeLayer = {
+  id: string;
+  polyline: Point[];
+  label: string;
+  requested_date: string;
+  passenger_count: number;
+};
+
 type RectMeta = { corridorId: string; kind: 'origin' | 'destination' };
 
 type PmRectangle = L.Rectangle & { pm?: { enable: (opts?: Record<string, unknown>) => void } };
+
+type PathOptsPm = L.PathOptions & { pmIgnore?: boolean };
 
 function escapePopup(s: string): string {
   return s
@@ -70,6 +83,9 @@ type Props = {
   corridors: AdminCorridorMapItem[];
   visibility: CorridorLayerVisibility;
   onZoneEdited: (corridorId: string, kind: 'origin' | 'destination', box: CorridorZoneBox) => void;
+  /** Grupos de demanda con `base_polyline` (mismo criterio de tubo que sync ~2 km). */
+  demandTubes?: DemandTubeLayer[];
+  showDemandTubes?: boolean;
   height?: string;
   className?: string;
 };
@@ -84,12 +100,14 @@ type MapWithPm = L.Map & {
 };
 
 /**
- * Mapa OSM + Geoman: rectángulos editables; capas según `visibility`.
+ * Mapa OSM + Geoman: tubos violeta (grupos sync) bajo los rectángulos de corredor editables.
  */
 export default function AdminCorridorsMap({
   corridors,
   visibility,
   onZoneEdited,
+  demandTubes = [],
+  showDemandTubes = false,
   height = 'min(52vh, 480px)',
   className = '',
 }: Props) {
@@ -142,6 +160,34 @@ export default function AdminCorridorsMap({
     group.clearLayers();
 
     const allCorners: L.LatLng[] = [];
+
+    if (showDemandTubes && demandTubes.length > 0) {
+      const tubeOpts: PathOptsPm = {
+        color: '#5b21b6',
+        weight: 1,
+        fillColor: '#9333ea',
+        fillOpacity: 0.14,
+        pmIgnore: true,
+      };
+      for (const t of demandTubes) {
+        const ring = tubePolygonFromPolyline(t.polyline, DEMAND_SYNC_CORRIDOR_METERS);
+        if (!ring || ring.length < 3) continue;
+        const latlngs = ring.map((p) => L.latLng(p.lat, p.lng));
+        const poly = L.polygon(latlngs, tubeOpts).addTo(group);
+        const tubePopup =
+          `<strong>Tubo sync (~${DEMAND_SYNC_CORRIDOR_METERS / 1000} km)</strong><br/><span style="font-size:12px;color:#444">${escapePopup(t.label)}<br/>Fecha: ${escapePopup(t.requested_date)} · ${t.passenger_count} plaza(s)<br/>Grupo <code>${escapePopup(t.id.slice(0, 8))}…</code></span>`;
+        poly.bindPopup(tubePopup);
+        for (const p of ring) {
+          allCorners.push(L.latLng(p.lat, p.lng));
+        }
+        const axis = L.polyline(
+          t.polyline.map((p) => [p.lat, p.lng] as L.LatLngExpression),
+          { color: '#6d28d9', weight: 2, opacity: 0.55, dashArray: '6 4', pmIgnore: true } as PathOptsPm
+        ).addTo(group);
+        axis.bindPopup(tubePopup);
+      }
+    }
+
     const sorted = [...corridors].sort((a, b) => a.sort_priority - b.sort_priority);
 
     for (const c of sorted) {
@@ -189,22 +235,26 @@ export default function AdminCorridorsMap({
       map.fitBounds(L.latLngBounds(allCorners), { padding: [40, 40], maxZoom: 11 });
       didInitialFitRef.current = true;
     }
-    if (corridors.length === 0) {
+    if (corridors.length === 0 && (!showDemandTubes || demandTubes.length === 0)) {
       didInitialFitRef.current = false;
     }
 
     const mpm = (map as MapWithPm).pm;
     mpm?.disableGlobalEditMode();
-    mpm?.enableGlobalEditMode({ snappable: true });
-  }, [corridors, visibility, scheduleCommit]);
+    if (corridors.length > 0) {
+      mpm?.enableGlobalEditMode({ snappable: true });
+    }
+  }, [corridors, visibility, scheduleCommit, demandTubes, showDemandTubes]);
 
-  if (corridors.length === 0) {
+  const hasCorridors = corridors.length > 0;
+  const hasTubes = showDemandTubes && (demandTubes?.length ?? 0) > 0;
+  if (!hasCorridors && !hasTubes) {
     return (
       <div
         className={`rounded-xl border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-gray-500 text-sm ${className}`}
         style={{ height, minHeight: 200 }}
       >
-        Sin corredores para dibujar.
+        Sin corredores ni tubos para dibujar. Marcá «Ver tubos» y rango de fechas o cargá corredores.
       </div>
     );
   }
@@ -212,9 +262,10 @@ export default function AdminCorridorsMap({
   return (
     <div className="space-y-2">
       <p className="text-xs text-gray-600">
-        Los rectángulos están en <strong>modo edición</strong>: arrastrá los vértices para agrandar o achicar. Los
-        cambios se guardan en la base al terminar el ajuste (breve retraso). Para mover el mapa, arrastrá fuera de los
-        vértices o usá zoom +/−.
+        <span className="text-violet-900 font-medium">Violeta</span>: tubo aproximado del mismo radio que usa el{' '}
+        <strong>sync geográfico</strong> (2 km al eje de la polilínea del grupo).{' '}
+        <span className="text-sky-900 font-medium">Azul / naranja</span>: cajas de corredor (editables con los
+        vértices). Los tubos no se editan acá.
       </p>
       <div
         ref={containerRef}
