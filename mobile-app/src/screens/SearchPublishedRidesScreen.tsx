@@ -2,7 +2,7 @@
  * Buscar viajes publicados: fecha y hora desde obligatorias; origen/destino por texto y/o mapa; tipo de viaje.
  * Con `favoriteSlot` en la ruta: mismo formulario solo para guardar trayecto favorito (p. ej. Casa → Trabajo).
  */
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -45,6 +45,32 @@ function toYmdLocal(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+function parseYmdHm(dateYmd: string, hm: string): Date | null {
+  const [yy, mm, dd] = dateYmd.trim().split('-').map((x) => parseInt(x, 10));
+  const mt = hm.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!mt) return null;
+  const h = parseInt(mt[1], 10);
+  const mi = parseInt(mt[2], 10);
+  if (![yy, mm, dd, h, mi].every((n) => Number.isFinite(n))) return null;
+  return new Date(yy, mm - 1, dd, h, mi, 0, 0);
+}
+
+function formatHmFromDate(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function addMinutesToHm(dateYmd: string, fromHm: string, addMinutes: number): string | null {
+  const dep = parseYmdHm(dateYmd, fromHm);
+  if (!dep) return null;
+  return formatHmFromDate(new Date(dep.getTime() + addMinutes * 60_000));
+}
+
+function subtractMinutesFromHm(dateYmd: string, arrivalHm: string, subMinutes: number): string | null {
+  const arr = parseYmdHm(dateYmd, arrivalHm);
+  if (!arr) return null;
+  return formatHmFromDate(new Date(arr.getTime() - subMinutes * 60_000));
+}
+
 function formatEstimatedArrivalLine(
   dateYmd: string,
   fromTimeHm: string,
@@ -74,6 +100,41 @@ function formatEstimatedArrivalLine(
   const mins = Math.round(routeEta.durationMinutes);
   return {
     text: `~${hm} en destino (${mins} min según la ruta del mapa)`,
+    isPlaceholder: false,
+  };
+}
+
+/** Modo favorito: llegada deseada → salida estimada restando la duración del mapa. */
+function formatEstimatedPickupLine(
+  dateYmd: string,
+  arrivalHm: string,
+  routeEta: SearchRouteEtaState,
+  hasOriginDestPins: boolean
+): { text: string; isPlaceholder: boolean } {
+  if (!hasOriginDestPins) {
+    return { text: 'Marcá origen y destino en el mapa', isPlaceholder: true };
+  }
+  if (!dateYmd.trim() || !arrivalHm.trim()) {
+    return { text: 'Completá fecha y hora de llegada deseada', isPlaceholder: true };
+  }
+  if (routeEta.loading) {
+    return { text: 'Calculando ruta…', isPlaceholder: true };
+  }
+  if (routeEta.durationMinutes == null) {
+    return { text: 'No disponible (sin duración del trayecto)', isPlaceholder: true };
+  }
+  const pickup = subtractMinutesFromHm(dateYmd, arrivalHm, routeEta.durationMinutes);
+  if (!pickup) {
+    return { text: 'Hora de llegada no válida', isPlaceholder: true };
+  }
+  const dep = parseYmdHm(dateYmd, pickup);
+  if (!dep) {
+    return { text: '—', isPlaceholder: true };
+  }
+  const hm = dep.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' });
+  const mins = Math.round(routeEta.durationMinutes);
+  return {
+    text: `~${hm} salida estimada (${mins} min antes, según la ruta del mapa)`,
     isPlaceholder: false,
   };
 }
@@ -190,8 +251,11 @@ export function SearchPublishedRidesScreen() {
   const userId = session?.id ?? '';
 
   const [date, setDate] = useState(() => toYmdLocal(new Date()));
-  /** HH:MM (24 h), obligatoria junto con la fecha. */
+  /** HH:MM (24 h): en favoritos = salida/recogida (persistido); en búsqueda = hora desde. */
   const [fromTime, setFromTime] = useState('08:00');
+  /** Solo favoritos: hora a la que el usuario necesita llegar al destino (entrada principal). */
+  const [arrivalTimeHm, setArrivalTimeHm] = useState('');
+  const arrivalSyncedFromStoredPickupRef = useRef(false);
   const [routeNameQuery, setRouteNameQuery] = useState('');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
@@ -208,6 +272,10 @@ export function SearchPublishedRidesScreen() {
     durationMinutes: null,
     distanceKm: null,
   });
+
+  /** Favorito con pins en mapa: UX llegada → salida según polyline. Sin ambos pins: hora “desde” clásica. */
+  const favoriteArrivalFirstUx = isFavoriteMode && originGeo != null && destGeo != null;
+
   useLayoutEffect(() => {
     navigation.setOptions({
       title: favoriteSlot ? `Favorito: ${favoritePairLabel(favoriteSlot)}` : 'Buscar viajes',
@@ -216,12 +284,14 @@ export function SearchPublishedRidesScreen() {
 
   useEffect(() => {
     if (!favoriteSlot || !userId) return;
+    arrivalSyncedFromStoredPickupRef.current = false;
     let cancelled = false;
     void (async () => {
       const snap = await getPassengerFavorite(userId, favoriteSlot);
       if (cancelled || !snap) return;
       setDate(snap.scheduledDateYmd?.trim() || snap.date);
       setFromTime(snap.scheduledTimeHm?.trim() || snap.fromTime);
+      setArrivalTimeHm('');
       setRouteNameQuery(snap.routeNameQuery);
       setOrigin(snap.origin);
       setDestination(snap.destination);
@@ -240,6 +310,42 @@ export function SearchPublishedRidesScreen() {
       cancelled = true;
     };
   }, [favoriteSlot, userId]);
+
+  useEffect(() => {
+    if (!favoriteArrivalFirstUx) {
+      arrivalSyncedFromStoredPickupRef.current = false;
+    }
+  }, [favoriteArrivalFirstUx]);
+
+  useEffect(() => {
+    if (isFavoriteMode && (!originGeo || !destGeo)) {
+      setArrivalTimeHm('');
+    }
+  }, [isFavoriteMode, originGeo, destGeo]);
+
+  /** Primera vez que hay duración del mapa: llegada = salida guardada + trayecto (migración desde UX anterior). */
+  useEffect(() => {
+    if (!favoriteArrivalFirstUx) return;
+    if (arrivalSyncedFromStoredPickupRef.current) return;
+    if (!date.trim() || !fromTime.trim()) return;
+    if (routeEta.loading) return;
+    if (routeEta.durationMinutes == null) return;
+    const arr = addMinutesToHm(date, fromTime, routeEta.durationMinutes);
+    if (arr) {
+      setArrivalTimeHm(arr);
+      arrivalSyncedFromStoredPickupRef.current = true;
+    }
+  }, [favoriteArrivalFirstUx, date, fromTime, routeEta.loading, routeEta.durationMinutes]);
+
+  /** Llegada fija: al cambiar fecha, duración o ruta, actualizar salida guardada (`fromTime`). */
+  useEffect(() => {
+    if (!favoriteArrivalFirstUx || !arrivalSyncedFromStoredPickupRef.current) return;
+    if (!date.trim() || !arrivalTimeHm.trim()) return;
+    if (routeEta.loading) return;
+    if (routeEta.durationMinutes == null) return;
+    const pickup = subtractMinutesFromHm(date, arrivalTimeHm, routeEta.durationMinutes);
+    if (pickup) setFromTime(pickup);
+  }, [favoriteArrivalFirstUx, date, arrivalTimeHm, routeEta.loading, routeEta.durationMinutes]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -279,10 +385,39 @@ export function SearchPublishedRidesScreen() {
       Alert.alert('Sesión', 'Iniciá sesión para guardar favoritos.');
       return;
     }
-    if (!date.trim() || !fromTime.trim()) {
-      Alert.alert('Datos incompletos', 'Elegí fecha y hora desde.');
+    if (!date.trim()) {
+      Alert.alert('Datos incompletos', 'Elegí la fecha.');
       return;
     }
+    if (favoriteArrivalFirstUx) {
+      if (!arrivalTimeHm.trim()) {
+        Alert.alert(
+          'Datos incompletos',
+          'Elegí la hora a la que necesitás llegar (o esperá a que el mapa calcule la ruta si acabás de marcar origen y destino).'
+        );
+        return;
+      }
+      if (!routeEta.loading && routeEta.durationMinutes == null) {
+        Alert.alert(
+          'Ruta en el mapa',
+          'No se obtuvo duración por calles. Revisá los puntos o la conexión; sin eso no podemos calcular la salida desde la llegada.'
+        );
+        return;
+      }
+    } else if (!fromTime.trim()) {
+      Alert.alert('Datos incompletos', 'Elegí la hora desde.');
+      return;
+    }
+
+    const pickupToSave =
+      favoriteArrivalFirstUx &&
+      arrivalTimeHm.trim() &&
+      date.trim() &&
+      routeEta.durationMinutes != null
+        ? subtractMinutesFromHm(date, arrivalTimeHm, routeEta.durationMinutes) ?? fromTime.trim()
+        : fromTime.trim();
+    const scheduledHm = (pickupToSave || '08:00').trim() || '08:00';
+
     const hasOrigin = origin.trim().length > 0 || originGeo != null;
     const hasDest = destination.trim().length > 0 || destGeo != null;
     if (!hasOrigin || !hasDest) {
@@ -292,7 +427,7 @@ export function SearchPublishedRidesScreen() {
     try {
       await upsertPassengerFavorite(userId, favoriteSlot, {
         date: date.trim(),
-        fromTime: fromTime.trim() || '08:00',
+        fromTime: scheduledHm,
         routeNameQuery: routeNameQuery.trim(),
         origin: origin.trim(),
         destination: destination.trim(),
@@ -304,9 +439,9 @@ export function SearchPublishedRidesScreen() {
         enabled: true,
         scheduleDaily,
         scheduledDateYmd: date.trim(),
-        scheduledTimeHm: fromTime.trim() || '08:00',
+        scheduledTimeHm: scheduledHm,
         nextTriggerAtIso:
-          computeNextTriggerIso(new Date(), date.trim(), fromTime.trim() || '08:00', scheduleDaily) ?? undefined,
+          computeNextTriggerIso(new Date(), date.trim(), scheduledHm, scheduleDaily) ?? undefined,
       });
       const store = await loadPassengerFavorites(userId);
       void pushPassengerHomeMapShortcuts(store);
@@ -335,6 +470,10 @@ export function SearchPublishedRidesScreen() {
     destGeo,
     rideKind,
     scheduleDaily,
+    arrivalTimeHm,
+    routeEta.loading,
+    routeEta.durationMinutes,
+    favoriteArrivalFirstUx,
   ]);
 
   const buscoFromSearch = useMemo(
@@ -355,6 +494,12 @@ export function SearchPublishedRidesScreen() {
     () =>
       formatEstimatedArrivalLine(date, fromTime, routeEta, Boolean(originGeo && destGeo)),
     [date, fromTime, routeEta, originGeo, destGeo]
+  );
+
+  const estimatedPickup = useMemo(
+    () =>
+      formatEstimatedPickupLine(date, arrivalTimeHm, routeEta, Boolean(originGeo && destGeo)),
+    [date, arrivalTimeHm, routeEta, originGeo, destGeo]
   );
 
   const activeFilterLabels = useMemo(() => {
@@ -411,19 +556,36 @@ export function SearchPublishedRidesScreen() {
           }}
         />
       ) : null}
-      <Text style={styles.label}>Hora desde</Text>
+      <Text style={styles.label}>
+        {favoriteArrivalFirstUx ? 'Hora de llegada deseada' : 'Hora desde'}
+      </Text>
       <TouchableOpacity
         style={styles.pickerRow}
         onPress={() => setShowTimePicker(true)}
         accessibilityRole="button"
-        accessibilityLabel="Elegir hora desde"
+        accessibilityLabel={
+          favoriteArrivalFirstUx ? 'Elegir hora de llegada al destino' : 'Elegir hora desde'
+        }
       >
-        <Text style={styles.pickerValue}>{fromTime.trim() || '08:00'}</Text>
+        <Text
+          style={
+            favoriteArrivalFirstUx && !arrivalTimeHm.trim()
+              ? styles.pickerPlaceholder
+              : styles.pickerValue
+          }
+        >
+          {favoriteArrivalFirstUx
+            ? arrivalTimeHm.trim() || '—'
+            : fromTime.trim() || '08:00'}
+        </Text>
       </TouchableOpacity>
       {showTimePicker ? (
         <DateTimePicker
           value={(() => {
-            const [h, m] = fromTime.split(':').map((x) => parseInt(x, 10));
+            const hm = favoriteArrivalFirstUx
+              ? arrivalTimeHm.trim() || fromTime.trim() || '08:00'
+              : fromTime.trim() || '08:00';
+            const [h, m] = hm.split(':').map((x) => parseInt(x, 10));
             const d = new Date();
             d.setHours(Number.isFinite(h) ? h : 8, Number.isFinite(m) ? m : 0, 0, 0);
             return d;
@@ -437,7 +599,17 @@ export function SearchPublishedRidesScreen() {
             }
             if (Platform.OS !== 'ios') setShowTimePicker(false);
             if (d) {
-              setFromTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+              const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+              if (favoriteArrivalFirstUx) {
+                setArrivalTimeHm(hm);
+                arrivalSyncedFromStoredPickupRef.current = true;
+                if (date.trim() && routeEta.durationMinutes != null) {
+                  const p = subtractMinutesFromHm(date, hm, routeEta.durationMinutes);
+                  if (p) setFromTime(p);
+                }
+              } else {
+                setFromTime(hm);
+              }
             }
           }}
         />
@@ -447,7 +619,9 @@ export function SearchPublishedRidesScreen() {
           <View style={styles.dailyTextWrap}>
             <Text style={styles.dailyTitle}>Reprogramar diario</Text>
             <Text style={styles.dailyHint}>
-              Si activás, se agenda todos los días a esta hora hasta apagar el switch en Inicio.
+              {favoriteArrivalFirstUx
+                ? 'Si activás, cada día se usa la misma hora de llegada y la salida se ajusta con la ruta del mapa.'
+                : 'Si activás, se agenda todos los días a esta hora hasta apagar el switch en Inicio.'}
             </Text>
           </View>
           <Switch
@@ -458,22 +632,33 @@ export function SearchPublishedRidesScreen() {
           />
         </View>
       ) : null}
-      <Text style={styles.label}>Llegada estimada en destino</Text>
+      <Text style={styles.label}>
+        {favoriteArrivalFirstUx ? 'Salida estimada (recogida)' : 'Llegada estimada en destino'}
+      </Text>
       <View
         style={[styles.pickerRow, styles.pickerRowReadOnly]}
         accessibilityRole="text"
-        accessibilityLabel={`Llegada estimada: ${estimatedArrival.text}`}
+        accessibilityLabel={
+          favoriteArrivalFirstUx
+            ? `Salida estimada: ${estimatedPickup.text}`
+            : `Llegada estimada: ${estimatedArrival.text}`
+        }
       >
         <Text
-          style={estimatedArrival.isPlaceholder ? styles.pickerPlaceholder : styles.pickerValue}
+          style={
+            (favoriteArrivalFirstUx ? estimatedPickup : estimatedArrival).isPlaceholder
+              ? styles.pickerPlaceholder
+              : styles.pickerValue
+          }
           selectable
         >
-          {estimatedArrival.text}
+          {(favoriteArrivalFirstUx ? estimatedPickup : estimatedArrival).text}
         </Text>
       </View>
       <Text style={styles.etaHint}>
-        El horario de llegada es estimado: puede variar según el tráfico, el recorrido real del viaje y otros
-        pasajeros.
+        {favoriteArrivalFirstUx
+          ? 'La salida se recalcula al cambiar la ruta en el mapa (duración por calles). Puede variar con el tráfico y el recorrido real.'
+          : 'El horario de llegada es estimado: puede variar según el tráfico, el recorrido real del viaje y otros pasajeros.'}
       </Text>
       <Text style={styles.label}>Nombre del viaje (opcional)</Text>
       <TextInput
@@ -572,6 +757,9 @@ export function SearchPublishedRidesScreen() {
       showTimePicker,
       scheduleDaily,
       estimatedArrival,
+      estimatedPickup,
+      favoriteArrivalFirstUx,
+      arrivalTimeHm,
     ]
   );
 
