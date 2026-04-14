@@ -38,6 +38,7 @@ import {
   baseFareFromDistanceKmWithPricing,
   totalFareFromBaseAndSeatsWithPricing,
 } from '../lib/pricing/segment-fare';
+import { isPickupAtLeastLeadAhead } from '../lib/bookingLead';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'SaveTripRequest'>;
 
@@ -235,9 +236,17 @@ export function SaveTripRequestScreen() {
       }
     }
 
+    const timeStr = /^\d{1,2}:\d{2}$/.test(requestedTime.trim()) ? requestedTime.trim() : '08:00';
+    if (!isPickupAtLeastLeadAhead(requestedDate.trim(), timeStr)) {
+      Alert.alert(
+        'Anticipación mínima',
+        'La fecha y hora de salida tienen que ser al menos 4 horas desde ahora (hora de este dispositivo).'
+      );
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const timeStr = /^\d{1,2}:\d{2}$/.test(requestedTime.trim()) ? requestedTime.trim() : '08:00';
       const oLab = (originLabel.trim() || 'Ubicación en mapa').slice(0, 500);
       const dLab = (destinationLabel.trim() || 'Ubicación en mapa').slice(0, 500);
 

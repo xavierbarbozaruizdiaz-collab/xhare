@@ -677,6 +677,7 @@ function buildTripRequestRow(params: {
   pricingKind?: 'internal' | 'long_distance';
   passengerDesiredPricePerSeatGs?: number | null;
   internalQuoteAcknowledged?: boolean | null;
+  passengerFavoriteSlot?: string | null;
 }): Record<string, unknown> {
   const kind = params.pricingKind === 'long_distance' ? 'long_distance' : 'internal';
   const row: Record<string, unknown> = {
@@ -708,6 +709,9 @@ function buildTripRequestRow(params: {
   } else {
     row.passenger_desired_price_per_seat_gs = null;
     row.internal_quote_acknowledged = params.internalQuoteAcknowledged === true ? true : null;
+  }
+  if (params.passengerFavoriteSlot?.trim()) {
+    row.passenger_favorite_slot = params.passengerFavoriteSlot.trim().slice(0, 120);
   }
   return row;
 }
@@ -753,6 +757,7 @@ export async function saveTripRequest(params: {
   pricingKind?: 'internal' | 'long_distance';
   passengerDesiredPricePerSeatGs?: number | null;
   internalQuoteAcknowledged?: boolean | null;
+  passengerFavoriteSlot?: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
   const row = buildTripRequestRow(params);
   const base = env.apiBaseUrl?.trim().replace(/\/$/, '');

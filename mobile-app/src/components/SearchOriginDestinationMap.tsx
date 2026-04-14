@@ -65,6 +65,8 @@ export type SearchRouteEtaState = {
   loading: boolean;
   durationMinutes: number | null;
   distanceKm: number | null;
+  /** Misma polyline por calles que el mapa (para `trip_requests.route_polyline`). */
+  polyline?: Array<{ lat: number; lng: number }> | null;
 };
 
 type Props = {
@@ -151,14 +153,14 @@ export function SearchOriginDestinationMap({
     if (!origin || !destination) {
       setOsrmLine([]);
       setRouteLoading(false);
-      onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: null, distanceKm: null });
+      onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: null, distanceKm: null, polyline: null });
       return;
     }
     let cancelled = false;
     const ac = new AbortController();
     setRouteLoading(true);
     setOsrmLine([]);
-    onRouteEtaChangeRef.current?.({ loading: true, durationMinutes: null, distanceKm: null });
+    onRouteEtaChangeRef.current?.({ loading: true, durationMinutes: null, distanceKm: null, polyline: null });
     void fetchRoute(origin, destination, [], { signal: ac.signal })
       .then((r) => {
         if (cancelled || r.aborted) return;
@@ -173,15 +175,19 @@ export function SearchOriginDestinationMap({
             : null;
         const dk =
           typeof r.distanceKm === 'number' && Number.isFinite(r.distanceKm) ? r.distanceKm : null;
+        const pl =
+          r.polyline && r.polyline.length >= 2
+            ? r.polyline.map((p) => ({ lat: p.lat, lng: p.lng }))
+            : null;
         if (!r.error && !r.aborted) {
-          onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: dm, distanceKm: dk });
+          onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: dm, distanceKm: dk, polyline: pl });
         } else {
-          onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: null, distanceKm: null });
+          onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: null, distanceKm: null, polyline: null });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: null, distanceKm: null });
+          onRouteEtaChangeRef.current?.({ loading: false, durationMinutes: null, distanceKm: null, polyline: null });
         }
       })
       .finally(() => {

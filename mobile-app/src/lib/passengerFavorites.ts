@@ -3,6 +3,7 @@
  * IDs: presets conocidos (iconos) o `custom_<timestamp>` para trayectos libres.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { parseLocalYmdHm } from './bookingLead';
 
 const PREFIX = '@xhare/passenger_favorite_v2:';
 
@@ -52,6 +53,15 @@ export function getFavoritePreset(id: string): FavoritePreset | undefined {
   return PRESET_BY_ID.get(id);
 }
 
+/**
+ * Resuelve el id del preset por par de iconos Ionicons (mismo criterio que `FAVORITE_PRESETS`).
+ * Usado por el modal de Inicio al combinar origen/destino.
+ */
+export function findFavoritePresetIdByIcons(from: string, to: string): PassengerFavoriteSlot | null {
+  const hit = FAVORITE_PRESETS.find((p) => p.from === from && p.to === to);
+  return hit ? hit.id : null;
+}
+
 /** IDs en orden del catálogo (Inicio y modal de presets). */
 export const FAVORITE_PRESET_IDS: PassengerFavoriteSlot[] = FAVORITE_PRESETS.map((p) => p.id);
 
@@ -78,6 +88,11 @@ export type PassengerFavoriteSnapshot = {
   enabled?: boolean;
   /** Si es true, corre todos los dias a la misma hora. */
   scheduleDaily?: boolean;
+  /**
+   * Con `scheduleDaily`: qué días de la semana aplica (calendario local).
+   * Bits 0=domingo … 6=sábado (igual que `Date.getDay()`). 127 = los 7 días.
+   */
+  scheduleWeekdayMask?: number;
   /** Fecha puntual elegida cuando no es diario (YYYY-MM-DD). */
   scheduledDateYmd?: string;
   /** Hora elegida para recordatorio/recogida (HH:MM). */
@@ -92,11 +107,46 @@ export function isFavoriteEnabled(snap: PassengerFavoriteSnapshot | null | undef
   return snap.enabled !== false;
 }
 
+/** 127 = domingo(1) + … + sábado(64), mismo orden que `Date.getDay()`. */
+export const SCHEDULE_WEEKDAY_MASK_ALL = 127;
+
+/** Lee la máscara (0–127). Ausente o inválido = los 7 días (retrocompat). */
+export function coerceScheduleWeekdayMask(mask: unknown): number {
+  if (typeof mask === 'number' && Number.isFinite(mask)) return Math.floor(mask) & 127;
+  if (typeof mask === 'string' && /^\d{1,3}$/.test(mask.trim())) {
+    return coerceScheduleWeekdayMask(parseInt(mask.trim(), 10));
+  }
+  return SCHEDULE_WEEKDAY_MASK_ALL;
+}
+
+export function isJsWeekdayInScheduleMask(jsWeekday0Sun6Sat: number, mask: number): boolean {
+  const m = coerceScheduleWeekdayMask(mask);
+  if (m === 0) return false;
+  const d = ((jsWeekday0Sun6Sat % 7) + 7) % 7;
+  return ((m >> d) & 1) === 1;
+}
+
+const WEEKDAY_SHORT_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'] as const;
+
+/** Texto corto para UI (Inicio / admin). */
+export function scheduleWeekdayMaskLabelEs(mask: unknown): string {
+  const m = coerceScheduleWeekdayMask(mask);
+  if (m === 0) return 'sin días';
+  if (m === SCHEDULE_WEEKDAY_MASK_ALL) return 'todos los días';
+  const parts: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    if ((m >> i) & 1) parts.push(WEEKDAY_SHORT_ES[i]!);
+  }
+  return parts.join(', ');
+}
+
 export function computeNextTriggerIso(
   now: Date,
   dateYmd: string,
   timeHm: string,
-  daily: boolean
+  daily: boolean,
+  /** Solo diario: bitmask de días (ver `scheduleWeekdayMask`). Ausente = los 7 días. */
+  weekdayMask?: number
 ): string | null {
   const [yy, mm, dd] = dateYmd.split('-').map((x) => parseInt(x, 10));
   const hmParts = timeHm.split(':');
@@ -106,12 +156,20 @@ export function computeNextTriggerIso(
   const base = new Date(yy, mm - 1, dd, h, mi, 0, 0);
   if (Number.isNaN(base.getTime())) return null;
   if (!daily) return base.toISOString();
-  /** Diario: primera ocurrencia en o después del día ancla `dateYmd`, y estrictamente después de `now`. */
+  const mask =
+    weekdayMask === undefined || weekdayMask === null ? SCHEDULE_WEEKDAY_MASK_ALL : coerceScheduleWeekdayMask(weekdayMask);
+  if (mask === 0) return null;
+  /** Diario: primera instancia ≥ ancla, > ahora, en un día permitido por la máscara. */
   let candidate = new Date(base.getTime());
-  while (candidate.getTime() <= now.getTime()) {
+  for (let guard = 0; guard < 400; guard++) {
+    const okTime = candidate.getTime() > now.getTime();
+    const wd = candidate.getDay();
+    const okDay = ((mask >> wd) & 1) === 1;
+    if (okTime && okDay) return candidate.toISOString();
     candidate.setDate(candidate.getDate() + 1);
+    candidate.setHours(h, mi, 0, 0);
   }
-  return candidate.toISOString();
+  return null;
 }
 
 type Store = Partial<Record<string, PassengerFavoriteSnapshot>>;
@@ -184,6 +242,25 @@ function normalizeStoreBooleans(store: Store): { next: Store; changed: boolean }
   return { next, changed };
 }
 
+/** Favorito de una sola fecha/hora: si ya pasó la salida/recogida, apaga el switch. */
+function applyOneOffAutoDisableIfPast(store: Store, now: Date): { next: Store; changed: boolean } {
+  let changed = false;
+  const next: Store = { ...store };
+  for (const k of Object.keys(next)) {
+    const s = next[k];
+    if (!s || !isFavoriteEnabled(s)) continue;
+    if (normalizeSnapshotBooleans(s).scheduleDaily) continue;
+    const d = (s.scheduledDateYmd ?? s.date ?? '').trim();
+    const t = (s.scheduledTimeHm ?? s.fromTime ?? '').trim();
+    if (!d || !t) continue;
+    const end = parseLocalYmdHm(d, t);
+    if (!end || end.getTime() > now.getTime()) continue;
+    next[k] = { ...s, enabled: false };
+    changed = true;
+  }
+  return { next, changed };
+}
+
 /** Corrige `nextTriggerAtIso` guardado con la lógica antigua (diario ignoraba la fecha ancla). */
 function alignDailyNextTriggerFromAnchor(store: Store): { next: Store; changed: boolean } {
   const now = new Date();
@@ -195,7 +272,7 @@ function alignDailyNextTriggerFromAnchor(store: Store): { next: Store; changed: 
     const d = (s.scheduledDateYmd ?? s.date ?? '').trim();
     const t = (s.scheduledTimeHm ?? s.fromTime ?? '').trim();
     if (!d || !t) continue;
-    const computed = computeNextTriggerIso(now, d, t, true);
+    const computed = computeNextTriggerIso(now, d, t, true, s.scheduleWeekdayMask);
     if (!computed || s.nextTriggerAtIso === computed) continue;
     next[k] = { ...s, nextTriggerAtIso: computed };
     changed = true;
@@ -217,6 +294,9 @@ export async function loadPassengerFavorites(userId: string): Promise<Store> {
   const norm = normalizeStoreBooleans(next);
   next = norm.next;
   changed = changed || norm.changed;
+  const expired = applyOneOffAutoDisableIfPast(next, new Date());
+  next = expired.next;
+  changed = changed || expired.changed;
   const aligned = alignDailyNextTriggerFromAnchor(next);
   next = aligned.next;
   changed = changed || aligned.changed;

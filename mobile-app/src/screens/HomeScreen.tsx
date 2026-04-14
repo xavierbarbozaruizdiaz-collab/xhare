@@ -1,7 +1,7 @@
 /**
  * Home base: bienvenida, favoritos (pasajero), accesos rapidos, banners conductor/admin.
  */
-import React, { useCallback, useEffect, useMemo, useState, type ComponentProps } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   View,
   Text,
@@ -13,8 +13,11 @@ import {
   Pressable,
   Switch,
   AppState,
+  Platform,
+  ActivityIndicator,
   type AppStateStatus,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,15 +41,25 @@ import {
   favoritePairLabel,
   isFavoriteEnabled,
   computeNextTriggerIso,
+  coerceScheduleWeekdayMask,
+  scheduleWeekdayMaskLabelEs,
+  findFavoritePresetIdByIcons,
+  FAVORITE_PRESET_IDS,
   type PassengerFavoriteSlot,
   type PassengerFavoriteSnapshot,
 } from '../lib/passengerFavorites';
+import {
+  addDaysToYmd,
+  isPickupAtLeastLeadAhead,
+  MIN_BOOKING_LEAD_MS,
+  parseLocalYmdHm,
+} from '../lib/bookingLead';
+import { fetchRoute } from '../backend/routeApi';
 
 type IonName = ComponentProps<typeof Ionicons>['name'];
 
 /**
- * Modal: muchas opciones visuales; siempre se abre uno de los dos slots fijos (Casa→Trabajo / Trabajo→Casa).
- * Origen / destino en listas separadas para combinar con flechas.
+ * Modal: combinaciones origen/destino por iconos; el slot se resuelve contra `FAVORITE_PRESETS` (ej. Casa→Gym).
  */
 const MODAL_ORIGIN_ICONS: IonName[] = [
   'home-outline',
@@ -70,31 +83,6 @@ const MODAL_DEST_ICONS: IonName[] = [
   'cart-outline',
   'restaurant-outline',
 ];
-
-const HOME_SIDE_ICONS = new Set<string>(['home-outline']);
-const WORK_SIDE_ICONS = new Set<string>([
-  'briefcase-outline',
-  'school-outline',
-  'library-outline',
-  'business-outline',
-  'barbell-outline',
-  'airplane-outline',
-  'medical-outline',
-  'cart-outline',
-  'restaurant-outline',
-]);
-
-function inferModalFavoriteSlot(from: string, to: string): 'home_to_work' | 'work_to_home' | null {
-  const fHome = HOME_SIDE_ICONS.has(from);
-  const tHome = HOME_SIDE_ICONS.has(to);
-  const fWork = WORK_SIDE_ICONS.has(from);
-  const tWork = WORK_SIDE_ICONS.has(to);
-  if (fHome && tWork) return 'home_to_work';
-  if (fWork && tHome) return 'work_to_home';
-  if (!fWork && tWork) return 'home_to_work';
-  if (fWork && !tWork && !tHome) return 'work_to_home';
-  return null;
-}
 
 function FavoritePairIcons({
   slot,
@@ -120,6 +108,20 @@ function FavoritePairIcons({
 type HomeTabNav = BottomTabNavigationProp<MainTabParamList, 'Home'>;
 type ParentNav = { navigate: (name: string, params?: object) => void };
 const HOME_FIXED_SLOTS: PassengerFavoriteSlot[] = ['home_to_work', 'work_to_home'];
+
+/** Inicio: siempre Casa↔Trabajo; debajo, otros presets que ya tengan datos guardados. */
+function listHomeFavoriteSlotsToShow(
+  favorites: Partial<Record<string, PassengerFavoriteSnapshot | undefined>>
+): PassengerFavoriteSlot[] {
+  const slots: PassengerFavoriteSlot[] = [...HOME_FIXED_SLOTS];
+  const seen = new Set<string>(HOME_FIXED_SLOTS);
+  for (const id of FAVORITE_PRESET_IDS) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (favoriteHasConfig(favorites[id])) slots.push(id);
+  }
+  return slots;
+}
 
 function favoriteHasConfig(snap: PassengerFavoriteSnapshot | undefined): boolean {
   if (!snap) return false;
@@ -152,9 +154,35 @@ function scheduleLabel(snap: PassengerFavoriteSnapshot | undefined): string {
           month: '2-digit',
         })
       : 'proximo dia';
-    return `Diario ${baseTime} · prox ${nextText}`;
+    const maskLabel = scheduleWeekdayMaskLabelEs(snap.scheduleWeekdayMask);
+    const daysPart =
+      coerceScheduleWeekdayMask(snap.scheduleWeekdayMask) === 127 ? '' : ` · ${maskLabel}`;
+    return `Diario ${baseTime} · prox ${nextText}${daysPart}`;
   }
   return `Fecha ${baseDate || '--'} · ${baseTime}`;
+}
+
+function toYmdLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function formatHmFromDate(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function addMinutesToHmLocal(dateYmd: string, hm: string, addMin: number): string | null {
+  const t = parseLocalYmdHm(dateYmd, hm);
+  if (!t) return null;
+  return formatHmFromDate(new Date(t.getTime() + addMin * 60_000));
+}
+
+function subtractMinutesFromHmLocal(dateYmd: string, hm: string, subMin: number): string | null {
+  const t = parseLocalYmdHm(dateYmd, hm);
+  if (!t) return null;
+  return formatHmFromDate(new Date(t.getTime() - subMin * 60_000));
 }
 
 export function HomeScreen() {
@@ -174,7 +202,21 @@ export function HomeScreen() {
   const [fromIconIndex, setFromIconIndex] = useState(0);
   const [toIconIndex, setToIconIndex] = useState(0);
 
-  const homeFavoriteSlots = useMemo(() => HOME_FIXED_SLOTS, []);
+  /** Activar favorito desde Inicio: confirmar fecha/hora (≥4 h) antes de prender el switch. */
+  const [activateOpen, setActivateOpen] = useState(false);
+  const [activateSlot, setActivateSlot] = useState<PassengerFavoriteSlot | null>(null);
+  const [activateSnap, setActivateSnap] = useState<PassengerFavoriteSnapshot | null>(null);
+  const [activateModalDate, setActivateModalDate] = useState('');
+  const [activateModalHm, setActivateModalHm] = useState('');
+  const [activateModalShowDate, setActivateModalShowDate] = useState(false);
+  const [activateModalShowTime, setActivateModalShowTime] = useState(false);
+  /** Duración origen→destino (min) vía `/api/route/polyline`; null = sin ruta o aún cargando. */
+  const [activateRouteMinutes, setActivateRouteMinutes] = useState<number | null>(null);
+  /** `fetchRoute` en segundo plano: el modal abre al toque y no espera la red. */
+  const [activateRouteLoading, setActivateRouteLoading] = useState(false);
+  const activateRouteRequestIdRef = useRef(0);
+
+  const homeFavoriteSlots = useMemo(() => listHomeFavoriteSlotsToShow(favorites), [favorites]);
   const selectedFromIcon = (MODAL_ORIGIN_ICONS[fromIconIndex] ?? MODAL_ORIGIN_ICONS[0]) as string;
   const selectedToIcon = (MODAL_DEST_ICONS[toIconIndex] ?? MODAL_DEST_ICONS[0]) as string;
 
@@ -264,28 +306,22 @@ export function HomeScreen() {
       Alert.alert('Elegí dos iconos distintos', 'El origen y el destino no pueden ser el mismo icono.');
       return;
     }
-    const slot = inferModalFavoriteSlot(selectedFromIcon, selectedToIcon);
+    const slot = findFavoritePresetIdByIcons(selectedFromIcon, selectedToIcon);
     if (slot) {
       goFavorite(slot);
       return;
     }
     Alert.alert(
-      'Combinación no clara',
-      'Elegí un origen (casa, auto, bus…) y un destino tipo trabajo, estudio, gym, aeropuerto o comercio; o al revés (trabajo → casa).'
+      'Combinación no disponible',
+      'Esa pareja de iconos no coincide con un trayecto guardable. Probá otra combinación (por ejemplo Casa + Gym, o Trabajo + Casa).'
     );
   }, [goFavorite, selectedFromIcon, selectedToIcon]);
 
-  const toggleFavorite = useCallback(
-    async (slot: PassengerFavoriteSlot, enabled: boolean) => {
+  const setFavoriteDisabled = useCallback(
+    async (slot: PassengerFavoriteSlot) => {
       if (!session || !userId) return;
       const snap = await getPassengerFavorite(userId, slot);
-      if (!snap) {
-        if (enabled) {
-          Alert.alert('Primero configuralo', `Completa ${favoritePairLabel(slot)} y luego activa el switch.`);
-          goFavorite(slot);
-        }
-        return;
-      }
+      if (!snap) return;
       await upsertPassengerFavorite(userId, slot, {
         date: snap.date,
         fromTime: snap.fromTime,
@@ -297,7 +333,7 @@ export function HomeScreen() {
         destinationLat: snap.destinationLat,
         destinationLng: snap.destinationLng,
         rideKind: snap.rideKind,
-        enabled,
+        enabled: false,
         scheduleDaily: Boolean(snap.scheduleDaily),
         scheduledDateYmd: snap.scheduledDateYmd ?? snap.date,
         scheduledTimeHm: snap.scheduledTimeHm ?? snap.fromTime,
@@ -306,15 +342,174 @@ export function HomeScreen() {
             new Date(),
             snap.scheduledDateYmd ?? snap.date,
             snap.scheduledTimeHm ?? snap.fromTime,
-            Boolean(snap.scheduleDaily)
+            Boolean(snap.scheduleDaily),
+            snap.scheduleWeekdayMask
           ) ?? undefined,
       });
       const all = await loadPassengerFavorites(userId);
       setFavorites(all);
       void pushPassengerHomeMapShortcuts(all);
     },
-    [goFavorite, session, userId]
+    [session, userId]
   );
+
+  const openActivateFavoriteModal = useCallback(
+    async (slot: PassengerFavoriteSlot) => {
+      if (!session || !userId) return;
+      const snap = await getPassengerFavorite(userId, slot);
+      if (!snap || !favoriteHasConfig(snap)) {
+        Alert.alert('Primero configuralo', `Completa ${favoritePairLabel(slot)} y luego activa el switch.`);
+        goFavorite(slot);
+        return;
+      }
+
+      const requestId = ++activateRouteRequestIdRef.current;
+      const pickupHm = (snap.scheduledTimeHm ?? snap.fromTime ?? '08:00').trim() || '08:00';
+      let d = (snap.scheduledDateYmd ?? snap.date ?? toYmdLocal(new Date())).trim();
+      for (let i = 0; i < 400; i++) {
+        if (isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) break;
+        d = addDaysToYmd(d, 1);
+      }
+
+      const hasCoords =
+        snap.originLat != null &&
+        snap.originLng != null &&
+        snap.destinationLat != null &&
+        snap.destinationLng != null;
+
+      setActivateSnap(snap);
+      setActivateSlot(slot);
+      setActivateModalDate(d);
+      setActivateModalHm(pickupHm);
+      setActivateRouteMinutes(null);
+      setActivateModalShowDate(false);
+      setActivateModalShowTime(false);
+      setActivateRouteLoading(hasCoords);
+      setActivateOpen(true);
+
+      if (!hasCoords) {
+        setActivateRouteLoading(false);
+        return;
+      }
+
+      void (async () => {
+        const route = await fetchRoute(
+          { lat: snap.originLat!, lng: snap.originLng! },
+          { lat: snap.destinationLat!, lng: snap.destinationLng! },
+          []
+        );
+        if (requestId !== activateRouteRequestIdRef.current) return;
+        setActivateRouteLoading(false);
+        if (
+          route.durationMinutes == null ||
+          route.error ||
+          route.aborted ||
+          !Number.isFinite(route.durationMinutes)
+        ) {
+          return;
+        }
+        const routeMinutes = Math.max(1, Math.round(route.durationMinutes));
+        let dWork = d;
+        const arrival0 =
+          addMinutesToHmLocal(dWork, pickupHm, routeMinutes) ??
+          addMinutesToHmLocal(dWork, '08:00', routeMinutes) ??
+          '09:00';
+        const arrivalHm = arrival0;
+        for (let i = 0; i < 400; i++) {
+          const pu = subtractMinutesFromHmLocal(dWork, arrivalHm, routeMinutes);
+          if (pu && isPickupAtLeastLeadAhead(dWork, pu, MIN_BOOKING_LEAD_MS)) break;
+          dWork = addDaysToYmd(dWork, 1);
+        }
+        if (requestId !== activateRouteRequestIdRef.current) return;
+        setActivateRouteMinutes(routeMinutes);
+        setActivateModalDate(dWork);
+        setActivateModalHm(arrivalHm);
+      })();
+    },
+    [session, userId, goFavorite]
+  );
+
+  const cancelActivateFavorite = useCallback(() => {
+    activateRouteRequestIdRef.current += 1;
+    setActivateOpen(false);
+    setActivateSlot(null);
+    setActivateSnap(null);
+    setActivateRouteMinutes(null);
+    setActivateRouteLoading(false);
+    setActivateModalShowDate(false);
+    setActivateModalShowTime(false);
+  }, []);
+
+  const confirmActivateFavorite = useCallback(async () => {
+    if (!session || !userId || !activateSlot || !activateSnap) return;
+    const d = activateModalDate.trim();
+    const hm = activateModalHm.trim();
+    if (!d || !hm) {
+      Alert.alert('Datos incompletos', 'Elegí fecha y hora.');
+      return;
+    }
+
+    const dur = activateRouteMinutes;
+    let pickupHm: string;
+    if (dur != null) {
+      const pu = subtractMinutesFromHmLocal(d, hm, dur);
+      if (!pu) {
+        Alert.alert('Datos incompletos', 'La hora de llegada no es válida para esa fecha.');
+        return;
+      }
+      pickupHm = pu;
+      if (!isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) {
+        Alert.alert(
+          'Anticipación mínima',
+          'La salida estimada (recogida) tiene que quedar al menos 4 horas desde ahora. Elegí una llegada más tarde u otra fecha.'
+        );
+        return;
+      }
+    } else {
+      pickupHm = hm;
+      if (!isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) {
+        Alert.alert(
+          'Anticipación mínima',
+          'Elegí fecha y hora con al menos 4 horas desde ahora (hora de este dispositivo).'
+        );
+        return;
+      }
+    }
+
+    const snap = activateSnap;
+    await upsertPassengerFavorite(userId, activateSlot, {
+      date: d,
+      fromTime: pickupHm,
+      routeNameQuery: snap.routeNameQuery,
+      origin: snap.origin,
+      destination: snap.destination,
+      originLat: snap.originLat,
+      originLng: snap.originLng,
+      destinationLat: snap.destinationLat,
+      destinationLng: snap.destinationLng,
+      rideKind: snap.rideKind,
+      enabled: true,
+      scheduleDaily: Boolean(snap.scheduleDaily),
+      scheduledDateYmd: d,
+      scheduledTimeHm: pickupHm,
+      nextTriggerAtIso:
+        computeNextTriggerIso(new Date(), d, pickupHm, Boolean(snap.scheduleDaily), snap.scheduleWeekdayMask) ??
+        undefined,
+    });
+    const all = await loadPassengerFavorites(userId);
+    setFavorites(all);
+    void pushPassengerHomeMapShortcuts(all);
+    cancelActivateFavorite();
+  }, [
+    session,
+    userId,
+    activateSlot,
+    activateSnap,
+    activateModalDate,
+    activateModalHm,
+    activateRouteMinutes,
+    cancelActivateFavorite,
+  ]);
 
   const deleteFavorite = useCallback(
     (slot: PassengerFavoriteSlot) => {
@@ -415,11 +610,19 @@ export function HomeScreen() {
                         <Text style={styles.favoriteRowLabel}>{favoritePairLabel(slot)}</Text>
                         <Text style={styles.favoriteRowTime}>{scheduleLabel(snap)}</Text>
                       </View>
-                      <View style={styles.favoriteRowRight}>
+                      <View
+                        style={styles.favoriteRowRight}
+                        onStartShouldSetResponder={() => true}
+                        onTouchEnd={(e) => e.stopPropagation()}
+                      >
                         <Switch
                           value={enabled}
                           onValueChange={(v) => {
-                            void toggleFavorite(slot, v);
+                            if (!v) {
+                              void setFavoriteDisabled(slot);
+                              return;
+                            }
+                            void openActivateFavoriteModal(slot);
                           }}
                           trackColor={{ false: '#d1d5db', true: '#86efac' }}
                           thumbColor={enabled ? '#166534' : '#f3f4f6'}
@@ -447,8 +650,8 @@ export function HomeScreen() {
                     </TouchableOpacity>
                   </View>
                   <Text style={styles.modalHint}>
-                    Elegí origen y destino con las flechas: se abre Casa→Trabajo o Trabajo→Casa según la combinación
-                    (casa u origen “hacia” trabajo, estudio, gym, etc.).
+                    Elegí origen y destino con las flechas: se abre el favorito que coincida con el par de iconos
+                    (Casa→Gym, Trabajo→Casa, Casa→Trabajo, etc.).
                   </Text>
                   <View style={styles.modalPickerWrap}>
                     <View style={styles.modalPickerRow}>
@@ -513,6 +716,143 @@ export function HomeScreen() {
                   </View>
                 </SafeAreaView>
               </View>
+            </Modal>
+
+            <Modal
+              visible={activateOpen}
+              transparent
+              animationType="fade"
+              onRequestClose={cancelActivateFavorite}
+            >
+              <Pressable style={styles.activateModalOverlay} onPress={cancelActivateFavorite}>
+                <Pressable style={styles.activateModalCard} onPress={(e) => e.stopPropagation()}>
+                  <Text style={styles.activateModalTitle}>Activar favorito</Text>
+                  <Text style={styles.activateModalSubtitle}>
+                    Confirmá la fecha y la{' '}
+                    <Text style={styles.activateModalEm}>hora estimada de llegada</Text> al destino para{' '}
+                    {activateSlot ? (
+                      <Text style={styles.activateModalEm}>{favoritePairLabel(activateSlot)}</Text>
+                    ) : (
+                      'este trayecto'
+                    )}
+                    .
+                    {activateRouteMinutes == null && !activateRouteLoading ? (
+                      <>
+                        {'\n\n'}
+                        Sin duración por mapa: la hora que elijas se guarda como salida o recogida (marcá origen y
+                        destino en el mapa al editar el favorito para estimar llegada).
+                      </>
+                    ) : null}
+                  </Text>
+                  {activateRouteLoading ? (
+                    <View style={styles.activateModalLoadingRow}>
+                      <ActivityIndicator size="small" color="#166534" />
+                      <Text style={styles.activateModalLoadingText}>Calculando la ruta en el mapa…</Text>
+                    </View>
+                  ) : null}
+                  {activateSlot ? (
+                    <View style={styles.activateModalIcons} accessibilityRole="image">
+                      <FavoritePairIcons slot={activateSlot} iconSize={36} arrowSize={22} />
+                    </View>
+                  ) : null}
+                  <Text style={styles.activateModalFieldLabel}>Fecha</Text>
+                  <TouchableOpacity
+                    style={styles.activateModalPicker}
+                    onPress={() => {
+                      setActivateModalShowTime(false);
+                      setActivateModalShowDate(true);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Elegir fecha de activación del favorito"
+                  >
+                    <Text style={styles.activateModalPickerValue}>{activateModalDate.trim() || '—'}</Text>
+                  </TouchableOpacity>
+                  {activateModalShowDate ? (
+                    <DateTimePicker
+                      value={new Date((activateModalDate.trim() || toYmdLocal(new Date())) + 'T12:00:00')}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      onChange={(ev, picked) => {
+                        if (ev.type === 'dismissed') {
+                          setActivateModalShowDate(false);
+                          return;
+                        }
+                        if (Platform.OS !== 'ios') setActivateModalShowDate(false);
+                        if (picked) setActivateModalDate(toYmdLocal(picked));
+                      }}
+                    />
+                  ) : null}
+                  <Text style={styles.activateModalFieldLabel}>Hora estimada de llegada</Text>
+                  <TouchableOpacity
+                    style={styles.activateModalPicker}
+                    onPress={() => {
+                      setActivateModalShowDate(false);
+                      setActivateModalShowTime(true);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Elegir hora estimada de llegada al destino"
+                  >
+                    <Text style={styles.activateModalPickerValue}>{activateModalHm.trim() || '—'}</Text>
+                  </TouchableOpacity>
+                  {activateModalShowTime ? (
+                    <DateTimePicker
+                      value={(() => {
+                        const hm = activateModalHm.trim() || '08:00';
+                        const [h, m] = hm.split(':').map((x) => parseInt(x, 10));
+                        const d = new Date();
+                        d.setHours(Number.isFinite(h) ? h : 8, Number.isFinite(m) ? m : 0, 0, 0);
+                        return d;
+                      })()}
+                      mode="time"
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      onChange={(ev, picked) => {
+                        if (ev.type === 'dismissed') {
+                          setActivateModalShowTime(false);
+                          return;
+                        }
+                        if (Platform.OS !== 'ios') setActivateModalShowTime(false);
+                        if (picked) {
+                          setActivateModalHm(
+                            `${String(picked.getHours()).padStart(2, '0')}:${String(picked.getMinutes()).padStart(2, '0')}`
+                          );
+                        }
+                      }}
+                    />
+                  ) : null}
+                  {activateRouteLoading ? (
+                    <Text style={styles.activateModalHint}>
+                      Mientras tanto la hora mostrada es la de salida o recogida guardada; al terminar el cálculo se
+                      ajusta a la llegada estimada.
+                    </Text>
+                  ) : activateRouteMinutes != null ? (
+                    <Text style={styles.activateModalHint}>
+                      La salida o recogida se calcula con la ruta del mapa (~{activateRouteMinutes} min). Tiene que
+                      quedar al menos 4 horas desde ahora. Podés cambiar fecha y hora de llegada antes de confirmar.
+                    </Text>
+                  ) : (
+                    <Text style={styles.activateModalHint}>
+                      Si la fecha guardada ya pasó o queda a menos de 4 horas, te sugerimos el próximo día posible.
+                      Podés cambiar fecha y hora acá antes de confirmar.
+                    </Text>
+                  )}
+                  <View style={styles.activateModalActions}>
+                    <TouchableOpacity
+                      style={[styles.activateModalBtn, styles.activateModalBtnGhost]}
+                      onPress={cancelActivateFavorite}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.activateModalBtnGhostText}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.activateModalBtn, styles.activateModalBtnPrimary]}
+                      onPress={() => void confirmActivateFavorite()}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.activateModalBtnPrimaryText}>Activar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </Pressable>
+              </Pressable>
             </Modal>
 
             {homeShortcutsVisible ? (
@@ -740,4 +1080,70 @@ const styles = StyleSheet.create({
   },
   btnMintInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   btnMintText: { fontSize: 14, fontWeight: '700', color: '#14532d' },
+  activateModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+  },
+  activateModalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 20,
+    maxWidth: 420,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  activateModalTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 8 },
+  activateModalSubtitle: { fontSize: 14, color: '#4b5563', lineHeight: 20, marginBottom: 12 },
+  activateModalEm: { fontWeight: '700', color: '#14532d' },
+  activateModalLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  activateModalLoadingText: { fontSize: 13, color: '#4b5563', flex: 1 },
+  activateModalIcons: { alignItems: 'center', marginBottom: 16 },
+  activateModalFieldLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 4,
+    marginTop: 4,
+  },
+  activateModalPicker: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 10,
+    backgroundColor: '#fff',
+  },
+  activateModalPickerValue: { fontSize: 16, color: '#111' },
+  activateModalHint: {
+    fontSize: 12,
+    color: '#6b7280',
+    lineHeight: 17,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  activateModalActions: { flexDirection: 'row', gap: 10, marginTop: 16, justifyContent: 'flex-end' },
+  activateModalBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  activateModalBtnGhost: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+  },
+  activateModalBtnGhostText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  activateModalBtnPrimary: { backgroundColor: '#166534' },
+  activateModalBtnPrimaryText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 });

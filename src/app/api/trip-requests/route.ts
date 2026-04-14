@@ -45,6 +45,8 @@ const insertBodySchema = z
       z.number().int().positive().max(10_000_000_000).nullable().optional()
     ),
     internal_quote_acknowledged: z.boolean().nullable().optional(),
+    /** Preset de favorito (ej. home_to_gym) si la solicitud sale de Inicio / guardar favorito. */
+    passenger_favorite_slot: z.string().max(120).optional(),
   })
   .superRefine((data, ctx) => {
     const olat = data.origin_lat;
@@ -164,6 +166,9 @@ export async function POST(request: NextRequest) {
     if (p.destination_barrio != null) row.destination_barrio = p.destination_barrio;
     if (p.route_polyline != null && p.route_polyline.length > 0) row.route_polyline = p.route_polyline;
     if (p.route_length_km != null) row.route_length_km = p.route_length_km;
+
+    const favSlot = p.passenger_favorite_slot?.trim();
+    if (favSlot) row.passenger_favorite_slot = favSlot.slice(0, 120);
 
     if (kind === 'long_distance' && p.passenger_desired_price_per_seat_gs != null) {
       row.passenger_desired_price_per_seat_gs = Math.round(p.passenger_desired_price_per_seat_gs);

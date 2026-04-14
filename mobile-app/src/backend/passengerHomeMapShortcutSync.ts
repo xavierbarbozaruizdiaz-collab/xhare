@@ -3,7 +3,7 @@
  * Usa el cliente Supabase de la sesión (RLS): no depende de EXPO_PUBLIC_API_BASE_URL.
  */
 import { supabase, isEnvConfigured } from './supabase';
-import type { PassengerFavoriteSnapshot } from '../lib/passengerFavorites';
+import { coerceScheduleWeekdayMask, type PassengerFavoriteSnapshot } from '../lib/passengerFavorites';
 
 const FIXED_SLOTS = ['home_to_work', 'work_to_home'] as const;
 
@@ -76,6 +76,8 @@ export async function pushPassengerHomeMapShortcuts(
     const dateYmd = validYmd(rawDate) ? rawDate : new Date().toISOString().slice(0, 10);
     const timeHm = padHm((snap.scheduledTimeHm ?? snap.fromTime ?? '08:00').trim() || '08:00');
     const scheduleDaily = Boolean(snap.scheduleDaily);
+    const rawMask = coerceScheduleWeekdayMask(snap.scheduleWeekdayMask);
+    const scheduleWeekdayMask = scheduleDaily && rawMask === 0 ? 127 : rawMask;
 
     const row = {
       user_id: userId,
@@ -90,6 +92,7 @@ export async function pushPassengerHomeMapShortcuts(
       scheduled_date: dateYmd,
       scheduled_time: timeHm,
       schedule_daily: scheduleDaily,
+      schedule_weekday_mask: scheduleWeekdayMask,
       updated_at: new Date().toISOString(),
     };
 

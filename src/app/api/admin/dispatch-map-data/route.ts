@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
           service
             .from('passenger_home_map_shortcuts')
             .select(
-              'user_id, slot, origin_lat, origin_lng, destination_lat, destination_lng, origin_label, destination_label, scheduled_date, scheduled_time, schedule_daily, updated_at'
+              'user_id, slot, origin_lat, origin_lng, destination_lat, destination_lng, origin_label, destination_label, scheduled_date, scheduled_time, schedule_daily, schedule_weekday_mask, updated_at'
             )
             .eq('enabled', true)
             .gte('scheduled_date', from)
