@@ -145,7 +145,8 @@ function isScheduleDailySnap(snap: PassengerFavoriteSnapshot): boolean {
 function scheduleLabel(snap: PassengerFavoriteSnapshot | undefined): string {
   if (!snap) return 'Sin configurar';
   const baseDate = (snap.scheduledDateYmd ?? snap.date ?? '').trim();
-  const baseTime = (snap.scheduledTimeHm ?? snap.fromTime ?? '').trim() || '08:00';
+  const pickupHm = (snap.scheduledTimeHm ?? snap.fromTime ?? '').trim() || '08:00';
+  const arrivalHm = snap.scheduledArrivalTimeHm?.trim();
   if (isScheduleDailySnap(snap)) {
     const nextIso = snap.nextTriggerAtIso?.trim();
     const nextText = nextIso
@@ -157,9 +158,13 @@ function scheduleLabel(snap: PassengerFavoriteSnapshot | undefined): string {
     const maskLabel = scheduleWeekdayMaskLabelEs(snap.scheduleWeekdayMask);
     const daysPart =
       coerceScheduleWeekdayMask(snap.scheduleWeekdayMask) === 127 ? '' : ` · ${maskLabel}`;
-    return `Diario ${baseTime} · prox ${nextText}${daysPart}`;
+    const timePart = arrivalHm ? `llegada ${arrivalHm} · salida ${pickupHm}` : pickupHm;
+    return `Diario ${timePart} · prox ${nextText}${daysPart}`;
   }
-  return `Fecha ${baseDate || '--'} · ${baseTime}`;
+  if (arrivalHm) {
+    return `Fecha ${baseDate || '--'} · llegada ${arrivalHm} (recogida ${pickupHm})`;
+  }
+  return `Fecha ${baseDate || '--'} · ${pickupHm}`;
 }
 
 function toYmdLocal(d: Date): string {
@@ -335,8 +340,10 @@ export function HomeScreen() {
         rideKind: snap.rideKind,
         enabled: false,
         scheduleDaily: Boolean(snap.scheduleDaily),
+        scheduleWeekdayMask: snap.scheduleWeekdayMask,
         scheduledDateYmd: snap.scheduledDateYmd ?? snap.date,
         scheduledTimeHm: snap.scheduledTimeHm ?? snap.fromTime,
+        scheduledArrivalTimeHm: snap.scheduledArrivalTimeHm,
         nextTriggerAtIso:
           computeNextTriggerIso(
             new Date(),
@@ -365,6 +372,7 @@ export function HomeScreen() {
 
       const requestId = ++activateRouteRequestIdRef.current;
       const pickupHm = (snap.scheduledTimeHm ?? snap.fromTime ?? '08:00').trim() || '08:00';
+      const storedArrivalHm = snap.scheduledArrivalTimeHm?.trim();
       let d = (snap.scheduledDateYmd ?? snap.date ?? toYmdLocal(new Date())).trim();
       for (let i = 0; i < 400; i++) {
         if (isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) break;
@@ -380,7 +388,8 @@ export function HomeScreen() {
       setActivateSnap(snap);
       setActivateSlot(slot);
       setActivateModalDate(d);
-      setActivateModalHm(pickupHm);
+      /** Con ruta: modal en hora de llegada si el favorito se guardó en modo llegada. Sin coords no podemos restar duración → mostrar recogida. */
+      setActivateModalHm(hasCoords && storedArrivalHm ? storedArrivalHm : pickupHm);
       setActivateRouteMinutes(null);
       setActivateModalShowDate(false);
       setActivateModalShowTime(false);
@@ -406,15 +415,16 @@ export function HomeScreen() {
           route.aborted ||
           !Number.isFinite(route.durationMinutes)
         ) {
+          if (storedArrivalHm) setActivateModalHm(pickupHm);
           return;
         }
         const routeMinutes = Math.max(1, Math.round(route.durationMinutes));
         let dWork = d;
-        const arrival0 =
-          addMinutesToHmLocal(dWork, pickupHm, routeMinutes) ??
-          addMinutesToHmLocal(dWork, '08:00', routeMinutes) ??
-          '09:00';
-        const arrivalHm = arrival0;
+        const arrivalHm = storedArrivalHm
+          ? storedArrivalHm
+          : addMinutesToHmLocal(dWork, pickupHm, routeMinutes) ??
+            addMinutesToHmLocal(dWork, '08:00', routeMinutes) ??
+            '09:00';
         for (let i = 0; i < 400; i++) {
           const pu = subtractMinutesFromHmLocal(dWork, arrivalHm, routeMinutes);
           if (pu && isPickupAtLeastLeadAhead(dWork, pu, MIN_BOOKING_LEAD_MS)) break;
@@ -490,8 +500,10 @@ export function HomeScreen() {
       rideKind: snap.rideKind,
       enabled: true,
       scheduleDaily: Boolean(snap.scheduleDaily),
+      scheduleWeekdayMask: snap.scheduleWeekdayMask,
       scheduledDateYmd: d,
       scheduledTimeHm: pickupHm,
+      scheduledArrivalTimeHm: dur != null ? hm.trim() : undefined,
       nextTriggerAtIso:
         computeNextTriggerIso(new Date(), d, pickupHm, Boolean(snap.scheduleDaily), snap.scheduleWeekdayMask) ??
         undefined,

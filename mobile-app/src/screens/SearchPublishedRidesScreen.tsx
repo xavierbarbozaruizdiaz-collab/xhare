@@ -295,7 +295,14 @@ export function SearchPublishedRidesScreen() {
       if (cancelled || !snap) return;
       setDate(snap.scheduledDateYmd?.trim() || snap.date);
       setFromTime(snap.scheduledTimeHm?.trim() || snap.fromTime);
-      setArrivalTimeHm('');
+      const storedArrival = snap.scheduledArrivalTimeHm?.trim();
+      if (storedArrival) {
+        setArrivalTimeHm(storedArrival);
+        arrivalSyncedFromStoredPickupRef.current = true;
+      } else {
+        setArrivalTimeHm('');
+        arrivalSyncedFromStoredPickupRef.current = false;
+      }
       setRouteNameQuery(snap.routeNameQuery);
       setOrigin(snap.origin);
       setDestination(snap.destination);
@@ -321,12 +328,6 @@ export function SearchPublishedRidesScreen() {
       arrivalSyncedFromStoredPickupRef.current = false;
     }
   }, [favoriteArrivalFirstUx]);
-
-  useEffect(() => {
-    if (isFavoriteMode && (!originGeo || !destGeo)) {
-      setArrivalTimeHm('');
-    }
-  }, [isFavoriteMode, originGeo, destGeo]);
 
   /** Primera vez que hay duración del mapa: llegada = salida guardada + trayecto (migración desde UX anterior). */
   useEffect(() => {
@@ -474,6 +475,8 @@ export function SearchPublishedRidesScreen() {
         scheduleWeekdayMask: scheduleDaily ? maskToSave : SCHEDULE_WEEKDAY_MASK_ALL,
         scheduledDateYmd: date.trim(),
         scheduledTimeHm: scheduledHm,
+        scheduledArrivalTimeHm:
+          favoriteArrivalFirstUx && arrivalTimeHm.trim() ? arrivalTimeHm.trim() : undefined,
         nextTriggerAtIso:
           computeNextTriggerIso(new Date(), date.trim(), scheduledHm, scheduleDaily, maskToSave) ?? undefined,
       });

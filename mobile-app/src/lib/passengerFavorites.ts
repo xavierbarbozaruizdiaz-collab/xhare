@@ -97,6 +97,11 @@ export type PassengerFavoriteSnapshot = {
   scheduledDateYmd?: string;
   /** Hora elegida para recordatorio/recogida (HH:MM). */
   scheduledTimeHm?: string;
+  /**
+   * Si el pasajero configuró por “llegada al destino”, hora de llegada deseada (HH:MM).
+   * La recogida sigue en `scheduledTimeHm` / `fromTime`.
+   */
+  scheduledArrivalTimeHm?: string;
   /** Proxima ejecucion calculada localmente. */
   nextTriggerAtIso?: string;
   updatedAtIso: string;
