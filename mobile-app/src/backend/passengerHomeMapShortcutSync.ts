@@ -75,6 +75,9 @@ export async function pushPassengerHomeMapShortcuts(
     const rawDate = (snap.scheduledDateYmd ?? snap.date ?? '').trim();
     const dateYmd = validYmd(rawDate) ? rawDate : new Date().toISOString().slice(0, 10);
     const timeHm = padHm((snap.scheduledTimeHm ?? snap.fromTime ?? '08:00').trim() || '08:00');
+    const arrivalRaw = snap.scheduledArrivalTimeHm?.trim();
+    const scheduledArrivalTime =
+      arrivalRaw && /^(\d{1,2}):(\d{2})(?::\d{2})?$/.test(arrivalRaw) ? padHm(arrivalRaw) : null;
     const scheduleDaily = Boolean(snap.scheduleDaily);
     const rawMask = coerceScheduleWeekdayMask(snap.scheduleWeekdayMask);
     const scheduleWeekdayMask = scheduleDaily && rawMask === 0 ? 127 : rawMask;
@@ -91,6 +94,7 @@ export async function pushPassengerHomeMapShortcuts(
       destination_lng: Number(snap.destinationLng),
       scheduled_date: dateYmd,
       scheduled_time: timeHm,
+      scheduled_arrival_time: scheduledArrivalTime,
       schedule_daily: scheduleDaily,
       schedule_weekday_mask: scheduleWeekdayMask,
       updated_at: new Date().toISOString(),

@@ -186,8 +186,12 @@ type PassengerShortcutRow = {
   origin_label: string | null;
   destination_label: string | null;
   scheduled_date: string;
+  /** Salida / recogida estimada (HH:mm). */
   scheduled_time: string;
+  /** Llegada deseada si el pasajero configuró modo llegada en la app (HH:mm). */
+  scheduled_arrival_time?: string | null;
   schedule_daily: boolean;
+  schedule_weekday_mask?: number | null;
   updated_at: string;
 };
 
@@ -195,6 +199,21 @@ function shortcutSlotLabel(slot: string): string {
   if (slot === 'home_to_work') return 'Casa → Trabajo';
   if (slot === 'work_to_home') return 'Trabajo → Casa';
   return slot;
+}
+
+/** Globo atajo: si hay llegada en base, mostrarla y la salida estimada entre paréntesis. */
+function fmtShortcutSubtitle(s: PassengerShortcutRow): string {
+  const date = new Date(s.scheduled_date + 'T12:00:00').toLocaleDateString('es-PY', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+  const pickupHm = requestedTimeToHm(s.scheduled_time) ?? String(s.scheduled_time ?? '').trim().slice(0, 5);
+  const arrivalHm = requestedTimeToHm(s.scheduled_arrival_time ?? null);
+  if (arrivalHm) {
+    return `${date} · llegada ${arrivalHm} (salida ${pickupHm})`;
+  }
+  return `${date} · ${pickupHm}`;
 }
 
 /** Origen = naranja, destino = rojo (pedidos, rides sistema y atajos app: mismo criterio). */
@@ -483,10 +502,11 @@ export default function AdminDispatchMapPage() {
     if (showPassengerShortcuts) {
       /** Atajos: ya vienen filtrados por rango de fechas en la API (`scheduled_date`); el filtro de hora del mapa no aplica. */
       for (const s of passengerShortcuts) {
-        const when = fmtWhen(s.scheduled_date, s.scheduled_time);
+        const when = fmtShortcutSubtitle(s);
         const daily = s.schedule_daily ? ' · diario' : '';
         const route = `${(s.origin_label ?? 'Origen').slice(0, 36)} → ${(s.destination_label ?? 'Destino').slice(0, 36)}`;
         const uidShort = s.user_id.length >= 8 ? `${s.user_id.slice(0, 8)}…` : s.user_id;
+        /** Hora cliente para ETA de ruta manual = recogida/salida, no llegada. */
         const shortcutHm = requestedTimeToHm(s.scheduled_time);
         out.push({
           id: `shortcut-${s.user_id}-${s.slot}-o`,
@@ -772,9 +792,11 @@ export default function AdminDispatchMapPage() {
       </div>
       <p className="text-xs text-gray-500 mb-3 -mt-2">
         El filtro de hora usa la hora que cargó el pasajero (<code className="bg-gray-100 px-1 rounded">requested_time</code>
-        ). Si hay ventana en base, en el mapa verás también el fin de ventana / llegada máxima. Los{' '}
-        <strong>atajos app</strong> usan el rango <strong>Desde / Hasta</strong> sobre{' '}
-        <code className="bg-gray-100 px-1 rounded">scheduled_date</code>; no usan el filtro de hora de arriba.
+        ). Si dejás <strong>Hora desde / hasta</strong> vacío, no se filtra por hora del día. Si hay ventana en base, en el mapa
+        verás también el fin de ventana / llegada máxima. Los <strong>atajos app</strong> usan el rango{' '}
+        <strong>Desde / Hasta</strong> sobre <code className="bg-gray-100 px-1 rounded">scheduled_date</code>; no usan el
+        filtro de hora de arriba. En el globo del atajo, si hay llegada guardada, verás <strong>llegada</strong> y la{' '}
+        <strong>salida</strong> estimada entre paréntesis.
       </p>
       <p className="text-xs text-gray-700 mb-3 -mt-2">
         Atajos sincronizados (activos en base, este rango de carga):{' '}
@@ -917,7 +939,15 @@ export default function AdminDispatchMapPage() {
               Si el grupo tiene solicitudes en estado agrupado, podés generar el viaje del sistema desde aquí.
             </p>
             {groupsFiltered.length === 0 ? (
-              <p className="text-sm text-gray-500">No hay grupos en el rango de fechas o en el filtro de hora.</p>
+              <div className="text-sm text-gray-500 space-y-2">
+                <p>No hay grupos en el rango de fechas o en el filtro de hora.</p>
+                {groups.length > 0 ? (
+                  <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-relaxed">
+                    Hay {groups.length} grupo(s) cargados pero ninguno pasa el filtro de <strong>Hora desde / hasta</strong>.
+                    Dejá esos campos vacíos para ver todo el día, o ampliá el rango horario.
+                  </p>
+                ) : null}
+              </div>
             ) : (
               <ul className="space-y-3 text-sm">
                 {groupsFiltered.map((g) => (

@@ -27,6 +27,8 @@ type Body = {
   destination_lng?: number | null;
   scheduled_date?: string;
   scheduled_time?: string;
+  /** HH:mm llegada deseada (modo llegada en app); null o vacío borra. */
+  scheduled_arrival_time?: string | null;
   schedule_daily?: boolean;
 };
 
@@ -40,6 +42,16 @@ function hmOrDefault(s: unknown): string {
   const t = s.trim();
   const m = t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
   if (!m) return '08:00';
+  return `${m[1].padStart(2, '0')}:${m[2]}`;
+}
+
+function optionalHmOrNull(s: unknown): string | null {
+  if (s === null || s === undefined) return null;
+  if (typeof s !== 'string') return null;
+  const t = s.trim();
+  if (!t) return null;
+  const m = t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return null;
   return `${m[1].padStart(2, '0')}:${m[2]}`;
 }
 
@@ -120,6 +132,9 @@ export async function POST(request: NextRequest) {
     scheduled_time: hmOrDefault(body.scheduled_time),
     schedule_daily: Boolean(body.schedule_daily),
     updated_at: new Date().toISOString(),
+    ...('scheduled_arrival_time' in body
+      ? { scheduled_arrival_time: optionalHmOrNull(body.scheduled_arrival_time) }
+      : {}),
   };
 
   const { error } = await service.from('passenger_home_map_shortcuts').upsert(row, { onConflict: 'user_id,slot' });
