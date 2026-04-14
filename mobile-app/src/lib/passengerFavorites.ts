@@ -99,24 +99,19 @@ export function computeNextTriggerIso(
   daily: boolean
 ): string | null {
   const [yy, mm, dd] = dateYmd.split('-').map((x) => parseInt(x, 10));
-  const [h, mi] = timeHm.split(':').map((x) => parseInt(x, 10));
+  const hmParts = timeHm.split(':');
+  const h = parseInt(hmParts[0] ?? '', 10);
+  const mi = parseInt(hmParts[1] ?? '', 10);
   if (![yy, mm, dd, h, mi].every((n) => Number.isFinite(n))) return null;
   const base = new Date(yy, mm - 1, dd, h, mi, 0, 0);
+  if (Number.isNaN(base.getTime())) return null;
   if (!daily) return base.toISOString();
-  const todayAtTime = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    h,
-    mi,
-    0,
-    0
-  );
-  const next =
-    todayAtTime.getTime() > now.getTime()
-      ? todayAtTime
-      : new Date(todayAtTime.getTime() + 24 * 60 * 60 * 1000);
-  return next.toISOString();
+  /** Diario: primera ocurrencia en o después del día ancla `dateYmd`, y estrictamente después de `now`. */
+  let candidate = new Date(base.getTime());
+  while (candidate.getTime() <= now.getTime()) {
+    candidate.setDate(candidate.getDate() + 1);
+  }
+  return candidate.toISOString();
 }
 
 type Store = Partial<Record<string, PassengerFavoriteSnapshot>>;
@@ -189,6 +184,25 @@ function normalizeStoreBooleans(store: Store): { next: Store; changed: boolean }
   return { next, changed };
 }
 
+/** Corrige `nextTriggerAtIso` guardado con la lógica antigua (diario ignoraba la fecha ancla). */
+function alignDailyNextTriggerFromAnchor(store: Store): { next: Store; changed: boolean } {
+  const now = new Date();
+  let changed = false;
+  const next: Store = { ...store };
+  for (const k of Object.keys(next)) {
+    const s = next[k];
+    if (!s || !normalizeSnapshotBooleans(s).scheduleDaily || !isFavoriteEnabled(s)) continue;
+    const d = (s.scheduledDateYmd ?? s.date ?? '').trim();
+    const t = (s.scheduledTimeHm ?? s.fromTime ?? '').trim();
+    if (!d || !t) continue;
+    const computed = computeNextTriggerIso(now, d, t, true);
+    if (!computed || s.nextTriggerAtIso === computed) continue;
+    next[k] = { ...s, nextTriggerAtIso: computed };
+    changed = true;
+  }
+  return { next, changed };
+}
+
 export async function loadPassengerFavorites(userId: string): Promise<Store> {
   const raw = await AsyncStorage.getItem(storageKey(userId));
   if (!raw) return {};
@@ -203,6 +217,9 @@ export async function loadPassengerFavorites(userId: string): Promise<Store> {
   const norm = normalizeStoreBooleans(next);
   next = norm.next;
   changed = changed || norm.changed;
+  const aligned = alignDailyNextTriggerFromAnchor(next);
+  next = aligned.next;
+  changed = changed || aligned.changed;
   if (changed) {
     await AsyncStorage.setItem(storageKey(userId), JSON.stringify(next));
   }

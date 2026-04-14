@@ -72,6 +72,8 @@ export async function GET(request: NextRequest) {
               'user_id, slot, origin_lat, origin_lng, destination_lat, destination_lng, origin_label, destination_label, scheduled_date, scheduled_time, schedule_daily, updated_at'
             )
             .eq('enabled', true)
+            .gte('scheduled_date', from)
+            .lte('scheduled_date', to)
             .order('updated_at', { ascending: false })
             .limit(500),
         ]);
@@ -95,7 +97,7 @@ export async function GET(request: NextRequest) {
         passengerHomeShortcuts = [];
         passengerHomeShortcutsError = shortcutErr.message;
       } else {
-        /** Atajos: intención recurrente; no filtrar por ventana de fechas del mapa (evita filas “invisibles”). */
+        /** Atajos: misma ventana de fechas que pedidos (`scheduled_date` = fecha que confirmó el pasajero al activar). */
         passengerHomeShortcuts = shortcutRowsRaw ?? [];
       }
 

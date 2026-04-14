@@ -481,7 +481,7 @@ export default function AdminDispatchMapPage() {
       }
     }
     if (showPassengerShortcuts) {
-      /** Los atajos no usan el filtro de hora del mapa (es configuración recurrente, no un pedido puntual). */
+      /** Atajos: ya vienen filtrados por rango de fechas en la API (`scheduled_date`); el filtro de hora del mapa no aplica. */
       for (const s of passengerShortcuts) {
         const when = fmtWhen(s.scheduled_date, s.scheduled_time);
         const daily = s.schedule_daily ? ' · diario' : '';
@@ -773,9 +773,8 @@ export default function AdminDispatchMapPage() {
       <p className="text-xs text-gray-500 mb-3 -mt-2">
         El filtro de hora usa la hora que cargó el pasajero (<code className="bg-gray-100 px-1 rounded">requested_time</code>
         ). Si hay ventana en base, en el mapa verás también el fin de ventana / llegada máxima. Los{' '}
-        <strong>atajos app</strong> (mismos colores origen/destino que el resto) no se filtran por esa hora: si hay filas
-        en base, deberían verse siempre
-        con el checkbox activo.
+        <strong>atajos app</strong> usan el rango <strong>Desde / Hasta</strong> sobre{' '}
+        <code className="bg-gray-100 px-1 rounded">scheduled_date</code>; no usan el filtro de hora de arriba.
       </p>
       <p className="text-xs text-gray-700 mb-3 -mt-2">
         Atajos sincronizados (activos en base, este rango de carga):{' '}
