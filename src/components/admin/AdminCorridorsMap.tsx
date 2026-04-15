@@ -364,7 +364,15 @@ export default function AdminCorridorsMap({
       map.setView([-25.35, -57.45], 9);
     }
 
-    (map as MapWithPm).pm?.disableGlobalEditMode();
+    const mpm = (map as MapWithPm).pm;
+    mpm?.disableGlobalEditMode();
+    if (drawTarget) {
+      // Con edición global activa + pmIgnore selectivo, solo la ciudad objetivo queda editable.
+      mpm?.enableGlobalEditMode({
+        snappable: true,
+        allowSelfIntersection: false,
+      });
+    }
 
     const inv = window.setTimeout(() => map.invalidateSize(), 100);
     return () => clearTimeout(inv);
