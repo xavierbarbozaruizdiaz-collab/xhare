@@ -165,6 +165,7 @@ export default function AdminCorridorsMap({
   const mapRef = useRef<L.Map | null>(null);
   const overlayRef = useRef<L.LayerGroup | null>(null);
   const onZoneEditedRef = useRef(onZoneEdited);
+  const hasAutoFramedRef = useRef(false);
   onZoneEditedRef.current = onZoneEdited;
 
   useEffect(() => {
@@ -377,9 +378,14 @@ export default function AdminCorridorsMap({
     }
 
     if (allCorners.length > 0) {
-      map.fitBounds(L.latLngBounds(allCorners), { padding: [40, 40], maxZoom: 11 });
+      // No re-encuadrar en cada guardado: durante edición debe mantenerse el zoom/centro actual.
+      if (!hasAutoFramedRef.current) {
+        map.fitBounds(L.latLngBounds(allCorners), { padding: [40, 40], maxZoom: 11 });
+        hasAutoFramedRef.current = true;
+      }
     } else {
       map.setView([-25.35, -57.45], 9);
+      hasAutoFramedRef.current = false;
     }
 
     const mpm = (map as MapWithPm).pm;
