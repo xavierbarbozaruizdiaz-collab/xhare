@@ -49,6 +49,12 @@ type UndoSnapshot = {
   kind: DrawKind;
   zone: Record<string, unknown>;
 };
+type CorridorVersion = {
+  id: string;
+  created_at: string;
+  note?: string | null;
+  is_published: boolean;
+};
 
 function zoneSummary(z: Record<string, unknown>): string {
   const o = z as CorridorZone;
@@ -198,6 +204,9 @@ export default function AdminCorridorsPage() {
   const [simplifyingCity, setSimplifyingCity] = useState(false);
   const [lastUndo, setLastUndo] = useState<UndoSnapshot | null>(null);
   const skipUndoRef = useRef(false);
+  const [versions, setVersions] = useState<CorridorVersion[]>([]);
+  const [publishingVersion, setPublishingVersion] = useState(false);
+  const [rollbackingId, setRollbackingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -240,6 +249,35 @@ export default function AdminCorridorsPage() {
     if (!ready || !isAdmin) return;
     void load();
   }, [ready, isAdmin, load]);
+
+  const loadVersions = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      let token = accessToken;
+      let res = await fetch('/api/admin/corridors/versions', {
+        credentials: 'include',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 401) {
+        token = (await refetch()) ?? '';
+        if (token) {
+          res = await fetch('/api/admin/corridors/versions', {
+            credentials: 'include',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        }
+      }
+      const body = (await res.json()) as { versions?: CorridorVersion[] };
+      if (res.ok) setVersions(body.versions ?? []);
+    } catch {
+      /* noop */
+    }
+  }, [accessToken, refetch]);
+
+  useEffect(() => {
+    if (!ready || !isAdmin) return;
+    void loadVersions();
+  }, [ready, isAdmin, loadVersions]);
 
   const loadTubes = useCallback(async () => {
     if (!showDemandTubes) {
@@ -424,6 +462,92 @@ export default function AdminCorridorsPage() {
     }
   }, [lastUndo, patchZone]);
 
+  const publishCurrentConfig = useCallback(async () => {
+    setPublishingVersion(true);
+    setSaveMsg(null);
+    setSaveErr(null);
+    let token = accessToken ?? (await refetch()) ?? '';
+    if (!token) {
+      setSaveErr('No hay sesión.');
+      setPublishingVersion(false);
+      return;
+    }
+    try {
+      let res = await fetch('/api/admin/corridors/versions', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ note: 'Publicación desde admin' }),
+      });
+      if (res.status === 401) {
+        token = (await refetch()) ?? '';
+        if (token) {
+          res = await fetch('/api/admin/corridors/versions', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ note: 'Publicación desde admin' }),
+          });
+        }
+      }
+      const body = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setSaveErr(body.error ?? 'No se pudo publicar versión');
+        return;
+      }
+      setSaveMsg('Configuración publicada (snapshot guardado).');
+      await loadVersions();
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : 'Error de red');
+    } finally {
+      setPublishingVersion(false);
+    }
+  }, [accessToken, loadVersions, refetch]);
+
+  const rollbackVersion = useCallback(
+    async (id: string) => {
+      setRollbackingId(id);
+      setSaveMsg(null);
+      setSaveErr(null);
+      let token = accessToken ?? (await refetch()) ?? '';
+      if (!token) {
+        setSaveErr('No hay sesión.');
+        setRollbackingId(null);
+        return;
+      }
+      try {
+        let res = await fetch(`/api/admin/corridors/versions/${id}/rollback`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 401) {
+          token = (await refetch()) ?? '';
+          if (token) {
+            res = await fetch(`/api/admin/corridors/versions/${id}/rollback`, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { Authorization: `Bearer ${token}` },
+            });
+          }
+        }
+        const body = (await res.json()) as { error?: string; restored?: number };
+        if (!res.ok) {
+          setSaveErr(body.error ?? 'No se pudo hacer rollback');
+          return;
+        }
+        setSaveMsg(`Rollback aplicado (${body.restored ?? 0} corredores restaurados).`);
+        await load();
+        await loadVersions();
+      } catch (e) {
+        setSaveErr(e instanceof Error ? e.message : 'Error de red');
+      } finally {
+        setRollbackingId(null);
+      }
+    },
+    [accessToken, load, loadVersions, refetch]
+  );
+
   const importCentral = useCallback(async () => {
     if (!drawCorridorId) return;
     setSaveMsg(null);
@@ -603,6 +727,14 @@ export default function AdminCorridorsPage() {
         </button>
         {loading && <span className="text-sm text-gray-500">Cargando…</span>}
         {saving && <span className="text-sm text-teal-700">Guardando zona…</span>}
+        <button
+          type="button"
+          onClick={() => void publishCurrentConfig()}
+          className="text-sm font-medium text-blue-700 border border-blue-600 rounded-lg px-3 py-1.5 hover:bg-blue-50 disabled:opacity-50"
+          disabled={publishingVersion}
+        >
+          {publishingVersion ? 'Publicando…' : 'Publicar configuración (snapshot)'}
+        </button>
       </div>
 
       {err && (
@@ -851,6 +983,32 @@ export default function AdminCorridorsPage() {
             splitLineMode={splitLineMode}
             splitKeepSide={splitKeepSide}
           />
+        </div>
+      )}
+
+      {versions.length > 0 && (
+        <div className="mb-8 rounded-xl border border-gray-200 bg-white p-4">
+          <h2 className="text-base font-semibold text-gray-900 mb-2">Versiones publicadas / rollback</h2>
+          <div className="space-y-2">
+            {versions.map((v) => (
+              <div key={v.id} className="flex flex-wrap items-center justify-between gap-2 border border-gray-100 rounded-lg px-3 py-2">
+                <div className="text-sm text-gray-700">
+                  <span className="font-mono text-xs">{v.id.slice(0, 8)}…</span> ·{' '}
+                  {new Date(v.created_at).toLocaleString()}
+                  {v.is_published ? ' · ACTIVA' : ''}
+                  {v.note ? ` · ${v.note}` : ''}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void rollbackVersion(v.id)}
+                  className="text-xs font-medium text-gray-700 border border-gray-400 rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-50"
+                  disabled={rollbackingId !== null || v.is_published}
+                >
+                  {rollbackingId === v.id ? 'Aplicando…' : v.is_published ? 'Actual' : 'Rollback'}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
