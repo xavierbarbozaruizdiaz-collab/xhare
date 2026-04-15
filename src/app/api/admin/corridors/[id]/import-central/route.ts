@@ -26,6 +26,16 @@ const CENTRAL_CITIES = [
   'J. Augusto Saldivar',
   'San Antonio',
 ] as const;
+const SPLIT_NORTH_SOUTH = new Set([
+  'Luque',
+  'Limpio',
+  'Aregua',
+  'Capiata',
+  'Itaugua',
+  'Ita',
+  'Villeta',
+  'Nueva Italia',
+]);
 
 type LatLng = { lat: number; lng: number };
 type CityPolygonRecord = { id: string; name: string; active: boolean; polygon_latlng: LatLng[] };
@@ -92,7 +102,7 @@ function centroidLat(ring: LatLng[]): number {
 }
 
 function splitAsuncionByMariscalLopez(ring: LatLng[]): { centro: LatLng[]; norte: LatLng[] } | null {
-  // Aproximación de la traza de Av. Mariscal López (Oeste -> Este)
+  // Fallback: usa línea E-W aproximada si no se puede obtener la traza vial real.
   const west: LatLng = { lat: -25.2898, lng: -57.6355 };
   const east: LatLng = { lat: -25.3122, lng: -57.5476 };
   const left = clipPolygonByHalfPlane(ring, west, east, true);
@@ -105,6 +115,52 @@ function splitAsuncionByMariscalLopez(ring: LatLng[]): { centro: LatLng[]; norte
     return { norte: simplifyByStep(left), centro: simplifyByStep(right) };
   }
   return { norte: simplifyByStep(right), centro: simplifyByStep(left) };
+}
+
+function splitNorthSouthByMedianLat(ring: LatLng[]): { norte: LatLng[]; sur: LatLng[] } | null {
+  if (ring.length < 3) return null;
+  const lats = ring.map((p) => p.lat).sort((a, b) => a - b);
+  const mid = lats[Math.floor(lats.length / 2)];
+  const minLng = Math.min(...ring.map((p) => p.lng));
+  const maxLng = Math.max(...ring.map((p) => p.lng));
+  const west: LatLng = { lat: mid, lng: minLng - 0.15 };
+  const east: LatLng = { lat: mid, lng: maxLng + 0.15 };
+  const north = clipPolygonByHalfPlane(ring, west, east, true);
+  const south = clipPolygonByHalfPlane(ring, west, east, false);
+  if (north.length < 3 || south.length < 3) return null;
+  return { norte: simplifyByStep(north), sur: simplifyByStep(south) };
+}
+
+async function fetchMariscalLopezLine(): Promise<{ west: LatLng; east: LatLng } | null> {
+  const q = encodeURIComponent('Avenida Mariscal López, Asunción, Paraguay');
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&polygon_geojson=1&limit=1&q=${q}`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'xhare-admin-corridors/1.0',
+      Accept: 'application/json',
+    },
+    cache: 'no-store',
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as Array<{ geojson?: { type?: string; coordinates?: unknown } }>;
+  const g = data?.[0]?.geojson;
+  if (!g || typeof g.type !== 'string') return null;
+  const coords = g.coordinates;
+  if (g.type === 'LineString' && Array.isArray(coords) && coords.length >= 2) {
+    const pts = (coords as unknown[])
+      .map((v) => (Array.isArray(v) && v.length >= 2 ? { lng: Number(v[0]), lat: Number(v[1]) } : null))
+      .filter((v): v is { lat: number; lng: number } => !!v && Number.isFinite(v.lat) && Number.isFinite(v.lng));
+    if (pts.length >= 2) {
+      let west = pts[0];
+      let east = pts[0];
+      for (const p of pts) {
+        if (p.lng < west.lng) west = p;
+        if (p.lng > east.lng) east = p;
+      }
+      return { west, east };
+    }
+  }
+  return null;
 }
 
 function bboxFromPolys(polys: LatLng[][]): { minLat: number; maxLat: number; minLng: number; maxLng: number } | null {
@@ -207,7 +263,20 @@ async function fetchAsuncionSplit(): Promise<CityPolygonRecord[] | null> {
   const data = (await res.json()) as Array<{ geojson?: unknown }>;
   const asu = toRing(data?.[0]?.geojson);
   if (!asu) return null;
-  const split = splitAsuncionByMariscalLopez(asu);
+  const road = await fetchMariscalLopezLine();
+  let split: { centro: LatLng[]; norte: LatLng[] } | null = null;
+  if (road) {
+    const sideA = clipPolygonByHalfPlane(asu, road.west, road.east, true);
+    const sideB = clipPolygonByHalfPlane(asu, road.west, road.east, false);
+    if (sideA.length >= 3 && sideB.length >= 3) {
+      const aLat = centroidLat(sideA);
+      const bLat = centroidLat(sideB);
+      split = aLat >= bLat
+        ? { norte: simplifyByStep(sideA), centro: simplifyByStep(sideB) }
+        : { norte: simplifyByStep(sideB), centro: simplifyByStep(sideA) };
+    }
+  }
+  if (!split) split = splitAsuncionByMariscalLopez(asu);
   if (!split) return null;
   return [
     {
@@ -274,6 +343,24 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           if (!ring) {
             missing.push(city);
             continue;
+          }
+          if (SPLIT_NORTH_SOUTH.has(city)) {
+            const split = splitNorthSouthByMedianLat(ring);
+            if (split) {
+              imported.push({
+                id: `central-${slugify(city)}-norte`,
+                name: `${city} Norte`,
+                active: true,
+                polygon_latlng: split.norte,
+              });
+              imported.push({
+                id: `central-${slugify(city)}-sur`,
+                name: `${city} Sur`,
+                active: true,
+                polygon_latlng: split.sur,
+              });
+              continue;
+            }
           }
           imported.push({
             id: `central-${slugify(city)}`,
