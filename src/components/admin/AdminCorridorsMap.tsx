@@ -155,6 +155,20 @@ export default function AdminCorridorsMap({
     }, 650);
   }, []);
 
+  const commitNow = useCallback((meta: ZoneMeta, layer: L.Polygon) => {
+    const b = layer.getBounds();
+    const raw = layer.getLatLngs();
+    const ring0 = Array.isArray(raw[0]) ? (raw[0] as L.LatLng[]) : (raw as L.LatLng[]);
+    const polygon = leafletRingToPolygonLatLngs(ring0);
+    const box = boundsToBox(b);
+    if (polygon.length >= 3) {
+      onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, polygon_latlng: polygon });
+    } else {
+      const fallback = boundsToContainingFlatTopHex(b);
+      onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, hex_latlng: fallback });
+    }
+  }, []);
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = L.map(containerRef.current, { zoomControl: true }).setView([-25.35, -57.45], 9);
@@ -188,8 +202,9 @@ export default function AdminCorridorsMap({
         if (layer && 'remove' in layer && typeof layer.remove === 'function') layer.remove();
         return;
       }
-      scheduleCommit(target, layer);
-      layer.remove();
+      // Dejar visible la figura recién dibujada mientras se persiste, para evitar el "parpadeo/desaparición".
+      overlayRef.current?.addLayer(layer);
+      commitNow(target, layer);
     });
 
     const t = setTimeout(() => map.invalidateSize(), 200);
@@ -205,7 +220,7 @@ export default function AdminCorridorsMap({
       mapRef.current = null;
       overlayRef.current = null;
     };
-  }, []);
+  }, [commitNow, scheduleCommit]);
 
   useEffect(() => {
     const map = mapRef.current;
