@@ -184,6 +184,8 @@ type Props = {
   drawTarget?: ZoneMeta | null;
   /** Si está definido, solo esa ciudad (id) se habilita para edición. */
   editCityId?: string | null;
+  /** Activa/desactiva marcadores de edición de vértices. */
+  vertexEditMode?: boolean;
   /** Habilita corte por línea para ciudad seleccionada. */
   splitLineMode?: boolean;
   /** Lado que se conserva al cortar (el otro se elimina). */
@@ -214,6 +216,7 @@ export default function AdminCorridorsMap({
   corridorZonesOutlineOnly = true,
   drawTarget = null,
   editCityId = null,
+  vertexEditMode = false,
   splitLineMode = false,
   splitKeepSide = 'left',
   height = 'min(52vh, 480px)',
@@ -413,6 +416,7 @@ export default function AdminCorridorsMap({
           const city = cityPolys[idx];
           const cityName = city?.name ?? 'Ciudad';
           const canEdit =
+            !!vertexEditMode &&
             !!drawTarget &&
             drawTarget.corridorId === c.id &&
             drawTarget.kind === kind &&
@@ -519,7 +523,7 @@ export default function AdminCorridorsMap({
 
     const mpm = (map as MapWithPm).pm;
     mpm?.disableGlobalEditMode();
-    if (drawTarget && editCityId) {
+    if (vertexEditMode && drawTarget && editCityId) {
       // Con edición global activa + pmIgnore selectivo, solo la ciudad objetivo queda editable.
       mpm?.enableGlobalEditMode({
         snappable: true,
@@ -538,6 +542,7 @@ export default function AdminCorridorsMap({
     corridorZonesOutlineOnly,
     drawTarget,
     editCityId,
+    vertexEditMode,
     splitLineMode,
     splitKeepSide,
   ]);

@@ -191,6 +191,7 @@ export default function AdminCorridorsPage() {
   const [drawCorridorId, setDrawCorridorId] = useState<string>('');
   const [drawKind, setDrawKind] = useState<DrawKind>('origin');
   const [editCityId, setEditCityId] = useState<string>('');
+  const [vertexEditMode, setVertexEditMode] = useState(false);
   const [splitLineMode, setSplitLineMode] = useState(false);
   const [splitKeepSide, setSplitKeepSide] = useState<'left' | 'right'>('left');
   const [importingCentral, setImportingCentral] = useState(false);
@@ -729,6 +730,15 @@ export default function AdminCorridorsPage() {
                 ))}
               </select>
             </div>
+            <label className="inline-flex items-center gap-2 text-sm text-violet-950 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={vertexEditMode}
+                onChange={(e) => setVertexEditMode(e.target.checked)}
+                disabled={!editCityId}
+              />
+              Editar vértices
+            </label>
             <div className="flex items-end gap-2">
               <button
                 type="button"
@@ -837,6 +847,7 @@ export default function AdminCorridorsPage() {
             corridorZonesOutlineOnly={corridorOutlineOnly}
             drawTarget={drawCorridorId ? { corridorId: drawCorridorId, kind: drawKind } : null}
             editCityId={editCityId || null}
+            vertexEditMode={vertexEditMode}
             splitLineMode={splitLineMode}
             splitKeepSide={splitKeepSide}
           />
