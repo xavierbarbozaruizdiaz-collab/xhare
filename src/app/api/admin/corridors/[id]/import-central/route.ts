@@ -25,9 +25,10 @@ const CENTRAL_CITIES = [
   'Villeta',
   'J. Augusto Saldivar',
   'San Antonio',
-];
+] as const;
 
 type LatLng = { lat: number; lng: number };
+type CityPolygonRecord = { id: string; name: string; active: boolean; polygon_latlng: LatLng[] };
 
 function slugify(s: string): string {
   return s
@@ -39,13 +40,71 @@ function slugify(s: string): string {
     .slice(0, 80);
 }
 
-function simplifyByStep(ring: LatLng[], maxPoints = 220): LatLng[] {
+function simplifyByStep(ring: LatLng[], maxPoints = 1200): LatLng[] {
   if (ring.length <= maxPoints) return ring;
   const step = Math.ceil(ring.length / maxPoints);
   const out: LatLng[] = [];
   for (let i = 0; i < ring.length; i += step) out.push(ring[i]);
   if (out.length < 3) return ring.slice(0, 3);
   return out;
+}
+
+function signedDistanceToLine(p: LatLng, a: LatLng, b: LatLng): number {
+  return (b.lng - a.lng) * (p.lat - a.lat) - (b.lat - a.lat) * (p.lng - a.lng);
+}
+
+function intersectSegmentWithLine(s: LatLng, e: LatLng, a: LatLng, b: LatLng): LatLng {
+  const ds = signedDistanceToLine(s, a, b);
+  const de = signedDistanceToLine(e, a, b);
+  const den = ds - de;
+  if (Math.abs(den) < 1e-12) return { ...s };
+  const t = ds / den;
+  return {
+    lat: s.lat + (e.lat - s.lat) * t,
+    lng: s.lng + (e.lng - s.lng) * t,
+  };
+}
+
+function clipPolygonByHalfPlane(ring: LatLng[], a: LatLng, b: LatLng, keepLeft: boolean): LatLng[] {
+  if (ring.length < 3) return [];
+  const out: LatLng[] = [];
+  for (let i = 0; i < ring.length; i++) {
+    const s = ring[i];
+    const e = ring[(i + 1) % ring.length];
+    const ds = signedDistanceToLine(s, a, b);
+    const de = signedDistanceToLine(e, a, b);
+    const inS = keepLeft ? ds >= 0 : ds <= 0;
+    const inE = keepLeft ? de >= 0 : de <= 0;
+    if (inS && inE) {
+      out.push(e);
+    } else if (inS && !inE) {
+      out.push(intersectSegmentWithLine(s, e, a, b));
+    } else if (!inS && inE) {
+      out.push(intersectSegmentWithLine(s, e, a, b), e);
+    }
+  }
+  return out.length >= 3 ? out : [];
+}
+
+function centroidLat(ring: LatLng[]): number {
+  if (ring.length === 0) return -999;
+  return ring.reduce((acc, p) => acc + p.lat, 0) / ring.length;
+}
+
+function splitAsuncionByMariscalLopez(ring: LatLng[]): { centro: LatLng[]; norte: LatLng[] } | null {
+  // Aproximación de la traza de Av. Mariscal López (Oeste -> Este)
+  const west: LatLng = { lat: -25.2898, lng: -57.6355 };
+  const east: LatLng = { lat: -25.3122, lng: -57.5476 };
+  const left = clipPolygonByHalfPlane(ring, west, east, true);
+  const right = clipPolygonByHalfPlane(ring, west, east, false);
+  if (left.length < 3 || right.length < 3) return null;
+  // La parte más al norte (lat mayor) la etiquetamos como "Asunción Norte".
+  const leftLat = centroidLat(left);
+  const rightLat = centroidLat(right);
+  if (leftLat >= rightLat) {
+    return { norte: simplifyByStep(left), centro: simplifyByStep(right) };
+  }
+  return { norte: simplifyByStep(right), centro: simplifyByStep(left) };
 }
 
 function bboxFromPolys(polys: LatLng[][]): { minLat: number; maxLat: number; minLng: number; maxLng: number } | null {
@@ -134,6 +193,38 @@ async function fetchCityPolygon(city: string): Promise<LatLng[] | null> {
   return ring ? simplifyByStep(ring) : null;
 }
 
+async function fetchAsuncionSplit(): Promise<CityPolygonRecord[] | null> {
+  const q = encodeURIComponent('Asunción, Paraguay');
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&polygon_geojson=1&limit=1&q=${q}`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'xhare-admin-corridors/1.0',
+      Accept: 'application/json',
+    },
+    cache: 'no-store',
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as Array<{ geojson?: unknown }>;
+  const asu = toRing(data?.[0]?.geojson);
+  if (!asu) return null;
+  const split = splitAsuncionByMariscalLopez(asu);
+  if (!split) return null;
+  return [
+    {
+      id: 'central-asuncion-centro',
+      name: 'Asuncion Centro',
+      active: true,
+      polygon_latlng: split.centro,
+    },
+    {
+      id: 'central-asuncion-norte',
+      name: 'Asuncion Norte',
+      active: true,
+      polygon_latlng: split.norte,
+    },
+  ];
+}
+
 /**
  * POST /api/admin/corridors/:id/import-central
  * Body: { kind: 'origin' | 'destination' }
@@ -165,8 +256,18 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 400 });
       if (!row) return NextResponse.json({ error: 'Corredor no encontrado' }, { status: 404 });
 
-      const imported: Array<{ id: string; name: string; active: boolean; polygon_latlng: LatLng[] }> = [];
+      const imported: CityPolygonRecord[] = [];
       const missing: string[] = [];
+      try {
+        const asu = await fetchAsuncionSplit();
+        if (asu && asu.length === 2) {
+          imported.push(...asu);
+        } else {
+          missing.push('Asuncion (split Centro/Norte)');
+        }
+      } catch {
+        missing.push('Asuncion (split Centro/Norte)');
+      }
       for (const city of CENTRAL_CITIES) {
         try {
           const ring = await fetchCityPolygon(city);

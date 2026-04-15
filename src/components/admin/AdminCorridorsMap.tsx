@@ -228,21 +228,25 @@ export default function AdminCorridorsMap({
           totalCells += cells.length;
           effectiveSum += effectiveEdgeM;
           if (capped) cappedAny = true;
-          for (const cell of cells) {
-            L.polygon(hexRingToLeafletLatLngs(cell), {
-              color: stroke,
-              fillColor: fill,
-              fillOpacity: cellFill,
-              weight: cellWeight,
-              opacity: 0.92,
-              pmIgnore: true,
-            } as PathOptsPm).addTo(group);
+          if (!corridorZonesOutlineOnly) {
+            for (const cell of cells) {
+              L.polygon(hexRingToLeafletLatLngs(cell), {
+                color: stroke,
+                fillColor: fill,
+                fillOpacity: cellFill,
+                weight: cellWeight,
+                opacity: 0.92,
+                pmIgnore: true,
+              } as PathOptsPm).addTo(group);
+            }
           }
         }
         const effectiveAvg = rings.length > 0 ? effectiveSum / rings.length : corridorHexCellEdgeM;
-        const cellHint = cappedAny
-          ? ` · malla ${Math.round(effectiveAvg)} m (tope ${totalCells} celdas)`
-          : ` · malla ~${Math.round(effectiveAvg)} m (${totalCells} celdas)`;
+        const cellHint = corridorZonesOutlineOnly
+          ? ` · solo contorno (${rings.length} ciudad(es) activa(s))`
+          : cappedAny
+            ? ` · malla ${Math.round(effectiveAvg)} m (tope ${totalCells} celdas)`
+            : ` · malla ~${Math.round(effectiveAvg)} m (${totalCells} celdas)`;
 
         for (let idx = 0; idx < rings.length; idx++) {
           const ring = rings[idx];

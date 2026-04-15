@@ -602,7 +602,7 @@ export default function AdminCorridorsPage() {
               Solo bordes (sin relleno)
             </label>
             <span className="text-[11px] text-gray-500">
-              En modo solo bordes se mantienen visibles los contornos de cada hexágono, sin relleno.
+              En modo solo bordes se muestra solo el contorno de ciudad (sin dibujar la malla interna).
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="inline-block w-4 h-3 rounded border border-violet-700 bg-violet-400/40" /> Tubo sync
