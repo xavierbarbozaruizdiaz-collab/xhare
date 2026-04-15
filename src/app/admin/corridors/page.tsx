@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAdminAuth } from '../AdminAuthContext';
 import type {
   CorridorLayerVisibility,
@@ -44,6 +44,11 @@ type CorridorRow = {
   created_at: string;
 };
 type DrawKind = 'origin' | 'destination';
+type UndoSnapshot = {
+  corridorId: string;
+  kind: DrawKind;
+  zone: Record<string, unknown>;
+};
 
 function zoneSummary(z: Record<string, unknown>): string {
   const o = z as CorridorZone;
@@ -190,6 +195,8 @@ export default function AdminCorridorsPage() {
   const [splitKeepSide, setSplitKeepSide] = useState<'left' | 'right'>('left');
   const [importingCentral, setImportingCentral] = useState(false);
   const [simplifyingCity, setSimplifyingCity] = useState(false);
+  const [lastUndo, setLastUndo] = useState<UndoSnapshot | null>(null);
+  const skipUndoRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -346,6 +353,15 @@ export default function AdminCorridorsPage() {
       setSaveMsg(null);
       setSaveErr(null);
       setSaving(true);
+      const baseRow = rows.find((r) => r.id === corridorId);
+      if (baseRow && !skipUndoRef.current) {
+        const prevZone = (kind === 'origin' ? baseRow.origin_zone : baseRow.destination_zone) as Record<string, unknown>;
+        setLastUndo({
+          corridorId,
+          kind,
+          zone: JSON.parse(JSON.stringify(prevZone)) as Record<string, unknown>,
+        });
+      }
       let token = accessToken ?? (await refetch()) ?? '';
       if (!token) {
         setSaveErr('No hay sesión.');
@@ -392,8 +408,20 @@ export default function AdminCorridorsPage() {
         setSaving(false);
       }
     },
-    [accessToken, refetch]
+    [accessToken, refetch, rows]
   );
+
+  const undoLastChange = useCallback(async () => {
+    if (!lastUndo) return;
+    skipUndoRef.current = true;
+    try {
+      await patchZone(lastUndo.corridorId, lastUndo.kind, lastUndo.zone as CorridorZoneEditPayload);
+      setSaveMsg('Se deshizo la última modificación.');
+      setLastUndo(null);
+    } finally {
+      skipUndoRef.current = false;
+    }
+  }, [lastUndo, patchZone]);
 
   const importCentral = useCallback(async () => {
     if (!drawCorridorId) return;
@@ -675,6 +703,15 @@ export default function AdminCorridorsPage() {
               disabled={!drawCorridorId || importingCentral}
             >
               {importingCentral ? 'Importando Central…' : 'Importar ciudades de Central (auto)'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void undoLastChange()}
+              className="text-sm font-medium text-gray-700 border border-gray-400 rounded-lg px-2.5 py-1 hover:bg-gray-100 disabled:opacity-50"
+              disabled={!lastUndo || saving || importingCentral}
+              title="Deshacer último cambio guardado"
+            >
+              ↶ Deshacer
             </button>
             <div>
               <label className="block text-xs font-medium text-violet-900 mb-0.5">Ciudad a modificar</label>
