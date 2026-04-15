@@ -128,6 +128,7 @@ export default function AdminCorridorsPage() {
   const [corridorOutlineOnly, setCorridorOutlineOnly] = useState(false);
   const [drawCorridorId, setDrawCorridorId] = useState<string>('');
   const [drawKind, setDrawKind] = useState<DrawKind>('origin');
+  const [editCityId, setEditCityId] = useState<string>('');
   const [importingCentral, setImportingCentral] = useState(false);
 
   const load = useCallback(async () => {
@@ -264,6 +265,21 @@ export default function AdminCorridorsPage() {
       setDrawCorridorId(rows[0].id);
     }
   }, [rows, drawCorridorId]);
+
+  const selectedRow = rows.find((r) => r.id === drawCorridorId) ?? null;
+  const selectedZone =
+    selectedRow == null ? null : ((drawKind === 'origin' ? selectedRow.origin_zone : selectedRow.destination_zone) as Record<string, unknown>);
+  const selectedCities = selectedZone ? parseCityPolys(selectedZone) : [];
+
+  useEffect(() => {
+    if (selectedCities.length === 0) {
+      setEditCityId('');
+      return;
+    }
+    if (!editCityId || !selectedCities.some((c) => c.id === editCityId)) {
+      setEditCityId(selectedCities[0].id);
+    }
+  }, [selectedCities, editCityId]);
 
   const patchZone = useCallback(
     async (corridorId: string, kind: 'origin' | 'destination', payload: CorridorZoneEditPayload) => {
@@ -565,6 +581,22 @@ export default function AdminCorridorsPage() {
             >
               {importingCentral ? 'Importando Central…' : 'Importar ciudades de Central (auto)'}
             </button>
+            <div>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Ciudad a modificar</label>
+              <select
+                value={editCityId}
+                onChange={(e) => setEditCityId(e.target.value)}
+                className="border border-violet-300 rounded-lg px-2 py-1 text-sm min-w-[220px]"
+                disabled={selectedCities.length === 0}
+              >
+                {selectedCities.length === 0 && <option value="">(sin ciudades importadas)</option>}
+                {selectedCities.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.active ? '' : '(inactiva)'}
+                  </option>
+                ))}
+              </select>
+            </div>
             {showDemandTubes && !tubesLoading && tubesMeta !== null && (
               <span className="text-xs text-violet-800">
                 Grupos en rango: {tubesMeta.groupsInRange} · Tubos dibujados: {tubesMeta.tubesDrawn}
@@ -626,6 +658,7 @@ export default function AdminCorridorsPage() {
             showDemandTubes={showDemandTubes}
             corridorZonesOutlineOnly={corridorOutlineOnly}
             drawTarget={drawCorridorId ? { corridorId: drawCorridorId, kind: drawKind } : null}
+            editCityId={editCityId || null}
           />
         </div>
       )}

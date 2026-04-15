@@ -130,6 +130,8 @@ type Props = {
   corridorZonesOutlineOnly?: boolean;
   /** Mantener para compatibilidad del caller; edición manual desactivada. */
   drawTarget?: ZoneMeta | null;
+  /** Si está definido, solo esa ciudad (id) se habilita para edición. */
+  editCityId?: string | null;
   height?: string;
   className?: string;
 };
@@ -155,6 +157,7 @@ export default function AdminCorridorsMap({
   corridorHexCellEdgeM = DEFAULT_CORRIDOR_HEX_EDGE_M,
   corridorZonesOutlineOnly = true,
   drawTarget = null,
+  editCityId = null,
   height = 'min(52vh, 480px)',
   className = '',
 }: Props) {
@@ -290,7 +293,8 @@ export default function AdminCorridorsMap({
             !!drawTarget &&
             drawTarget.corridorId === c.id &&
             drawTarget.kind === kind &&
-            !!city;
+            !!city &&
+            (!editCityId || city.id === editCityId);
           const border = L.polygon(hexRingToLeafletLatLngs(ring), {
             color: stroke,
             fillColor: fill,
@@ -366,7 +370,7 @@ export default function AdminCorridorsMap({
 
     const mpm = (map as MapWithPm).pm;
     mpm?.disableGlobalEditMode();
-    if (drawTarget) {
+    if (drawTarget && editCityId) {
       // Con edición global activa + pmIgnore selectivo, solo la ciudad objetivo queda editable.
       mpm?.enableGlobalEditMode({
         snappable: true,
@@ -384,6 +388,7 @@ export default function AdminCorridorsMap({
     corridorHexCellEdgeM,
     corridorZonesOutlineOnly,
     drawTarget,
+    editCityId,
   ]);
 
   const hasCorridors = corridors.length > 0;
