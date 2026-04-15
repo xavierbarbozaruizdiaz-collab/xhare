@@ -101,6 +101,63 @@ function bboxFromCityPolys(polys: CityPolyRow[]): { minLat: number; maxLat: numb
   return { minLat, maxLat, minLng, maxLng };
 }
 
+function perpendicularDistance(
+  p: { lat: number; lng: number },
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const x = p.lng;
+  const y = p.lat;
+  const x1 = a.lng;
+  const y1 = a.lat;
+  const x2 = b.lng;
+  const y2 = b.lat;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  if (dx === 0 && dy === 0) return Math.hypot(x - x1, y - y1);
+  const t = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy);
+  const tx = x1 + t * dx;
+  const ty = y1 + t * dy;
+  return Math.hypot(x - tx, y - ty);
+}
+
+function rdp(points: Array<{ lat: number; lng: number }>, epsilon: number): Array<{ lat: number; lng: number }> {
+  if (points.length < 3) return points;
+  let dmax = 0;
+  let idx = 0;
+  const start = points[0];
+  const end = points[points.length - 1];
+  for (let i = 1; i < points.length - 1; i++) {
+    const d = perpendicularDistance(points[i], start, end);
+    if (d > dmax) {
+      idx = i;
+      dmax = d;
+    }
+  }
+  if (dmax > epsilon) {
+    const rec1 = rdp(points.slice(0, idx + 1), epsilon);
+    const rec2 = rdp(points.slice(idx), epsilon);
+    return rec1.slice(0, -1).concat(rec2);
+  }
+  return [start, end];
+}
+
+function simplifyClosedRing(
+  ring: Array<{ lat: number; lng: number }>,
+  epsilon: number
+): Array<{ lat: number; lng: number }> {
+  if (ring.length < 8) return ring;
+  const open = [...ring, ring[0]];
+  const simple = rdp(open, epsilon);
+  const noDup =
+    simple.length >= 2 &&
+    simple[0].lat === simple[simple.length - 1].lat &&
+    simple[0].lng === simple[simple.length - 1].lng
+      ? simple.slice(0, -1)
+      : simple;
+  return noDup.length >= 3 ? noDup : ring;
+}
+
 export default function AdminCorridorsPage() {
   const { accessToken, ready, isAdmin, refetch } = useAdminAuth();
   const [rows, setRows] = useState<CorridorRow[]>([]);
@@ -130,6 +187,7 @@ export default function AdminCorridorsPage() {
   const [drawKind, setDrawKind] = useState<DrawKind>('origin');
   const [editCityId, setEditCityId] = useState<string>('');
   const [importingCentral, setImportingCentral] = useState(false);
+  const [simplifyingCity, setSimplifyingCity] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -403,6 +461,41 @@ export default function AdminCorridorsPage() {
     [patchZone, rows]
   );
 
+  const simplifySelectedCity = useCallback(
+    async (epsilon: number) => {
+      if (!drawCorridorId || !editCityId) return;
+      const row = rows.find((r) => r.id === drawCorridorId);
+      if (!row) return;
+      const zone = (drawKind === 'origin' ? row.origin_zone : row.destination_zone) as Record<string, unknown>;
+      const cities = parseCityPolys(zone);
+      if (cities.length === 0) return;
+      const target = cities.find((c) => c.id === editCityId);
+      if (!target) return;
+      const simplified = simplifyClosedRing(target.polygon_latlng, epsilon);
+      if (simplified.length < 3 || simplified.length === target.polygon_latlng.length) return;
+      setSimplifyingCity(true);
+      try {
+        const nextCities = cities.map((c) =>
+          c.id === editCityId ? { ...c, polygon_latlng: simplified } : c
+        );
+        const bbox = bboxFromCityPolys(nextCities);
+        if (!bbox) return;
+        const payload: CorridorZoneEditPayload & { city_polygons: CityPolyRow[] } = {
+          minLat: bbox.minLat,
+          maxLat: bbox.maxLat,
+          minLng: bbox.minLng,
+          maxLng: bbox.maxLng,
+          city_polygons: nextCities,
+        };
+        await patchZone(drawCorridorId, drawKind, payload);
+        setSaveMsg(`Ciudad simplificada: ${target.polygon_latlng.length} → ${simplified.length} vértices.`);
+      } finally {
+        setSimplifyingCity(false);
+      }
+    },
+    [drawCorridorId, drawKind, editCityId, patchZone, rows]
+  );
+
   const setLayerVis = useCallback((id: string, key: 'origin' | 'dest', value: boolean) => {
     setVisibility((p) => ({
       ...p,
@@ -596,6 +689,26 @@ export default function AdminCorridorsPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="flex items-end gap-2">
+              <button
+                type="button"
+                onClick={() => void simplifySelectedCity(0.00008)}
+                className="text-sm font-medium text-amber-800 border border-amber-500 rounded-lg px-3 py-1 hover:bg-amber-100 disabled:opacity-50"
+                disabled={!editCityId || simplifyingCity}
+                title="Reduce algunos vértices manteniendo forma general"
+              >
+                {simplifyingCity ? 'Simplificando…' : 'Simplificar suave'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void simplifySelectedCity(0.00015)}
+                className="text-sm font-medium text-amber-900 border border-amber-600 rounded-lg px-3 py-1 hover:bg-amber-100 disabled:opacity-50"
+                disabled={!editCityId || simplifyingCity}
+                title="Reduce más vértices para edición rápida"
+              >
+                Simplificar fuerte
+              </button>
             </div>
             {showDemandTubes && !tubesLoading && tubesMeta !== null && (
               <span className="text-xs text-violet-800">
