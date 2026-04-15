@@ -531,7 +531,7 @@ export default function AdminCorridorsPage() {
               {tubesLoading ? 'Cargando tubos…' : 'Recargar tubos'}
             </button>
             <div>
-              <label className="block text-xs font-medium text-violet-900 mb-0.5">Dibujar en corredor</label>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Corredor objetivo (Central)</label>
               <select
                 value={drawCorridorId}
                 onChange={(e) => setDrawCorridorId(e.target.value)}
@@ -546,7 +546,7 @@ export default function AdminCorridorsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-violet-900 mb-0.5">Zona objetivo</label>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Zona objetivo (auto)</label>
               <select
                 value={drawKind}
                 onChange={(e) => setDrawKind(e.target.value as DrawKind)}
@@ -625,7 +625,6 @@ export default function AdminCorridorsPage() {
             demandTubes={demandTubes}
             showDemandTubes={showDemandTubes}
             corridorZonesOutlineOnly={corridorOutlineOnly}
-            drawTarget={drawCorridorId ? { corridorId: drawCorridorId, kind: drawKind } : null}
           />
         </div>
       )}

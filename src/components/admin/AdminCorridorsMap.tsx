@@ -8,16 +8,10 @@ import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
 import type { Point } from '@/types';
 import { DEMAND_SYNC_CORRIDOR_METERS, tubePolygonFromPolyline } from '@/lib/polylineTube';
 import {
-  boundsToBox,
-  boundsToContainingFlatTopHex,
   DEFAULT_CORRIDOR_HEX_EDGE_M,
   hexGridCellsTouchingPolygonGlobal,
   hexRingToLeafletLatLngs,
-  leafletRingToHexLatLngs,
-  leafletRingToPolygonLatLngs,
   parseCityPolygonsFromZone,
-  parseHexLatlngFromZone,
-  parsePolygonLatlngFromZone,
 } from '@/lib/corridorZoneHex';
 
 export type AdminCorridorMapItem = {
@@ -97,9 +91,9 @@ type Props = {
   showDemandTubes?: boolean;
   /** Lado aproximado de cada celda hexagonal de vista (~150 m). */
   corridorHexCellEdgeM?: number;
-  /** Si true: celdas y zona macro sin relleno (solo contornos, estilo referencia móvil). */
+  /** Mantener para compatibilidad del caller; hex se dibuja siempre solo bordes. */
   corridorZonesOutlineOnly?: boolean;
-  /** Si se define, habilita dibujar un polígono contenedor para ese corredor/zona. */
+  /** Mantener para compatibilidad del caller; edición manual desactivada. */
   drawTarget?: ZoneMeta | null;
   height?: string;
   className?: string;
@@ -124,7 +118,7 @@ export default function AdminCorridorsMap({
   demandTubes = [],
   showDemandTubes = false,
   corridorHexCellEdgeM = DEFAULT_CORRIDOR_HEX_EDGE_M,
-  corridorZonesOutlineOnly = false,
+  corridorZonesOutlineOnly = true,
   drawTarget = null,
   height = 'min(52vh, 480px)',
   className = '',
@@ -132,43 +126,10 @@ export default function AdminCorridorsMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const overlayRef = useRef<L.LayerGroup | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onZoneEditedRef = useRef(onZoneEdited);
   onZoneEditedRef.current = onZoneEdited;
-  const drawTargetRef = useRef<ZoneMeta | null>(drawTarget);
-  drawTargetRef.current = drawTarget;
-
-  const scheduleCommit = useCallback((meta: ZoneMeta, layer: L.Polygon) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      debounceRef.current = null;
-      const b = layer.getBounds();
-      const raw = layer.getLatLngs();
-      const ring0 = Array.isArray(raw[0]) ? (raw[0] as L.LatLng[]) : (raw as L.LatLng[]);
-      const polygon = leafletRingToPolygonLatLngs(ring0);
-      const box = boundsToBox(b);
-      if (polygon.length >= 3) {
-        onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, polygon_latlng: polygon });
-      } else {
-        const fallback = boundsToContainingFlatTopHex(b);
-        onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, hex_latlng: fallback });
-      }
-    }, 650);
-  }, []);
-
-  const commitNow = useCallback((meta: ZoneMeta, layer: L.Polygon) => {
-    const b = layer.getBounds();
-    const raw = layer.getLatLngs();
-    const ring0 = Array.isArray(raw[0]) ? (raw[0] as L.LatLng[]) : (raw as L.LatLng[]);
-    const polygon = leafletRingToPolygonLatLngs(ring0);
-    const box = boundsToBox(b);
-    if (polygon.length >= 3) {
-      onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, polygon_latlng: polygon });
-    } else {
-      const fallback = boundsToContainingFlatTopHex(b);
-      onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, hex_latlng: fallback });
-    }
-  }, []);
+  const _unusedOnZoneEdited = onZoneEditedRef;
+  const _unusedDrawTarget = drawTarget;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -180,48 +141,18 @@ export default function AdminCorridorsMap({
     overlayRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
-    const mpm = (map as MapWithPm).pm;
-    mpm?.addControls({
-      position: 'topleft',
-      drawPolygon: true,
-      drawRectangle: false,
-      drawCircle: false,
-      drawCircleMarker: false,
-      drawPolyline: false,
-      drawMarker: false,
-      drawText: false,
-      cutPolygon: false,
-      dragMode: false,
-      rotateMode: false,
-      editMode: false,
-      removalMode: false,
-    });
-    map.on('pm:create', (e: L.LeafletEvent & { layer?: L.Layer }) => {
-      const target = drawTargetRef.current;
-      const layer = e.layer;
-      if (!target || !(layer instanceof L.Polygon)) {
-        if (layer && 'remove' in layer && typeof layer.remove === 'function') layer.remove();
-        return;
-      }
-      // Dejar visible la figura recién dibujada mientras se persiste, para evitar el "parpadeo/desaparición".
-      overlayRef.current?.addLayer(layer);
-      commitNow(target, layer);
-    });
+    // Edición manual desactivada: la delimitación pasa por importación automática de ciudades.
+    (map as MapWithPm).pm?.removeControls();
 
     const t = setTimeout(() => map.invalidateSize(), 200);
     return () => {
       clearTimeout(t);
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-        debounceRef.current = null;
-      }
       (map as MapWithPm).pm?.disableGlobalEditMode();
-      (map as MapWithPm).pm?.removeControls();
       map.remove();
       mapRef.current = null;
       overlayRef.current = null;
     };
-  }, [commitNow, scheduleCommit]);
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -270,33 +201,16 @@ export default function AdminCorridorsMap({
       const active = c.is_active;
       const oB = zoneToBounds(c.origin_zone);
       const dB = zoneToBounds(c.destination_zone);
-      const macroFill = corridorZonesOutlineOnly ? 0 : active ? 0.18 : 0.06;
-      const macroWeight = corridorZonesOutlineOnly ? 2.5 : active ? 2 : 1;
-      const macroDash =
-        !active && corridorZonesOutlineOnly
-          ? ('5 5' as const)
-          : !active && !corridorZonesOutlineOnly
-            ? ('6 6' as const)
-            : undefined;
-
-      const cellFill = corridorZonesOutlineOnly ? 0 : active ? 0.1 : 0.04;
-      const cellWeight = corridorZonesOutlineOnly ? 1.5 : 1;
-
-      const attachHex = (poly: L.Polygon, meta: ZoneMeta, title: string) => {
-        (poly as PmPolygon).pm?.enable({ preventMarkerRemoval: true });
-        poly.bindPopup(
-          `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(title)}<br/>Arrastrá los vértices del contorno para ajustar la zona (la malla fina es solo referencia visual).</span>`
-        );
-        poly.on('pm:update', () => {
-          scheduleCommit(meta, poly);
-        });
-      };
+      const macroFill = 0;
+      const macroWeight = active ? 1.6 : 1.2;
+      const macroDash = !active ? ('5 5' as const) : undefined;
+      const cellFill = 0;
+      const cellWeight = 1.05;
 
       const drawMacroWithGrid = (
         zone: Record<string, unknown>,
         bounds: L.LatLngBounds,
         show: boolean,
-        meta: ZoneMeta,
         title: string,
         stroke: string,
         fill: string
@@ -304,10 +218,7 @@ export default function AdminCorridorsMap({
         if (!show) return;
         const cityPolysAll = parseCityPolygonsFromZone(zone);
         const cityPolys = cityPolysAll.filter((cp) => cp.active);
-        const rings =
-          cityPolysAll.length > 0
-            ? cityPolys.map((cp) => cp.polygon_latlng)
-            : [parsePolygonLatlngFromZone(zone) ?? parseHexLatlngFromZone(zone) ?? boundsToContainingFlatTopHex(bounds)];
+        const rings = cityPolys.map((cp) => cp.polygon_latlng);
         if (rings.length === 0) return;
         let totalCells = 0;
         let cappedAny = false;
@@ -321,9 +232,9 @@ export default function AdminCorridorsMap({
             L.polygon(hexRingToLeafletLatLngs(cell), {
               color: stroke,
               fillColor: fill,
-              fillOpacity: corridorZonesOutlineOnly ? 0 : cellFill,
-              weight: corridorZonesOutlineOnly ? 1.1 : cellWeight,
-              opacity: corridorZonesOutlineOnly ? 0.9 : 1,
+              fillOpacity: cellFill,
+              weight: cellWeight,
+              opacity: 0.92,
               pmIgnore: true,
             } as PathOptsPm).addTo(group);
           }
@@ -333,16 +244,22 @@ export default function AdminCorridorsMap({
           ? ` · malla ${Math.round(effectiveAvg)} m (tope ${totalCells} celdas)`
           : ` · malla ~${Math.round(effectiveAvg)} m (${totalCells} celdas)`;
 
-        const editableRing = rings[0];
-        const poly = L.polygon(hexRingToLeafletLatLngs(editableRing), {
-          color: stroke,
-          fillColor: fill,
-          fillOpacity: macroFill,
-          weight: macroWeight,
-          ...(macroDash ? { dashArray: macroDash } : {}),
-        }).addTo(group);
-        attachHex(poly, meta, `${title}${cellHint}`);
-        for (const ring of rings) {
+        for (let idx = 0; idx < rings.length; idx++) {
+          const ring = rings[idx];
+          const cityName = cityPolys[idx]?.name ?? 'Ciudad';
+          const border = L.polygon(hexRingToLeafletLatLngs(ring), {
+            color: stroke,
+            fillColor: fill,
+            fillOpacity: macroFill,
+            weight: macroWeight,
+            ...(macroDash ? { dashArray: macroDash } : {}),
+            pmIgnore: true,
+          } as PathOptsPm).addTo(group);
+          border.bindPopup(
+            `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(
+              `${title} · ${cityName}${cellHint}`
+            )}<br/>Zona automática de ciudad (Central).</span>`
+          );
           for (const p of ring) {
             allCorners.push(L.latLng(p.lat, p.lng));
           }
@@ -354,7 +271,6 @@ export default function AdminCorridorsMap({
           c.origin_zone,
           oB,
           showOrigin,
-          { corridorId: c.id, kind: 'origin' },
           `Origen · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`,
           '#0369a1',
           '#0284c7'
@@ -365,7 +281,6 @@ export default function AdminCorridorsMap({
           c.destination_zone,
           dB,
           showDest,
-          { corridorId: c.id, kind: 'destination' },
           `Destino · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`,
           '#c2410c',
           '#ea580c'
@@ -379,18 +294,13 @@ export default function AdminCorridorsMap({
       map.setView([-25.35, -57.45], 9);
     }
 
-    const mpm = (map as MapWithPm).pm;
-    mpm?.disableGlobalEditMode();
-    if (corridors.length > 0) {
-      mpm?.enableGlobalEditMode({ snappable: true });
-    }
+    (map as MapWithPm).pm?.disableGlobalEditMode();
 
     const inv = window.setTimeout(() => map.invalidateSize(), 100);
     return () => clearTimeout(inv);
   }, [
     corridors,
     visibility,
-    scheduleCommit,
     demandTubes,
     showDemandTubes,
     corridorHexCellEdgeM,
@@ -407,9 +317,8 @@ export default function AdminCorridorsMap({
       <p className="text-xs text-gray-600">
         <span className="text-violet-900 font-medium">Violeta</span>: tubo aproximado del mismo radio que usa el{' '}
         <strong>sync geográfico</strong> (2 km al eje de la polilínea del grupo).{' '}
-        <span className="text-sky-900 font-medium">Azul / naranja</span>: contorno editable + malla hexagonal de
-        referencia (~{Math.round(corridorHexCellEdgeM)} m por celda; la clasificación sigue el contorno guardado). Los
-        tubos no se editan acá. Usá la herramienta de polígono para redibujar la zona seleccionada.
+        <span className="text-sky-900 font-medium">Azul / naranja</span>: malla hexagonal automática por ciudades de
+        Central (~{Math.round(corridorHexCellEdgeM)} m por celda), visible solo por bordes.
       </p>
       <div
         className={`relative w-full z-0 rounded-xl overflow-hidden border border-gray-200 ${className}`}
