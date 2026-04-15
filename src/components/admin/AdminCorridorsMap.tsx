@@ -60,6 +60,7 @@ export type DemandTubeLayer = {
 type ZoneMeta = { corridorId: string; kind: 'origin' | 'destination' };
 
 type PmPolygon = L.Polygon & { pm?: { enable: (opts?: Record<string, unknown>) => void } };
+type PmPolyline = L.Polyline & { pm?: { enable: (opts?: Record<string, unknown>) => void } };
 
 type PathOptsPm = L.PathOptions & { pmIgnore?: boolean };
 
@@ -117,6 +118,57 @@ function bboxFromCityPolygons(cities: CityPolygon[]): CorridorZoneBox | null {
   return { minLat, maxLat, minLng, maxLng };
 }
 
+function signedDistanceToLine(
+  p: { lat: number; lng: number },
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  return (b.lng - a.lng) * (p.lat - a.lat) - (b.lat - a.lat) * (p.lng - a.lng);
+}
+
+function intersectSegmentWithLine(
+  s: { lat: number; lng: number },
+  e: { lat: number; lng: number },
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): { lat: number; lng: number } {
+  const ds = signedDistanceToLine(s, a, b);
+  const de = signedDistanceToLine(e, a, b);
+  const den = ds - de;
+  if (Math.abs(den) < 1e-12) return { ...s };
+  const t = ds / den;
+  return {
+    lat: s.lat + (e.lat - s.lat) * t,
+    lng: s.lng + (e.lng - s.lng) * t,
+  };
+}
+
+function clipPolygonByHalfPlane(
+  ring: Array<{ lat: number; lng: number }>,
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+  keepLeft: boolean
+): Array<{ lat: number; lng: number }> {
+  if (ring.length < 3) return [];
+  const out: Array<{ lat: number; lng: number }> = [];
+  for (let i = 0; i < ring.length; i++) {
+    const s = ring[i];
+    const e = ring[(i + 1) % ring.length];
+    const ds = signedDistanceToLine(s, a, b);
+    const de = signedDistanceToLine(e, a, b);
+    const inS = keepLeft ? ds >= 0 : ds <= 0;
+    const inE = keepLeft ? de >= 0 : de <= 0;
+    if (inS && inE) {
+      out.push(e);
+    } else if (inS && !inE) {
+      out.push(intersectSegmentWithLine(s, e, a, b));
+    } else if (!inS && inE) {
+      out.push(intersectSegmentWithLine(s, e, a, b), e);
+    }
+  }
+  return out.length >= 3 ? out : [];
+}
+
 type Props = {
   corridors: AdminCorridorMapItem[];
   visibility: CorridorLayerVisibility;
@@ -132,6 +184,10 @@ type Props = {
   drawTarget?: ZoneMeta | null;
   /** Si está definido, solo esa ciudad (id) se habilita para edición. */
   editCityId?: string | null;
+  /** Habilita corte por línea para ciudad seleccionada. */
+  splitLineMode?: boolean;
+  /** Lado que se conserva al cortar (el otro se elimina). */
+  splitKeepSide?: 'left' | 'right';
   height?: string;
   className?: string;
 };
@@ -158,6 +214,8 @@ export default function AdminCorridorsMap({
   corridorZonesOutlineOnly = true,
   drawTarget = null,
   editCityId = null,
+  splitLineMode = false,
+  splitKeepSide = 'left',
   height = 'min(52vh, 480px)',
   className = '',
 }: Props) {
@@ -166,6 +224,13 @@ export default function AdminCorridorsMap({
   const overlayRef = useRef<L.LayerGroup | null>(null);
   const onZoneEditedRef = useRef(onZoneEdited);
   const hasAutoFramedRef = useRef(false);
+  const splitContextRef = useRef<{
+    corridorId: string;
+    kind: 'origin' | 'destination';
+    cityId: string;
+    cityPolysAll: CityPolygon[];
+    currentRing: Array<{ lat: number; lng: number }>;
+  } | null>(null);
   onZoneEditedRef.current = onZoneEdited;
 
   useEffect(() => {
@@ -178,18 +243,75 @@ export default function AdminCorridorsMap({
     overlayRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
-    // Edición manual desactivada: la delimitación pasa por importación automática de ciudades.
-    (map as MapWithPm).pm?.removeControls();
+    const mpm = (map as MapWithPm).pm;
+    mpm?.removeControls();
+    if (splitLineMode) {
+      mpm?.addControls({
+        position: 'topleft',
+        drawPolyline: true,
+        drawPolygon: false,
+        drawRectangle: false,
+        drawCircle: false,
+        drawCircleMarker: false,
+        drawMarker: false,
+        drawText: false,
+        cutPolygon: false,
+        dragMode: false,
+        rotateMode: false,
+        editMode: false,
+        removalMode: false,
+      });
+    }
+
+    const onCreate = (e: L.LeafletEvent & { layer?: L.Layer }) => {
+      const layer = e.layer;
+      if (!(layer instanceof L.Polyline)) return;
+      const line = layer as PmPolyline;
+      const latlngs = line.getLatLngs() as L.LatLng[];
+      line.remove();
+      if (!splitLineMode || latlngs.length < 2) return;
+      const ctx = splitContextRef.current;
+      if (!ctx) {
+        window.alert('Seleccioná corredor, zona y ciudad antes de cortar.');
+        return;
+      }
+      const a = { lat: latlngs[0].lat, lng: latlngs[0].lng };
+      const b = { lat: latlngs[latlngs.length - 1].lat, lng: latlngs[latlngs.length - 1].lng };
+      const left = clipPolygonByHalfPlane(ctx.currentRing, a, b, true);
+      const right = clipPolygonByHalfPlane(ctx.currentRing, a, b, false);
+      if (left.length < 3 || right.length < 3) {
+        window.alert('La línea no divide la ciudad en dos partes válidas.');
+        return;
+      }
+      const keep = splitKeepSide === 'left' ? left : right;
+      const nextAll = ctx.cityPolysAll.map((cp) =>
+        cp.id === ctx.cityId ? { ...cp, polygon_latlng: keep } : cp
+      );
+      const bbox = bboxFromCityPolygons(nextAll);
+      if (!bbox) return;
+      onZoneEditedRef.current(ctx.corridorId, ctx.kind, {
+        ...bbox,
+        city_polygons: nextAll.map((cp) => ({
+          id: cp.id,
+          name: cp.name,
+          active: cp.active,
+          polygon_latlng: cp.polygon_latlng,
+        })),
+      });
+    };
+    map.on('pm:create', onCreate);
 
     const t = setTimeout(() => map.invalidateSize(), 200);
     return () => {
       clearTimeout(t);
       (map as MapWithPm).pm?.disableGlobalEditMode();
+      map.off('pm:create', onCreate);
+      (map as MapWithPm).pm?.removeControls();
       map.remove();
       mapRef.current = null;
       overlayRef.current = null;
     };
-  }, []);
+  }, [splitKeepSide, splitLineMode]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -310,6 +432,13 @@ export default function AdminCorridorsMap({
             )}<br/>Zona automática de ciudad (Central).</span>`
           );
           if (canEdit && city && (border as PmPolygon).pm) {
+            splitContextRef.current = {
+              corridorId: c.id,
+              kind,
+              cityId: city.id,
+              cityPolysAll,
+              currentRing: ring,
+            };
             (border as PmPolygon).pm?.enable({
               preventMarkerRemoval: true,
               snappable: true,
@@ -409,6 +538,8 @@ export default function AdminCorridorsMap({
     corridorZonesOutlineOnly,
     drawTarget,
     editCityId,
+    splitLineMode,
+    splitKeepSide,
   ]);
 
   const hasCorridors = corridors.length > 0;

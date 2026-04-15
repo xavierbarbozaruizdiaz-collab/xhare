@@ -186,6 +186,8 @@ export default function AdminCorridorsPage() {
   const [drawCorridorId, setDrawCorridorId] = useState<string>('');
   const [drawKind, setDrawKind] = useState<DrawKind>('origin');
   const [editCityId, setEditCityId] = useState<string>('');
+  const [splitLineMode, setSplitLineMode] = useState(false);
+  const [splitKeepSide, setSplitKeepSide] = useState<'left' | 'right'>('left');
   const [importingCentral, setImportingCentral] = useState(false);
   const [simplifyingCity, setSimplifyingCity] = useState(false);
 
@@ -710,6 +712,27 @@ export default function AdminCorridorsPage() {
                 Simplificar fuerte
               </button>
             </div>
+            <label className="inline-flex items-center gap-2 text-sm text-violet-950 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={splitLineMode}
+                onChange={(e) => setSplitLineMode(e.target.checked)}
+                disabled={!editCityId}
+              />
+              Cortar por línea
+            </label>
+            <div>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Al cortar, conservar</label>
+              <select
+                value={splitKeepSide}
+                onChange={(e) => setSplitKeepSide(e.target.value as 'left' | 'right')}
+                className="border border-violet-300 rounded-lg px-2 py-1 text-sm"
+                disabled={!splitLineMode}
+              >
+                <option value="left">Lado izquierdo de la línea</option>
+                <option value="right">Lado derecho de la línea</option>
+              </select>
+            </div>
             {showDemandTubes && !tubesLoading && tubesMeta !== null && (
               <span className="text-xs text-violet-800">
                 Grupos en rango: {tubesMeta.groupsInRange} · Tubos dibujados: {tubesMeta.tubesDrawn}
@@ -749,6 +772,11 @@ export default function AdminCorridorsPage() {
             <span className="text-[11px] text-gray-500">
               En modo solo bordes se muestra solo el contorno de ciudad (sin dibujar la malla interna).
             </span>
+            {splitLineMode && (
+              <span className="text-[11px] text-indigo-700">
+                Modo corte activo: dibujá una línea de borde a borde para eliminar una de las partes.
+              </span>
+            )}
             <span className="inline-flex items-center gap-1.5">
               <span className="inline-block w-4 h-3 rounded border border-violet-700 bg-violet-400/40" /> Tubo sync
             </span>
@@ -772,6 +800,8 @@ export default function AdminCorridorsPage() {
             corridorZonesOutlineOnly={corridorOutlineOnly}
             drawTarget={drawCorridorId ? { corridorId: drawCorridorId, kind: drawKind } : null}
             editCityId={editCityId || null}
+            splitLineMode={splitLineMode}
+            splitKeepSide={splitKeepSide}
           />
         </div>
       )}
