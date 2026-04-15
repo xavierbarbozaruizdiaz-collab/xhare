@@ -7,7 +7,13 @@ export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-demand-grouping-execute';
 
-type Body = { mode?: 'both' | 'classified' | 'geo' };
+type Body = {
+  mode?: 'both' | 'classified' | 'geo';
+  maxSeats?: number;
+  minScore?: number;
+  maxOriginKm?: number;
+  maxDestKm?: number;
+};
 
 /**
  * POST /api/admin/demand-grouping/execute
@@ -24,23 +30,46 @@ export async function POST(request: NextRequest) {
         body = {};
       }
       const mode = body.mode === 'classified' || body.mode === 'geo' ? body.mode : 'both';
+      const maxSeats = Number.isFinite(body.maxSeats as number) ? Math.max(1, Math.floor(body.maxSeats as number)) : 15;
+      const minScore = Number.isFinite(body.minScore as number) ? Math.max(0, Math.min(0.99, Number(body.minScore))) : 0.55;
+      const maxOriginKm = Number.isFinite(body.maxOriginKm as number) ? Math.max(0.05, Number(body.maxOriginKm)) : 8;
+      const maxDestKm = Number.isFinite(body.maxDestKm as number) ? Math.max(0.05, Number(body.maxDestKm)) : 8;
 
       const service = createServiceClient();
       const steps: Array<{ name: string; status: number; body: unknown }> = [];
 
       if (mode === 'both' || mode === 'classified') {
-        const { data, error } = await service.rpc('auto_group_classified_trip_requests', {
-          p_max_seats: 15,
+        const { data, error } = await service.rpc('auto_group_classified_trip_requests_v2', {
+          p_max_seats: maxSeats,
+          p_min_score: minScore,
+          p_max_origin_km: maxOriginKm,
+          p_max_dest_km: maxDestKm,
         });
         if (error) {
-          steps.push({
-            name: 'auto_group_classified_trip_requests',
-            status: 500,
-            body: { error: error.message, code: error.code },
+          const { data: fbData, error: fbErr } = await service.rpc('auto_group_classified_trip_requests', {
+            p_max_seats: maxSeats,
           });
+          if (fbErr) {
+            steps.push({
+              name: 'auto_group_classified_trip_requests_v2',
+              status: 500,
+              body: {
+                error: error.message,
+                code: error.code,
+                fallback_error: fbErr.message,
+                hint: 'Aplicá migración 075 para motor scored v2.',
+              },
+            });
+          } else {
+            steps.push({
+              name: 'auto_group_classified_trip_requests (fallback_v1)',
+              status: 200,
+              body: fbData ?? { ok: true, fallback: true },
+            });
+          }
         } else {
           steps.push({
-            name: 'auto_group_classified_trip_requests',
+            name: 'auto_group_classified_trip_requests_v2',
             status: 200,
             body: data ?? { ok: true },
           });
@@ -76,6 +105,7 @@ export async function POST(request: NextRequest) {
         ranAt: new Date().toISOString(),
         mode,
         engine: 'in_process_service_role',
+        params: { maxSeats, minScore, maxOriginKm, maxDestKm },
         steps,
         hint:
           'Ya no se reenvía HTTP al propio deploy: admin validado aquí y luego service role (igual que los endpoints originales tras auth).',

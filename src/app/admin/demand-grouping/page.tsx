@@ -17,6 +17,10 @@ export default function AdminDemandGroupingPage() {
   const [dryRunLoading, setDryRunLoading] = useState(false);
   const [dryRunErr, setDryRunErr] = useState<string | null>(null);
   const [lastDryRun, setLastDryRun] = useState<unknown>(null);
+  const [maxSeats, setMaxSeats] = useState(15);
+  const [minScore, setMinScore] = useState(0.55);
+  const [maxOriginKm, setMaxOriginKm] = useState(8);
+  const [maxDestKm, setMaxDestKm] = useState(8);
   /** GET diagnostics?explain=1 — muestras geo (motivos) + classified listos para RPC. */
   const [includeExplain, setIncludeExplain] = useState(false);
 
@@ -76,7 +80,7 @@ export default function AdminDemandGroupingPage() {
         method: 'POST',
         credentials: 'include',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+          body: JSON.stringify({ maxSeats, minScore, maxOriginKm, maxDestKm }),
       });
       if (res.status === 401) {
         token = (await refetch()) ?? '';
@@ -88,7 +92,7 @@ export default function AdminDemandGroupingPage() {
               Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({}),
+            body: JSON.stringify({ maxSeats, minScore, maxOriginKm, maxDestKm }),
           });
         }
       }
@@ -117,7 +121,7 @@ export default function AdminDemandGroupingPage() {
         method: 'POST',
         credentials: 'include',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, maxSeats, minScore, maxOriginKm, maxDestKm }),
       });
       if (res.status === 401) {
         token = (await refetch()) ?? '';
@@ -129,7 +133,7 @@ export default function AdminDemandGroupingPage() {
               Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ mode }),
+            body: JSON.stringify({ mode, maxSeats, minScore, maxOriginKm, maxDestKm }),
           });
         }
       }
@@ -236,6 +240,53 @@ export default function AdminDemandGroupingPage() {
           <strong>auto-group-classified</strong>, luego <strong>sync geo</strong>.
         </p>
         {runErr && <p className="text-sm text-red-700 mb-2">{runErr}</p>}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <label className="text-xs text-gray-700">
+            Max seats
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={maxSeats}
+              onChange={(e) => setMaxSeats(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+              className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="text-xs text-gray-700">
+            Min score (0-0.99)
+            <input
+              type="number"
+              min={0}
+              max={0.99}
+              step={0.01}
+              value={minScore}
+              onChange={(e) => setMinScore(Math.max(0, Math.min(0.99, Number(e.target.value) || 0)))}
+              className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="text-xs text-gray-700">
+            Max origen km
+            <input
+              type="number"
+              min={0.05}
+              step={0.1}
+              value={maxOriginKm}
+              onChange={(e) => setMaxOriginKm(Math.max(0.05, Number(e.target.value) || 0.05))}
+              className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="text-xs text-gray-700">
+            Max destino km
+            <input
+              type="number"
+              min={0.05}
+              step={0.1}
+              value={maxDestKm}
+              onChange={(e) => setMaxDestKm(Math.max(0.05, Number(e.target.value) || 0.05))}
+              className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm"
+            />
+          </label>
+        </div>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"

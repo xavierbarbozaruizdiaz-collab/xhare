@@ -55,6 +55,16 @@ export async function POST(request: NextRequest) {
   return withAdminAuth(request, async () => {
     try {
       const service = createServiceClient();
+      let reqBody: Record<string, unknown> = {};
+      try {
+        reqBody = (await request.json()) as Record<string, unknown>;
+      } catch {
+        reqBody = {};
+      }
+      const maxSeats = Number.isFinite(reqBody.maxSeats as number) ? Math.max(1, Math.floor(reqBody.maxSeats as number)) : 15;
+      const minScore = Number.isFinite(reqBody.minScore as number) ? Math.max(0, Math.min(0.99, Number(reqBody.minScore))) : 0.55;
+      const maxOriginKm = Number.isFinite(reqBody.maxOriginKm as number) ? Math.max(0.05, Number(reqBody.maxOriginKm)) : 8;
+      const maxDestKm = Number.isFinite(reqBody.maxDestKm as number) ? Math.max(0.05, Number(reqBody.maxDestKm)) : 8;
       const geo = await runDemandRoutesGeoSync(service, { dryRun: true });
       if (!geo.ok) {
         return NextResponse.json({ error: geo.error }, { status: 500 });
@@ -62,17 +72,39 @@ export async function POST(request: NextRequest) {
 
       const capped = geo.planned ? capPlanned(geo.planned) : null;
 
-      const { data: classifiedRaw, error: classifiedErr } = await service.rpc(
-        'auto_group_classified_trip_requests_preview',
-        { p_max_seats: 15 }
-      );
+      let classifiedRaw: unknown = null;
+      let classifiedErr: { message: string } | null = null;
+      {
+        const v2 = await service.rpc('auto_group_classified_trip_requests_preview_v2', {
+          p_max_seats: maxSeats,
+          p_min_score: minScore,
+          p_max_origin_km: maxOriginKm,
+          p_max_dest_km: maxDestKm,
+        });
+        if (!v2.error) {
+          classifiedRaw = v2.data;
+        } else {
+          const v1 = await service.rpc('auto_group_classified_trip_requests_preview', {
+            p_max_seats: maxSeats,
+          });
+          classifiedRaw = v1.data;
+          classifiedErr = v1.error ? { message: `${v2.error.message}; fallback_v1: ${v1.error.message}` } : null;
+          if (!v1.error && v2.error) {
+            (classifiedRaw as Record<string, unknown>) = {
+              ...(classifiedRaw as Record<string, unknown>),
+              engine: 'fallback_v1',
+              hint: 'Aplicá migración 075 para preview scored v2.',
+            };
+          }
+        }
+      }
 
       let classified: Record<string, unknown>;
       if (classifiedErr) {
         classified = {
           dry_run_available: false,
           error: classifiedErr.message,
-          hint: 'Aplicá en Supabase la migración 070_auto_group_classified_trip_requests_preview.sql para habilitar el preview del RPC classified.',
+          hint: 'Aplicá migraciones 070 y 075 para preview classified v2 completo.',
         };
       } else {
         const cappedCls = capClassifiedPreview(classifiedRaw);
@@ -87,6 +119,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         ok: true,
         ranAt: new Date().toISOString(),
+        params: { maxSeats, minScore, maxOriginKm, maxDestKm },
         geo: {
           ...geo,
           ...(capped ? { planned: capped.planned, planned_truncated: capped.truncated } : {}),
