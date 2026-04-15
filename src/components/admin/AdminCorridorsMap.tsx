@@ -10,6 +10,8 @@ import { DEMAND_SYNC_CORRIDOR_METERS, tubePolygonFromPolyline } from '@/lib/poly
 import {
   boundsToBox,
   boundsToContainingFlatTopHex,
+  DEFAULT_CORRIDOR_HEX_EDGE_M,
+  hexGridCellsInPolygon,
   hexRingToLeafletLatLngs,
   leafletRingToHexLatLngs,
   parseHexLatlngFromZone,
@@ -89,6 +91,10 @@ type Props = {
   /** Grupos de demanda con `base_polyline` (mismo criterio de tubo que sync ~2 km). */
   demandTubes?: DemandTubeLayer[];
   showDemandTubes?: boolean;
+  /** Lado aproximado de cada celda hexagonal de vista (~150 m). */
+  corridorHexCellEdgeM?: number;
+  /** Si true: celdas y zona macro sin relleno (solo contornos, estilo referencia móvil). */
+  corridorZonesOutlineOnly?: boolean;
   height?: string;
   className?: string;
 };
@@ -111,6 +117,8 @@ export default function AdminCorridorsMap({
   onZoneEdited,
   demandTubes = [],
   showDemandTubes = false,
+  corridorHexCellEdgeM = DEFAULT_CORRIDOR_HEX_EDGE_M,
+  corridorZonesOutlineOnly = false,
   height = 'min(52vh, 480px)',
   className = '',
 }: Props) {
@@ -210,45 +218,88 @@ export default function AdminCorridorsMap({
       const active = c.is_active;
       const oB = zoneToBounds(c.origin_zone);
       const dB = zoneToBounds(c.destination_zone);
-      const baseOpts = active
-        ? { fillOpacity: 0.22, weight: 2 }
-        : { fillOpacity: 0.08, weight: 1, dashArray: '6 6' as const };
+      const macroFill = corridorZonesOutlineOnly ? 0 : active ? 0.18 : 0.06;
+      const macroWeight = corridorZonesOutlineOnly ? 2.5 : active ? 2 : 1;
+      const macroDash =
+        !active && corridorZonesOutlineOnly
+          ? ('5 5' as const)
+          : !active && !corridorZonesOutlineOnly
+            ? ('6 6' as const)
+            : undefined;
+
+      const cellFill = corridorZonesOutlineOnly ? 0 : active ? 0.1 : 0.04;
+      const cellWeight = corridorZonesOutlineOnly ? 1.5 : 1;
 
       const attachHex = (poly: L.Polygon, meta: ZoneMeta, title: string) => {
         (poly as PmPolygon).pm?.enable({ preventMarkerRemoval: true });
         poly.bindPopup(
-          `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(title)}<br/>Arrastrá los vértices del hexágono para ajustar la zona.</span>`
+          `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(title)}<br/>Arrastrá los vértices del contorno para ajustar la zona (la malla fina es solo referencia visual).</span>`
         );
         poly.on('pm:update', () => {
           scheduleCommit(meta, poly);
         });
       };
 
-      if (oB && showOrigin) {
-        const stored = parseHexLatlngFromZone(c.origin_zone);
-        const ring = stored ?? boundsToContainingFlatTopHex(oB);
+      const drawMacroWithGrid = (
+        zone: Record<string, unknown>,
+        bounds: L.LatLngBounds,
+        show: boolean,
+        meta: ZoneMeta,
+        title: string,
+        stroke: string,
+        fill: string
+      ) => {
+        if (!show) return;
+        const stored = parseHexLatlngFromZone(zone);
+        const ring = stored ?? boundsToContainingFlatTopHex(bounds);
+        const { cells, effectiveEdgeM, capped } = hexGridCellsInPolygon(ring, corridorHexCellEdgeM);
+        const cellHint = capped
+          ? ` · malla ${Math.round(effectiveEdgeM)} m (tope ${cells.length} celdas)`
+          : ` · malla ~${Math.round(effectiveEdgeM)} m (${cells.length} celdas)`;
+        for (const cell of cells) {
+          L.polygon(hexRingToLeafletLatLngs(cell), {
+            color: stroke,
+            fillColor: fill,
+            fillOpacity: cellFill,
+            weight: cellWeight,
+            opacity: 1,
+            pmIgnore: true,
+          } as PathOptsPm).addTo(group);
+        }
         const poly = L.polygon(hexRingToLeafletLatLngs(ring), {
-          color: '#0369a1',
-          fillColor: '#0284c7',
-          ...baseOpts,
+          color: stroke,
+          fillColor: fill,
+          fillOpacity: macroFill,
+          weight: macroWeight,
+          ...(macroDash ? { dashArray: macroDash } : {}),
         }).addTo(group);
-        attachHex(poly, { corridorId: c.id, kind: 'origin' }, `Origen · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`);
+        attachHex(poly, meta, `${title}${cellHint}`);
         for (const p of ring) {
           allCorners.push(L.latLng(p.lat, p.lng));
         }
+      };
+
+      if (oB) {
+        drawMacroWithGrid(
+          c.origin_zone,
+          oB,
+          showOrigin,
+          { corridorId: c.id, kind: 'origin' },
+          `Origen · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`,
+          '#0369a1',
+          '#0284c7'
+        );
       }
-      if (dB && showDest) {
-        const stored = parseHexLatlngFromZone(c.destination_zone);
-        const ring = stored ?? boundsToContainingFlatTopHex(dB);
-        const poly = L.polygon(hexRingToLeafletLatLngs(ring), {
-          color: '#c2410c',
-          fillColor: '#ea580c',
-          ...baseOpts,
-        }).addTo(group);
-        attachHex(poly, { corridorId: c.id, kind: 'destination' }, `Destino · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`);
-        for (const p of ring) {
-          allCorners.push(L.latLng(p.lat, p.lng));
-        }
+      if (dB) {
+        drawMacroWithGrid(
+          c.destination_zone,
+          dB,
+          showDest,
+          { corridorId: c.id, kind: 'destination' },
+          `Destino · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`,
+          '#c2410c',
+          '#ea580c'
+        );
       }
     }
 
@@ -266,7 +317,15 @@ export default function AdminCorridorsMap({
 
     const inv = window.setTimeout(() => map.invalidateSize(), 100);
     return () => clearTimeout(inv);
-  }, [corridors, visibility, scheduleCommit, demandTubes, showDemandTubes]);
+  }, [
+    corridors,
+    visibility,
+    scheduleCommit,
+    demandTubes,
+    showDemandTubes,
+    corridorHexCellEdgeM,
+    corridorZonesOutlineOnly,
+  ]);
 
   const hasCorridors = corridors.length > 0;
   const hasTubes = showDemandTubes && (demandTubes?.length ?? 0) > 0;
@@ -277,8 +336,9 @@ export default function AdminCorridorsMap({
       <p className="text-xs text-gray-600">
         <span className="text-violet-900 font-medium">Violeta</span>: tubo aproximado del mismo radio que usa el{' '}
         <strong>sync geográfico</strong> (2 km al eje de la polilínea del grupo).{' '}
-        <span className="text-sky-900 font-medium">Azul / naranja</span>: hexágonos de corredor (editables). Los tubos
-        no se editan acá.
+        <span className="text-sky-900 font-medium">Azul / naranja</span>: contorno editable + malla hexagonal de
+        referencia (~{Math.round(corridorHexCellEdgeM)} m por celda; la clasificación sigue el contorno guardado). Los
+        tubos no se editan acá.
       </p>
       <div
         className={`relative w-full z-0 rounded-xl overflow-hidden border border-gray-200 ${className}`}

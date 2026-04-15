@@ -68,6 +68,7 @@ export default function AdminCorridorsPage() {
     tubesDrawn: number;
     axisFallback: number;
   } | null>(null);
+  const [corridorOutlineOnly, setCorridorOutlineOnly] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -169,6 +170,16 @@ export default function AdminCorridorsPage() {
     if (!ready || !isAdmin) return;
     void loadTubes();
   }, [ready, isAdmin, loadTubes]);
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && localStorage.getItem('admin:corridors:outlineOnly') === '1') {
+        setCorridorOutlineOnly(true);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     setVisibility((prev) => {
@@ -338,10 +349,10 @@ export default function AdminCorridorsPage() {
         <div className="mb-8 space-y-3">
           <h2 className="text-lg font-semibold text-gray-900">Vista en mapa</h2>
           <p className="text-sm text-gray-600">
-            Rectángulos <span className="font-medium text-sky-800">azul</span> = zona donde debe caer el{' '}
-            <strong>origen</strong> del pedido; <span className="font-medium text-orange-800">naranja</span> = zona del{' '}
-            <strong>destino</strong>. Si las dos cajas son iguales (viaje local), se superponen: usá las casillas de
-            capas en la tabla para aislar origen o destino.
+            Contorno <span className="font-medium text-sky-800">azul</span> = zona de <strong>origen</strong>;{' '}
+            <span className="font-medium text-orange-800">naranja</span> = zona de <strong>destino</strong>. La malla
+            fina (~150 m por celda) es referencia visual del tamaño de hexágono acordado. Si las zonas se superponen,
+            usá las casillas de capas en la tabla.
           </p>
           <div className="flex flex-wrap items-end gap-4 p-3 bg-violet-50/80 border border-violet-200 rounded-xl">
             <label className="inline-flex items-center gap-2 text-sm text-violet-950 cursor-pointer">
@@ -399,7 +410,23 @@ export default function AdminCorridorsPage() {
           {tubesErr && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{tubesErr}</div>
           )}
-          <div className="flex flex-wrap gap-4 text-xs text-gray-600 mb-1">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-600 mb-1">
+            <label className="inline-flex items-center gap-2 cursor-pointer text-gray-800 font-medium">
+              <input
+                type="checkbox"
+                checked={corridorOutlineOnly}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setCorridorOutlineOnly(on);
+                  try {
+                    localStorage.setItem('admin:corridors:outlineOnly', on ? '1' : '0');
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
+              Solo bordes (sin relleno)
+            </label>
             <span className="inline-flex items-center gap-1.5">
               <span className="inline-block w-4 h-3 rounded border border-violet-700 bg-violet-400/40" /> Tubo sync
             </span>
@@ -420,6 +447,7 @@ export default function AdminCorridorsPage() {
             onZoneEdited={patchZone}
             demandTubes={demandTubes}
             showDemandTubes={showDemandTubes}
+            corridorZonesOutlineOnly={corridorOutlineOnly}
           />
         </div>
       )}
