@@ -93,6 +93,14 @@ export async function GET(request: NextRequest) {
         .from('demand_route_members')
         .select('*', { count: 'exact', head: true });
 
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      const weekAgoYmd = weekAgo.toISOString().slice(0, 10);
+      const { count: groupsLast7d } = await service
+        .from('demand_route_groups')
+        .select('*', { count: 'exact', head: true })
+        .gte('requested_date', weekAgoYmd);
+
       let unassignedGeoSample = 0;
       let unassignedGeoSampleCap = 0;
       if (geoEligibleHead != null && geoEligibleHead > 0 && !geoEligibleErr) {
@@ -149,6 +157,7 @@ export async function GET(request: NextRequest) {
         classifiedPipelineError: classifiedReadyErr,
         classifiedButPendingNoCorridorCount: classifiedPendingNoCorridor,
         demandRouteGroupsTotal: groupsTotal ?? null,
+        demandRouteGroupsRequestedDateGte7d: groupsLast7d ?? null,
         demandRouteMembersTotal: membersTotal ?? null,
         notes,
       });

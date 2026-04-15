@@ -112,8 +112,8 @@ export default function AdminDemandGroupingPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Agrupación de demanda</h1>
         <p className="text-sm text-gray-600 mt-1 max-w-3xl">
-          Fase 1: diagnóstico en vivo y ejecución de los mismos procesos que ya existen (sin “humo”: ves conteos antes/después y la
-          respuesta HTTP de cada paso). Esto no cambia la lógica de matching; solo la hace visible y reproducible desde admin.
+          Fase 1–2: diagnóstico en vivo y ejecución <strong>en proceso</strong> (service role tras validar admin): mismo RPC y mismo
+          sync geo que antes, sin depender de un HTTP interno al deploy. Ves conteos antes/después y el resultado de cada paso.
         </p>
       </div>
 

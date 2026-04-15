@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createServiceClient } from '@/lib/supabase/server';
+import { runDemandRoutesGeoSync } from '@/lib/demand-routes-geo-sync';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
@@ -7,44 +9,10 @@ const BLOCK = 'admin-demand-grouping-execute';
 
 type Body = { mode?: 'both' | 'classified' | 'geo' };
 
-function baseUrlFromRequest(request: NextRequest): string {
-  const host = request.headers.get('host');
-  if (!host) return 'http://localhost:3000';
-  const proto = request.headers.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
-  return `${proto}://${host}`;
-}
-
-async function forwardPost(
-  request: NextRequest,
-  path: string
-): Promise<{ path: string; status: number; body: unknown; text: string }> {
-  const base = baseUrlFromRequest(request);
-  const url = `${base}${path}`;
-  const cookie = request.headers.get('cookie') ?? '';
-  const authorization = request.headers.get('authorization') ?? '';
-  const headers: Record<string, string> = {};
-  if (cookie) headers.Cookie = cookie;
-  if (authorization) headers.Authorization = authorization;
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    cache: 'no-store',
-  });
-  const text = await res.text();
-  let body: unknown = text;
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    body = { raw: text.slice(0, 2000) };
-  }
-  return { path, status: res.status, body, text };
-}
-
 /**
  * POST /api/admin/demand-grouping/execute
  * body: { mode: "both" | "classified" | "geo" }
- * Reenvía la sesión admin al mismo host: ejecuta los endpoints existentes (sin duplicar lógica).
+ * Orquestación en proceso (sin fetch al propio host): service role + mismas operaciones que los endpoints públicos.
  */
 export async function POST(request: NextRequest) {
   return withAdminAuth(request, async (req, _user) => {
@@ -57,13 +25,49 @@ export async function POST(request: NextRequest) {
       }
       const mode = body.mode === 'classified' || body.mode === 'geo' ? body.mode : 'both';
 
-      const steps: Array<{ path: string; status: number; body: unknown }> = [];
+      const service = createServiceClient();
+      const steps: Array<{ name: string; status: number; body: unknown }> = [];
 
       if (mode === 'both' || mode === 'classified') {
-        steps.push(await forwardPost(req, '/api/demand-routes/auto-group-classified'));
+        const { data, error } = await service.rpc('auto_group_classified_trip_requests', {
+          p_max_seats: 15,
+        });
+        if (error) {
+          steps.push({
+            name: 'auto_group_classified_trip_requests',
+            status: 500,
+            body: { error: error.message, code: error.code },
+          });
+        } else {
+          steps.push({
+            name: 'auto_group_classified_trip_requests',
+            status: 200,
+            body: data ?? { ok: true },
+          });
+        }
       }
+
       if (mode === 'both' || mode === 'geo') {
-        steps.push(await forwardPost(req, '/api/demand-routes/sync'));
+        const geo = await runDemandRoutesGeoSync(service);
+        if (!geo.ok) {
+          steps.push({
+            name: 'demand_routes_geo_sync',
+            status: 500,
+            body: { error: geo.error },
+          });
+        } else {
+          steps.push({
+            name: 'demand_routes_geo_sync',
+            status: 200,
+            body: {
+              ok: true,
+              processed: geo.processed,
+              addedToExisting: geo.addedToExisting,
+              newGroupsCreated: geo.newGroupsCreated,
+              ...(geo.message ? { message: geo.message } : {}),
+            },
+          });
+        }
       }
 
       logBlockOk(BLOCK);
@@ -71,9 +75,10 @@ export async function POST(request: NextRequest) {
         ok: true,
         ranAt: new Date().toISOString(),
         mode,
+        engine: 'in_process_service_role',
         steps,
         hint:
-          'Si ves 401, la sesión expiró: recargá el admin o cerrá sesión y volvé a entrar. Los endpoints exigen usuario admin o conductor (mismo criterio que antes).',
+          'Ya no se reenvía HTTP al propio deploy: admin validado aquí y luego service role (igual que los endpoints originales tras auth).',
       });
     } catch (e) {
       logBlockError(BLOCK, e instanceof Error ? e.message : 'unknown', e);
