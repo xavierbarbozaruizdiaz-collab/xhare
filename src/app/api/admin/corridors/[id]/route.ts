@@ -7,11 +7,18 @@ export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-corridors-patch';
 
+const hexPointSchema = z.object({
+  lat: z.number().finite(),
+  lng: z.number().finite(),
+});
+
 const zoneSchema = z.object({
   minLat: z.number().finite(),
   maxLat: z.number().finite(),
   minLng: z.number().finite(),
   maxLng: z.number().finite(),
+  /** Si viene, la clasificación usa PostGIS `ST_Covers` sobre el polígono (6 vértices). */
+  hex_latlng: z.array(hexPointSchema).length(6).optional(),
 });
 
 const bodySchema = z
@@ -35,13 +42,17 @@ function assertZoneReasonable(box: z.infer<typeof zoneSchema>): string | null {
   return null;
 }
 
-function zoneToJson(box: z.infer<typeof zoneSchema>): Record<string, number> {
-  return {
+function zoneToJson(box: z.infer<typeof zoneSchema>): Record<string, unknown> {
+  const out: Record<string, unknown> = {
     minLat: box.minLat,
     maxLat: box.maxLat,
     minLng: box.minLng,
     maxLng: box.maxLng,
   };
+  if (box.hex_latlng && box.hex_latlng.length === 6) {
+    out.hex_latlng = box.hex_latlng.map((p) => ({ lat: p.lat, lng: p.lng }));
+  }
+  return out;
 }
 
 /**
@@ -95,12 +106,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
         return NextResponse.json({ error: 'Corredor no encontrado' }, { status: 404 });
       }
 
-      const nextOrigin = parsed.data.origin_zone
-        ? zoneToJson(parsed.data.origin_zone)
-        : (row.origin_zone as Record<string, number>);
-      const nextDest = parsed.data.destination_zone
-        ? zoneToJson(parsed.data.destination_zone)
-        : (row.destination_zone as Record<string, number>);
+      const prevO = row.origin_zone as Record<string, unknown>;
+      const prevD = row.destination_zone as Record<string, unknown>;
+      const nextOrigin = parsed.data.origin_zone ? zoneToJson(parsed.data.origin_zone) : prevO;
+      const nextDest = parsed.data.destination_zone ? zoneToJson(parsed.data.destination_zone) : prevD;
 
       const { data: updated, error: upErr } = await svc
         .from('corridors')

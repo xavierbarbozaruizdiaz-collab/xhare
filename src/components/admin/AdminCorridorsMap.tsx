@@ -7,6 +7,13 @@ import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
 import type { Point } from '@/types';
 import { DEMAND_SYNC_CORRIDOR_METERS, tubePolygonFromPolyline } from '@/lib/polylineTube';
+import {
+  boundsToBox,
+  boundsToContainingFlatTopHex,
+  hexRingToLeafletLatLngs,
+  leafletRingToHexLatLngs,
+  parseHexLatlngFromZone,
+} from '@/lib/corridorZoneHex';
 
 export type AdminCorridorMapItem = {
   id: string;
@@ -27,6 +34,11 @@ export type CorridorZoneBox = {
   maxLng: number;
 };
 
+/** Payload al guardar una zona editada en el mapa (bbox + hexágono). */
+export type CorridorZoneEditPayload = CorridorZoneBox & {
+  hex_latlng: Array<{ lat: number; lng: number }>;
+};
+
 /** Polilínea base de un grupo `demand_route_groups` (sync geo) para el tubo visual. */
 export type DemandTubeLayer = {
   id: string;
@@ -38,9 +50,9 @@ export type DemandTubeLayer = {
   axis_fallback?: boolean;
 };
 
-type RectMeta = { corridorId: string; kind: 'origin' | 'destination' };
+type ZoneMeta = { corridorId: string; kind: 'origin' | 'destination' };
 
-type PmRectangle = L.Rectangle & { pm?: { enable: (opts?: Record<string, unknown>) => void } };
+type PmPolygon = L.Polygon & { pm?: { enable: (opts?: Record<string, unknown>) => void } };
 
 type PathOptsPm = L.PathOptions & { pmIgnore?: boolean };
 
@@ -70,21 +82,10 @@ function zoneToBounds(zone: Record<string, unknown>): L.LatLngBounds | null {
   return L.latLngBounds([minLat, minLng], [maxLat, maxLng]);
 }
 
-function boundsToBox(b: L.LatLngBounds): CorridorZoneBox {
-  const sw = b.getSouthWest();
-  const ne = b.getNorthEast();
-  return {
-    minLat: sw.lat,
-    maxLat: ne.lat,
-    minLng: sw.lng,
-    maxLng: ne.lng,
-  };
-}
-
 type Props = {
   corridors: AdminCorridorMapItem[];
   visibility: CorridorLayerVisibility;
-  onZoneEdited: (corridorId: string, kind: 'origin' | 'destination', box: CorridorZoneBox) => void;
+  onZoneEdited: (corridorId: string, kind: 'origin' | 'destination', payload: CorridorZoneEditPayload) => void;
   /** Grupos de demanda con `base_polyline` (mismo criterio de tubo que sync ~2 km). */
   demandTubes?: DemandTubeLayer[];
   showDemandTubes?: boolean;
@@ -102,7 +103,7 @@ type MapWithPm = L.Map & {
 };
 
 /**
- * Mapa OSM + Geoman: tubos violeta (grupos sync) bajo los rectángulos de corredor editables.
+ * Mapa OSM + Geoman: tubos violeta (grupos sync) bajo hexágonos de corredor editables (zona = bbox + `hex_latlng` en DB).
  */
 export default function AdminCorridorsMap({
   corridors,
@@ -120,12 +121,21 @@ export default function AdminCorridorsMap({
   const onZoneEditedRef = useRef(onZoneEdited);
   onZoneEditedRef.current = onZoneEdited;
 
-  const scheduleCommit = useCallback((meta: RectMeta, layer: L.Rectangle) => {
+  const scheduleCommit = useCallback((meta: ZoneMeta, layer: L.Polygon) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       debounceRef.current = null;
       const b = layer.getBounds();
-      onZoneEditedRef.current(meta.corridorId, meta.kind, boundsToBox(b));
+      const raw = layer.getLatLngs();
+      const ring0 = Array.isArray(raw[0]) ? (raw[0] as L.LatLng[]) : (raw as L.LatLng[]);
+      const hex = leafletRingToHexLatLngs(ring0);
+      const box = boundsToBox(b);
+      if (hex.length === 6) {
+        onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, hex_latlng: hex });
+      } else {
+        const fallback = boundsToContainingFlatTopHex(b);
+        onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, hex_latlng: fallback });
+      }
     }, 650);
   }, []);
 
@@ -204,33 +214,41 @@ export default function AdminCorridorsMap({
         ? { fillOpacity: 0.22, weight: 2 }
         : { fillOpacity: 0.08, weight: 1, dashArray: '6 6' as const };
 
-      const attach = (rect: L.Rectangle, meta: RectMeta, title: string) => {
-        (rect as PmRectangle).pm?.enable({ preventMarkerRemoval: true });
-        rect.bindPopup(
-          `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(title)}<br/>Arrastrá los vértices del borde para cambiar la caja.</span>`
+      const attachHex = (poly: L.Polygon, meta: ZoneMeta, title: string) => {
+        (poly as PmPolygon).pm?.enable({ preventMarkerRemoval: true });
+        poly.bindPopup(
+          `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(title)}<br/>Arrastrá los vértices del hexágono para ajustar la zona.</span>`
         );
-        rect.on('pm:update', () => {
-          scheduleCommit(meta, rect);
+        poly.on('pm:update', () => {
+          scheduleCommit(meta, poly);
         });
       };
 
       if (oB && showOrigin) {
-        const rect = L.rectangle(oB, {
+        const stored = parseHexLatlngFromZone(c.origin_zone);
+        const ring = stored ?? boundsToContainingFlatTopHex(oB);
+        const poly = L.polygon(hexRingToLeafletLatLngs(ring), {
           color: '#0369a1',
           fillColor: '#0284c7',
           ...baseOpts,
         }).addTo(group);
-        attach(rect, { corridorId: c.id, kind: 'origin' }, `Origen · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`);
-        allCorners.push(oB.getSouthWest(), oB.getNorthEast());
+        attachHex(poly, { corridorId: c.id, kind: 'origin' }, `Origen · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`);
+        for (const p of ring) {
+          allCorners.push(L.latLng(p.lat, p.lng));
+        }
       }
       if (dB && showDest) {
-        const rect = L.rectangle(dB, {
+        const stored = parseHexLatlngFromZone(c.destination_zone);
+        const ring = stored ?? boundsToContainingFlatTopHex(dB);
+        const poly = L.polygon(hexRingToLeafletLatLngs(ring), {
           color: '#c2410c',
           fillColor: '#ea580c',
           ...baseOpts,
         }).addTo(group);
-        attach(rect, { corridorId: c.id, kind: 'destination' }, `Destino · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`);
-        allCorners.push(dB.getSouthWest(), dB.getNorthEast());
+        attachHex(poly, { corridorId: c.id, kind: 'destination' }, `Destino · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`);
+        for (const p of ring) {
+          allCorners.push(L.latLng(p.lat, p.lng));
+        }
       }
     }
 
@@ -259,8 +277,8 @@ export default function AdminCorridorsMap({
       <p className="text-xs text-gray-600">
         <span className="text-violet-900 font-medium">Violeta</span>: tubo aproximado del mismo radio que usa el{' '}
         <strong>sync geográfico</strong> (2 km al eje de la polilínea del grupo).{' '}
-        <span className="text-sky-900 font-medium">Azul / naranja</span>: cajas de corredor (editables con los
-        vértices). Los tubos no se editan acá.
+        <span className="text-sky-900 font-medium">Azul / naranja</span>: hexágonos de corredor (editables). Los tubos
+        no se editan acá.
       </p>
       <div
         className={`relative w-full z-0 rounded-xl overflow-hidden border border-gray-200 ${className}`}

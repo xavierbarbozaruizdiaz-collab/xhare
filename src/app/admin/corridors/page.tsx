@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAdminAuth } from '../AdminAuthContext';
 import type {
   CorridorLayerVisibility,
-  CorridorZoneBox,
+  CorridorZoneEditPayload,
   DemandTubeLayer,
 } from '@/components/admin/AdminCorridorsMap';
 
@@ -184,7 +184,7 @@ export default function AdminCorridorsPage() {
   }, [rows]);
 
   const patchZone = useCallback(
-    async (corridorId: string, kind: 'origin' | 'destination', box: CorridorZoneBox) => {
+    async (corridorId: string, kind: 'origin' | 'destination', payload: CorridorZoneEditPayload) => {
       setSaveMsg(null);
       setSaveErr(null);
       setSaving(true);
@@ -194,7 +194,7 @@ export default function AdminCorridorsPage() {
         setSaving(false);
         return;
       }
-      const body = kind === 'origin' ? { origin_zone: box } : { destination_zone: box };
+      const body = kind === 'origin' ? { origin_zone: payload } : { destination_zone: payload };
       try {
         let res = await fetch(`/api/admin/corridors/${corridorId}`, {
           method: 'PATCH',
@@ -260,7 +260,7 @@ export default function AdminCorridorsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Corredores de demanda</h1>
           <p className="text-gray-600 text-sm mt-1 max-w-3xl">
-            Acá ves las <strong>cajas geográficas</strong> que el sistema usa para decidir si un pedido entra al flujo
+            Acá ves las <strong>zonas geográficas (hexágono)</strong> que el sistema usa para decidir si un pedido entra al flujo
             automático (clasificación → agrupación por corredor y franja de 15 minutos). Los pedidos que no caen en
             ningún corredor <strong>activo</strong> siguen existiendo, pero <strong>no</strong> pasan por ese camino.
           </p>
@@ -274,8 +274,8 @@ export default function AdminCorridorsPage() {
         <p className="font-semibold">Qué implica en la práctica</p>
         <ul className="list-disc pl-5 space-y-1 text-amber-900/95">
           <li>
-            Cada pedido nuevo se evalúa contra estos rectángulos: origen dentro de <strong>Zona origen</strong> y
-            destino dentro de <strong>Zona destino</strong> del mismo corredor.
+            Cada pedido nuevo se evalúa contra estas zonas: origen dentro de <strong>Zona origen</strong> y destino
+            dentro de <strong>Zona destino</strong> del mismo corredor (hexágono si está guardado; si no, bbox legacy).
           </li>
           <li>
             Si hay varios corredores que calzan, gana el de <strong>mayor prioridad</strong> (número más alto en la
@@ -286,13 +286,13 @@ export default function AdminCorridorsPage() {
             corredor; el horario se agrupa en bloques de <strong>15 minutos</strong> (Paraguay).
           </li>
           <li>
-            Podés <strong>redimensionar las cajas en el mapa</strong>; al soltar se guardan en la tabla{' '}
+            Podés <strong>editar los hexágonos en el mapa</strong>; al soltar se guardan en la tabla{' '}
             <code className="bg-amber-100/80 px-1 rounded text-xs">corridors</code>. Los pedidos ya guardados no se
             reclasifican solos: hace falta mantenimiento o nuevos inserts.
           </li>
           <li>
             Usá <strong>Capas</strong> en la tabla para mostrar u ocultar origen/destino cuando se superponen varias
-            cajas.
+            zonas.
           </li>
           <li>
             Los <strong>tubos violeta</strong> usan el mismo radio (~2 km al eje) que el sync geográfico de grupos. El
