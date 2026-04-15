@@ -286,26 +286,25 @@ export default function AdminCorridorsMap({
           const ring = rings[idx];
           const city = cityPolys[idx];
           const cityName = city?.name ?? 'Ciudad';
+          const canEdit =
+            !!drawTarget &&
+            drawTarget.corridorId === c.id &&
+            drawTarget.kind === kind &&
+            !!city;
           const border = L.polygon(hexRingToLeafletLatLngs(ring), {
             color: stroke,
             fillColor: fill,
             fillOpacity: macroFill,
             weight: macroWeight,
             ...(macroDash ? { dashArray: macroDash } : {}),
-            pmIgnore: true,
+            pmIgnore: !canEdit,
           } as PathOptsPm).addTo(group);
           border.bindPopup(
             `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(
               `${title} · ${cityName}${cellHint}`
             )}<br/>Zona automática de ciudad (Central).</span>`
           );
-          if (
-            drawTarget &&
-            drawTarget.corridorId === c.id &&
-            drawTarget.kind === kind &&
-            city &&
-            (border as PmPolygon).pm
-          ) {
+          if (canEdit && city && (border as PmPolygon).pm) {
             (border as PmPolygon).pm?.enable({
               preventMarkerRemoval: true,
               snappable: true,
