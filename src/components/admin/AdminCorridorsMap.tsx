@@ -8,6 +8,7 @@ import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
 import type { Point } from '@/types';
 import { DEMAND_SYNC_CORRIDOR_METERS, tubePolygonFromPolyline } from '@/lib/polylineTube';
 import {
+  type CityPolygon,
   DEFAULT_CORRIDOR_HEX_EDGE_M,
   hexGridCellsTouchingPolygonGlobal,
   hexRingToLeafletLatLngs,
@@ -37,6 +38,12 @@ export type CorridorZoneBox = {
 export type CorridorZoneEditPayload = CorridorZoneBox & {
   hex_latlng?: Array<{ lat: number; lng: number }>;
   polygon_latlng?: Array<{ lat: number; lng: number }>;
+  city_polygons?: Array<{
+    id: string;
+    name: string;
+    active: boolean;
+    polygon_latlng: Array<{ lat: number; lng: number }>;
+  }>;
 };
 
 /** Polilínea base de un grupo `demand_route_groups` (sync geo) para el tubo visual. */
@@ -80,6 +87,34 @@ function zoneToBounds(zone: Record<string, unknown>): L.LatLngBounds | null {
   const maxLng = n('maxLng');
   if (![minLat, maxLat, minLng, maxLng].every(Number.isFinite)) return null;
   return L.latLngBounds([minLat, minLng], [maxLat, maxLng]);
+}
+
+function polygonFromLeaflet(latlngsRaw: L.LatLng[] | L.LatLng[][]): Array<{ lat: number; lng: number }> {
+  const ring = Array.isArray(latlngsRaw[0]) ? (latlngsRaw[0] as L.LatLng[]) : (latlngsRaw as L.LatLng[]);
+  const out = ring.map((p) => ({ lat: p.lat, lng: p.lng }));
+  if (out.length >= 2) {
+    const a = out[0];
+    const b = out[out.length - 1];
+    if (a.lat === b.lat && a.lng === b.lng) out.pop();
+  }
+  return out.length >= 3 ? out : [];
+}
+
+function bboxFromCityPolygons(cities: CityPolygon[]): CorridorZoneBox | null {
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  for (const c of cities) {
+    for (const p of c.polygon_latlng) {
+      minLat = Math.min(minLat, p.lat);
+      maxLat = Math.max(maxLat, p.lat);
+      minLng = Math.min(minLng, p.lng);
+      maxLng = Math.max(maxLng, p.lng);
+    }
+  }
+  if (![minLat, maxLat, minLng, maxLng].every(Number.isFinite)) return null;
+  return { minLat, maxLat, minLng, maxLng };
 }
 
 type Props = {
@@ -128,8 +163,6 @@ export default function AdminCorridorsMap({
   const overlayRef = useRef<L.LayerGroup | null>(null);
   const onZoneEditedRef = useRef(onZoneEdited);
   onZoneEditedRef.current = onZoneEdited;
-  const _unusedOnZoneEdited = onZoneEditedRef;
-  const _unusedDrawTarget = drawTarget;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -211,6 +244,7 @@ export default function AdminCorridorsMap({
         zone: Record<string, unknown>,
         bounds: L.LatLngBounds,
         show: boolean,
+        kind: 'origin' | 'destination',
         title: string,
         stroke: string,
         fill: string
@@ -250,7 +284,8 @@ export default function AdminCorridorsMap({
 
         for (let idx = 0; idx < rings.length; idx++) {
           const ring = rings[idx];
-          const cityName = cityPolys[idx]?.name ?? 'Ciudad';
+          const city = cityPolys[idx];
+          const cityName = city?.name ?? 'Ciudad';
           const border = L.polygon(hexRingToLeafletLatLngs(ring), {
             color: stroke,
             fillColor: fill,
@@ -264,6 +299,36 @@ export default function AdminCorridorsMap({
               `${title} · ${cityName}${cellHint}`
             )}<br/>Zona automática de ciudad (Central).</span>`
           );
+          if (
+            drawTarget &&
+            drawTarget.corridorId === c.id &&
+            drawTarget.kind === kind &&
+            city &&
+            (border as PmPolygon).pm
+          ) {
+            (border as PmPolygon).pm?.enable({
+              preventMarkerRemoval: true,
+              snappable: true,
+            });
+            border.on('pm:update', () => {
+              const nextPoly = polygonFromLeaflet(border.getLatLngs() as L.LatLng[] | L.LatLng[][]);
+              if (nextPoly.length < 3) return;
+              const nextAll = cityPolysAll.map((cp) =>
+                cp.id === city.id ? { ...cp, polygon_latlng: nextPoly } : cp
+              );
+              const bbox = bboxFromCityPolygons(nextAll);
+              if (!bbox) return;
+              onZoneEditedRef.current(c.id, kind, {
+                ...bbox,
+                city_polygons: nextAll.map((cp) => ({
+                  id: cp.id,
+                  name: cp.name,
+                  active: cp.active,
+                  polygon_latlng: cp.polygon_latlng,
+                })),
+              });
+            });
+          }
           for (const p of ring) {
             allCorners.push(L.latLng(p.lat, p.lng));
           }
@@ -275,6 +340,7 @@ export default function AdminCorridorsMap({
           c.origin_zone,
           oB,
           showOrigin,
+          'origin',
           `Origen · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`,
           '#0369a1',
           '#0284c7'
@@ -285,6 +351,7 @@ export default function AdminCorridorsMap({
           c.destination_zone,
           dB,
           showDest,
+          'destination',
           `Destino · prioridad ${c.sort_priority}${active ? '' : ' · inactivo'} · ${c.slug}`,
           '#c2410c',
           '#ea580c'

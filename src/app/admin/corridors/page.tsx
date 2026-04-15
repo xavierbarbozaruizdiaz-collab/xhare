@@ -625,6 +625,7 @@ export default function AdminCorridorsPage() {
             demandTubes={demandTubes}
             showDemandTubes={showDemandTubes}
             corridorZonesOutlineOnly={corridorOutlineOnly}
+            drawTarget={drawCorridorId ? { corridorId: drawCorridorId, kind: drawKind } : null}
           />
         </div>
       )}
