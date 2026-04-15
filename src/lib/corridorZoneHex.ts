@@ -1,6 +1,12 @@
 import type L from 'leaflet';
 
 export type HexLatLng = { lat: number; lng: number };
+export type CityPolygon = {
+  id: string;
+  name: string;
+  active: boolean;
+  polygon_latlng: HexLatLng[];
+};
 
 /** Lado del hexágono regular ≈ circumradio R (m). Valor acordado con producto (~150 m). */
 export const DEFAULT_CORRIDOR_HEX_EDGE_M = 150;
@@ -76,6 +82,34 @@ export function parsePolygonLatlngFromZone(zone: Record<string, unknown>): HexLa
     out.push({ lat: (p as HexLatLng).lat, lng: (p as HexLatLng).lng });
   }
   return out.length >= 3 ? out : null;
+}
+
+/** Lee `city_polygons` desde JSON de zona. */
+export function parseCityPolygonsFromZone(zone: Record<string, unknown>): CityPolygon[] {
+  const raw = zone.city_polygons;
+  if (!Array.isArray(raw)) return [];
+  const out: CityPolygon[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const id = typeof o.id === 'string' ? o.id : '';
+    const name = typeof o.name === 'string' ? o.name : '';
+    const active = o.active !== false;
+    const polyRaw = o.polygon_latlng;
+    if (!id || !name || !Array.isArray(polyRaw) || polyRaw.length < 3) continue;
+    const poly: HexLatLng[] = [];
+    let valid = true;
+    for (const p of polyRaw) {
+      if (!isFinitePair(p)) {
+        valid = false;
+        break;
+      }
+      poly.push({ lat: (p as HexLatLng).lat, lng: (p as HexLatLng).lng });
+    }
+    if (!valid || poly.length < 3) continue;
+    out.push({ id, name, active, polygon_latlng: poly });
+  }
+  return out;
 }
 
 export function hexRingToLeafletLatLngs(ring: HexLatLng[]): L.LatLngExpression[] {

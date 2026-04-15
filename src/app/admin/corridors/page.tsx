@@ -24,6 +24,13 @@ type CorridorZone = {
   maxLat?: unknown;
   minLng?: unknown;
   maxLng?: unknown;
+  city_polygons?: unknown;
+};
+type CityPolyRow = {
+  id: string;
+  name: string;
+  active: boolean;
+  polygon_latlng: Array<{ lat: number; lng: number }>;
 };
 
 type CorridorRow = {
@@ -43,6 +50,55 @@ function zoneSummary(z: Record<string, unknown>): string {
   const a = [o.minLat, o.maxLat, o.minLng, o.maxLng].every((x) => typeof x === 'number' || typeof x === 'string');
   if (!a) return JSON.stringify(z);
   return `lat ${o.minLat} … ${o.maxLat}, lng ${o.minLng} … ${o.maxLng}`;
+}
+
+function parseCityPolys(z: Record<string, unknown>): CityPolyRow[] {
+  const raw = (z as CorridorZone).city_polygons;
+  if (!Array.isArray(raw)) return [];
+  const out: CityPolyRow[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const id = typeof o.id === 'string' ? o.id : '';
+    const name = typeof o.name === 'string' ? o.name : '';
+    const active = o.active !== false;
+    const poly = o.polygon_latlng;
+    if (!id || !name || !Array.isArray(poly) || poly.length < 3) continue;
+    const ring: Array<{ lat: number; lng: number }> = [];
+    let valid = true;
+    for (const p of poly) {
+      if (!p || typeof p !== 'object') {
+        valid = false;
+        break;
+      }
+      const lat = Number((p as { lat?: unknown }).lat);
+      const lng = Number((p as { lng?: unknown }).lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        valid = false;
+        break;
+      }
+      ring.push({ lat, lng });
+    }
+    if (valid && ring.length >= 3) out.push({ id, name, active, polygon_latlng: ring });
+  }
+  return out;
+}
+
+function bboxFromCityPolys(polys: CityPolyRow[]): { minLat: number; maxLat: number; minLng: number; maxLng: number } | null {
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  for (const cp of polys) {
+    for (const p of cp.polygon_latlng) {
+      minLat = Math.min(minLat, p.lat);
+      maxLat = Math.max(maxLat, p.lat);
+      minLng = Math.min(minLng, p.lng);
+      maxLng = Math.max(maxLng, p.lng);
+    }
+  }
+  if (![minLat, maxLat, minLng, maxLng].every(Number.isFinite)) return null;
+  return { minLat, maxLat, minLng, maxLng };
 }
 
 export default function AdminCorridorsPage() {
@@ -72,6 +128,7 @@ export default function AdminCorridorsPage() {
   const [corridorOutlineOnly, setCorridorOutlineOnly] = useState(false);
   const [drawCorridorId, setDrawCorridorId] = useState<string>('');
   const [drawKind, setDrawKind] = useState<DrawKind>('origin');
+  const [importingCentral, setImportingCentral] = useState(false);
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -262,6 +319,74 @@ export default function AdminCorridorsPage() {
     [accessToken, refetch]
   );
 
+  const importCentral = useCallback(async () => {
+    if (!drawCorridorId) return;
+    setSaveMsg(null);
+    setSaveErr(null);
+    setImportingCentral(true);
+    let token = accessToken ?? (await refetch()) ?? '';
+    if (!token) {
+      setSaveErr('No hay sesión.');
+      setImportingCentral(false);
+      return;
+    }
+    try {
+      let res = await fetch(`/api/admin/corridors/${drawCorridorId}/import-central`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ kind: drawKind }),
+      });
+      if (res.status === 401) {
+        token = (await refetch()) ?? '';
+        if (token) {
+          res = await fetch(`/api/admin/corridors/${drawCorridorId}/import-central`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ kind: drawKind }),
+          });
+        }
+      }
+      const body = (await res.json()) as { corridor?: CorridorRow; imported?: number; missing?: string[]; error?: string };
+      if (!res.ok) {
+        setSaveErr(typeof body.error === 'string' ? body.error : 'No se pudo importar Central');
+        return;
+      }
+      if (body.corridor) {
+        setRows((prev) => prev.map((r) => (r.id === body.corridor!.id ? body.corridor! : r)));
+      }
+      const miss = Array.isArray(body.missing) && body.missing.length > 0 ? ` · faltaron ${body.missing.length}` : '';
+      setSaveMsg(`Central importado (${body.imported ?? 0} ciudades) para ${drawKind}.${miss}`);
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : 'Error de red');
+    } finally {
+      setImportingCentral(false);
+    }
+  }, [accessToken, drawCorridorId, drawKind, refetch]);
+
+  const toggleCity = useCallback(
+    async (corridorId: string, kind: DrawKind, cityId: string, active: boolean) => {
+      const row = rows.find((r) => r.id === corridorId);
+      if (!row) return;
+      const zone = (kind === 'origin' ? row.origin_zone : row.destination_zone) as Record<string, unknown>;
+      const cities = parseCityPolys(zone);
+      if (cities.length === 0) return;
+      const nextCities = cities.map((c) => (c.id === cityId ? { ...c, active } : c));
+      const bbox = bboxFromCityPolys(nextCities);
+      if (!bbox) return;
+      const payload: CorridorZoneEditPayload & { city_polygons: CityPolyRow[] } = {
+        minLat: bbox.minLat,
+        maxLat: bbox.maxLat,
+        minLng: bbox.minLng,
+        maxLng: bbox.maxLng,
+        city_polygons: nextCities,
+      };
+      await patchZone(corridorId, kind, payload);
+    },
+    [patchZone, rows]
+  );
+
   const setLayerVis = useCallback((id: string, key: 'origin' | 'dest', value: boolean) => {
     setVisibility((p) => ({
       ...p,
@@ -432,6 +557,14 @@ export default function AdminCorridorsPage() {
                 <option value="destination">Destino</option>
               </select>
             </div>
+            <button
+              type="button"
+              onClick={() => void importCentral()}
+              className="text-sm font-medium text-indigo-800 border border-indigo-500 rounded-lg px-3 py-1 hover:bg-indigo-100 disabled:opacity-50"
+              disabled={!drawCorridorId || importingCentral}
+            >
+              {importingCentral ? 'Importando Central…' : 'Importar ciudades de Central (auto)'}
+            </button>
             {showDemandTubes && !tubesLoading && tubesMeta !== null && (
               <span className="text-xs text-violet-800">
                 Grupos en rango: {tubesMeta.groupsInRange} · Tubos dibujados: {tubesMeta.tubesDrawn}
@@ -560,9 +693,37 @@ export default function AdminCorridorsPage() {
                   </td>
                   <td className="px-4 py-3 text-gray-600 max-w-[200px]">
                     <span className="break-words">{zoneSummary(r.origin_zone)}</span>
+                    {parseCityPolys(r.origin_zone).length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {parseCityPolys(r.origin_zone).map((c) => (
+                          <label key={c.id} className="flex items-center gap-2 text-xs text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={c.active}
+                              onChange={(e) => void toggleCity(r.id, 'origin', c.id, e.target.checked)}
+                            />
+                            <span>{c.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-600 max-w-[200px]">
                     <span className="break-words">{zoneSummary(r.destination_zone)}</span>
+                    {parseCityPolys(r.destination_zone).length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {parseCityPolys(r.destination_zone).map((c) => (
+                          <label key={c.id} className="flex items-center gap-2 text-xs text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={c.active}
+                              onChange={(e) => void toggleCity(r.id, 'destination', c.id, e.target.checked)}
+                            />
+                            <span>{c.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

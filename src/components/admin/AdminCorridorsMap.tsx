@@ -15,6 +15,7 @@ import {
   hexRingToLeafletLatLngs,
   leafletRingToHexLatLngs,
   leafletRingToPolygonLatLngs,
+  parseCityPolygonsFromZone,
   parseHexLatlngFromZone,
   parsePolygonLatlngFromZone,
 } from '@/lib/corridorZoneHex';
@@ -301,24 +302,39 @@ export default function AdminCorridorsMap({
         fill: string
       ) => {
         if (!show) return;
-        const storedPoly = parsePolygonLatlngFromZone(zone);
-        const storedHex = parseHexLatlngFromZone(zone);
-        const ring = storedPoly ?? storedHex ?? boundsToContainingFlatTopHex(bounds);
-        const { cells, effectiveEdgeM, capped } = hexGridCellsTouchingPolygonGlobal(ring, corridorHexCellEdgeM);
-        const cellHint = capped
-          ? ` · malla ${Math.round(effectiveEdgeM)} m (tope ${cells.length} celdas)`
-          : ` · malla ~${Math.round(effectiveEdgeM)} m (${cells.length} celdas)`;
-        for (const cell of cells) {
-          L.polygon(hexRingToLeafletLatLngs(cell), {
-            color: stroke,
-            fillColor: fill,
-            fillOpacity: corridorZonesOutlineOnly ? 0 : cellFill,
-            weight: corridorZonesOutlineOnly ? 1.1 : cellWeight,
-            opacity: corridorZonesOutlineOnly ? 0.9 : 1,
-            pmIgnore: true,
-          } as PathOptsPm).addTo(group);
+        const cityPolysAll = parseCityPolygonsFromZone(zone);
+        const cityPolys = cityPolysAll.filter((cp) => cp.active);
+        const rings =
+          cityPolysAll.length > 0
+            ? cityPolys.map((cp) => cp.polygon_latlng)
+            : [parsePolygonLatlngFromZone(zone) ?? parseHexLatlngFromZone(zone) ?? boundsToContainingFlatTopHex(bounds)];
+        if (rings.length === 0) return;
+        let totalCells = 0;
+        let cappedAny = false;
+        let effectiveSum = 0;
+        for (const ring of rings) {
+          const { cells, effectiveEdgeM, capped } = hexGridCellsTouchingPolygonGlobal(ring, corridorHexCellEdgeM);
+          totalCells += cells.length;
+          effectiveSum += effectiveEdgeM;
+          if (capped) cappedAny = true;
+          for (const cell of cells) {
+            L.polygon(hexRingToLeafletLatLngs(cell), {
+              color: stroke,
+              fillColor: fill,
+              fillOpacity: corridorZonesOutlineOnly ? 0 : cellFill,
+              weight: corridorZonesOutlineOnly ? 1.1 : cellWeight,
+              opacity: corridorZonesOutlineOnly ? 0.9 : 1,
+              pmIgnore: true,
+            } as PathOptsPm).addTo(group);
+          }
         }
-        const poly = L.polygon(hexRingToLeafletLatLngs(ring), {
+        const effectiveAvg = rings.length > 0 ? effectiveSum / rings.length : corridorHexCellEdgeM;
+        const cellHint = cappedAny
+          ? ` · malla ${Math.round(effectiveAvg)} m (tope ${totalCells} celdas)`
+          : ` · malla ~${Math.round(effectiveAvg)} m (${totalCells} celdas)`;
+
+        const editableRing = rings[0];
+        const poly = L.polygon(hexRingToLeafletLatLngs(editableRing), {
           color: stroke,
           fillColor: fill,
           fillOpacity: macroFill,
@@ -326,8 +342,10 @@ export default function AdminCorridorsMap({
           ...(macroDash ? { dashArray: macroDash } : {}),
         }).addTo(group);
         attachHex(poly, meta, `${title}${cellHint}`);
-        for (const p of ring) {
-          allCorners.push(L.latLng(p.lat, p.lng));
+        for (const ring of rings) {
+          for (const p of ring) {
+            allCorners.push(L.latLng(p.lat, p.lng));
+          }
         }
       };
 

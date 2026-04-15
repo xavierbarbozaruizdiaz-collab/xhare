@@ -11,6 +11,12 @@ const hexPointSchema = z.object({
   lat: z.number().finite(),
   lng: z.number().finite(),
 });
+const cityPolygonSchema = z.object({
+  id: z.string().min(1).max(120),
+  name: z.string().min(1).max(120),
+  active: z.boolean().optional(),
+  polygon_latlng: z.array(hexPointSchema).min(3).max(512),
+});
 
 const zoneSchema = z.object({
   minLat: z.number().finite(),
@@ -21,6 +27,8 @@ const zoneSchema = z.object({
   hex_latlng: z.array(hexPointSchema).length(6).optional(),
   /** Si viene, tiene prioridad para clasificar (polígono contenedor libre). */
   polygon_latlng: z.array(hexPointSchema).min(3).max(256).optional(),
+  /** Lista de ciudades (ej. Central) activables/desactivables por zona. */
+  city_polygons: z.array(cityPolygonSchema).max(128).optional(),
 });
 
 const bodySchema = z
@@ -56,6 +64,14 @@ function zoneToJson(box: z.infer<typeof zoneSchema>): Record<string, unknown> {
   }
   if (box.polygon_latlng && box.polygon_latlng.length >= 3) {
     out.polygon_latlng = box.polygon_latlng.map((p) => ({ lat: p.lat, lng: p.lng }));
+  }
+  if (box.city_polygons && box.city_polygons.length > 0) {
+    out.city_polygons = box.city_polygons.map((c) => ({
+      id: c.id,
+      name: c.name,
+      active: c.active !== false,
+      polygon_latlng: c.polygon_latlng.map((p) => ({ lat: p.lat, lng: p.lng })),
+    }));
   }
   return out;
 }
