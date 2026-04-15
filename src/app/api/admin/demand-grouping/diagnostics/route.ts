@@ -151,7 +151,7 @@ export async function GET(request: NextRequest) {
         audit: {
           pipelines: [
             'Geo sync: POST /api/demand-routes/sync — pending + (classification null o unclassified) + coords; excluye ya en demand_route_members.',
-            'Corredor+bucket: POST /api/demand-routes/auto-group-classified — RPC auto_group_classified_trip_requests; pending + classified + corridor_id + time_bucket; excluye miembros.',
+            'Corredor+bucket: POST /api/demand-routes/auto-group-classified — RPC auto_group_classified_trip_requests; preview sin escribir: auto_group_classified_trip_requests_preview (migr. 070).',
           ],
           tubes:
             'Los tubos admin leen demand_route_groups con polilínea usable. Sin grupos en rango → sin tubo violeta (no es fallo del dibujo).',

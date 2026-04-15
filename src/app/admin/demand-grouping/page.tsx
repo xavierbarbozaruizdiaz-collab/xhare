@@ -173,8 +173,12 @@ export default function AdminDemandGroupingPage() {
             classified listas para el RPC.
           </li>
           <li>
-            <strong>Dry-run geo:</strong> simula el sync sin INSERT/UPDATE en Supabase; igual puede llamar a <strong>OSRM</strong> para
-            calcular polilíneas que faltan (solo no las guarda). El RPC classified no tiene simulación en servidor sin tocar Postgres.
+            <strong>Dry-run geo:</strong> simula el sync sin INSERT/UPDATE en Supabase; puede llamar a <strong>OSRM</strong> para
+            polilíneas faltantes (no las guarda).
+          </li>
+          <li>
+            <strong>Dry-run classified:</strong> usa el RPC <code className="text-xs bg-white px-1 rounded">auto_group_classified_trip_requests_preview</code>{' '}
+            (migración <code className="text-xs bg-white px-1 rounded">070</code> en Supabase). Misma partición en lotes que el RPC real, sin escribir.
           </li>
           <li>
             <strong>Dos pipelines:</strong> geo (<code className="text-xs bg-white px-1 rounded">/api/demand-routes/sync</code>) para
@@ -239,7 +243,7 @@ export default function AdminDemandGroupingPage() {
             disabled={dryRunLoading || !accessToken}
             onClick={() => void runDryRunGeo()}
           >
-            {dryRunLoading ? 'Simulando…' : 'Simular geo (dry-run)'}
+            {dryRunLoading ? 'Simulando…' : 'Simular geo + classified (dry-run)'}
           </button>
           <button
             type="button"
@@ -269,7 +273,7 @@ export default function AdminDemandGroupingPage() {
         {dryRunErr && <p className="text-sm text-red-700 mb-2">{dryRunErr}</p>}
         {lastDryRun != null && (
           <div className="mt-4">
-            <h3 className="text-sm font-medium text-amber-900 mb-1">Última simulación geo (sin escribir en base)</h3>
+            <h3 className="text-sm font-medium text-amber-900 mb-1">Última simulación (geo + classified preview, sin escribir en base)</h3>
             <pre className="text-xs bg-amber-950 text-amber-50 p-3 rounded-lg overflow-x-auto max-h-[320px] overflow-y-auto">
               {JSON.stringify(lastDryRun, null, 2)}
             </pre>
@@ -286,7 +290,7 @@ export default function AdminDemandGroupingPage() {
       </div>
 
       <p className="text-xs text-gray-500">
-        Siguiente mejora opcional: RPC classified con función Postgres de simulación, o exportar CSV del <code className="bg-gray-100 px-1 rounded">planned</code> del dry-run geo.
+        Opcional después: historial de corridas en tabla, o export CSV del <code className="bg-gray-100 px-1 rounded">planned</code> / batches.
       </p>
     </div>
   );
