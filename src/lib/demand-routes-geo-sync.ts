@@ -305,3 +305,252 @@ export async function runDemandRoutesGeoSync(supabase: SupabaseClient): Promise<
     };
   }
 }
+
+/** Solo diagnóstico: por qué un pedido geo-elegible no entra a grupos existentes (misma lógica que el sync). */
+export type GeoExplainTripRow = {
+  trip_request_id: string;
+  requested_date: string;
+  requested_time: string;
+  origin_city: string | null;
+  destination_city: string | null;
+  /** Si encaja en al menos un grupo existente (muestra). */
+  outcome: 'matchable_existing' | 'no_match_in_existing_sample';
+  matched_group_id?: string;
+  /** Motivos distintos al escanear grupos (hasta ~8). */
+  blocking_hints: string[];
+  groups_scanned: number;
+};
+
+type TripReqLite = {
+  id: string;
+  origin_lat: number;
+  origin_lng: number;
+  destination_lat: number;
+  destination_lng: number;
+  requested_date: string;
+  requested_time: string;
+  origin_city: string | null;
+  destination_city: string | null;
+};
+
+type GroupLite = {
+  id: string;
+  base_polyline: Point[];
+  requested_date: string;
+  requested_time: string;
+  origin_city: string | null;
+  destination_city: string | null;
+  passenger_count: number;
+};
+
+function reasonCannotJoinGeo(req: TripReqLite, g: GroupLite): string | null {
+  if (g.passenger_count >= MAX_PASSENGERS_PER_GROUP) return 'group_full';
+  if (g.requested_date !== req.requested_date) return 'different_date';
+  if (!timeWithinWindow(timeToMinutes(g.requested_time), timeToMinutes(req.requested_time))) {
+    return 'outside_time_window_90m';
+  }
+  const originCity = req.origin_city?.trim() || null;
+  const destCity = req.destination_city?.trim() || null;
+  const sameOrigin =
+    (g.origin_city == null && originCity == null) ||
+    (g.origin_city !== null && originCity !== null && g.origin_city === originCity);
+  const sameDest =
+    (g.destination_city == null && destCity == null) ||
+    (g.destination_city !== null && destCity !== null && g.destination_city === destCity);
+  if (!sameOrigin) return 'origin_city_mismatch';
+  if (!sameDest) return 'destination_city_mismatch';
+
+  const base = g.base_polyline;
+  if (!Array.isArray(base) || base.length < 2) return 'group_polyline_invalid';
+
+  const origin: Point = { lat: Number(req.origin_lat), lng: Number(req.origin_lng) };
+  const dest: Point = { lat: Number(req.destination_lat), lng: Number(req.destination_lng) };
+  const dO = distancePointToPolylineMeters(origin, base);
+  const dD = distancePointToPolylineMeters(dest, base);
+  if (dO > CORRIDOR_METERS || dD > CORRIDOR_METERS) return 'outside_2km_corridor';
+  const posO = getPositionAlongPolyline(origin, base);
+  const posD = getPositionAlongPolyline(dest, base);
+  if (!(posO < posD)) return 'wrong_stop_order_along_route';
+  return null;
+}
+
+/**
+ * Muestra acotada (solo lectura): pedidos pending/unclassified con coords que aún no están en miembros,
+ * y si podrían unirse a algún grupo existente según las mismas reglas que `runDemandRoutesGeoSync`.
+ */
+export async function sampleGeoUnassignedExplain(
+  supabase: SupabaseClient,
+  opts?: { maxRequests?: number; maxGroups?: number; pendingFetchCap?: number }
+): Promise<{
+  trips: GeoExplainTripRow[];
+  existing_group_count: number;
+  unassigned_in_pending_sample: number;
+  pending_fetch_cap: number;
+  error?: string;
+}> {
+  const maxRequests = Math.min(60, Math.max(1, opts?.maxRequests ?? 25));
+  const maxGroups = Math.min(200, Math.max(1, opts?.maxGroups ?? 80));
+  const pendingFetchCap = Math.min(800, Math.max(50, opts?.pendingFetchCap ?? 500));
+
+  const { data: alreadyInGroup } = await supabase.from('demand_route_members').select('trip_request_id');
+  const assignedIds = new Set((alreadyInGroup ?? []).map((r) => r.trip_request_id));
+
+  const { data: pending, error: pendingError } = await supabase
+    .from('trip_requests')
+    .select(
+      'id, origin_lat, origin_lng, destination_lat, destination_lng, requested_date, requested_time, origin_city, destination_city'
+    )
+    .eq('status', 'pending')
+    .or('classification_status.is.null,classification_status.eq.unclassified')
+    .not('origin_lat', 'is', null)
+    .not('destination_lat', 'is', null)
+    .limit(pendingFetchCap);
+
+  if (pendingError) {
+    return {
+      trips: [],
+      existing_group_count: 0,
+      unassigned_in_pending_sample: 0,
+      pending_fetch_cap: pendingFetchCap,
+      error: pendingError.message,
+    };
+  }
+
+  const unassigned = (pending ?? []).filter((r) => !assignedIds.has(r.id)) as TripReqLite[];
+
+  const { data: existingGroups, error: gErr } = await supabase
+    .from('demand_route_groups')
+    .select('id, base_polyline, requested_date, requested_time, origin_city, destination_city, passenger_count')
+    .limit(maxGroups);
+
+  if (gErr) {
+    return {
+      trips: [],
+      existing_group_count: 0,
+      unassigned_in_pending_sample: unassigned.length,
+      pending_fetch_cap: pendingFetchCap,
+      error: gErr.message,
+    };
+  }
+
+  const existing: GroupLite[] = (existingGroups ?? []).map((g) => ({
+    id: String(g.id),
+    base_polyline: (g.base_polyline ?? []) as Point[],
+    requested_date: String(g.requested_date ?? ''),
+    requested_time: String(g.requested_time ?? ''),
+    origin_city: g.origin_city ?? null,
+    destination_city: g.destination_city ?? null,
+    passenger_count: Number(g.passenger_count ?? 0) || 0,
+  }));
+
+  const trips: GeoExplainTripRow[] = [];
+  for (const req of unassigned.slice(0, maxRequests)) {
+    let matchedId: string | undefined;
+    for (const g of existing) {
+      if (reasonCannotJoinGeo(req, g) == null) {
+        matchedId = g.id;
+        break;
+      }
+    }
+    if (matchedId) {
+      trips.push({
+        trip_request_id: req.id,
+        requested_date: req.requested_date,
+        requested_time: String(req.requested_time),
+        origin_city: req.origin_city,
+        destination_city: req.destination_city,
+        outcome: 'matchable_existing',
+        matched_group_id: matchedId,
+        blocking_hints: [],
+        groups_scanned: existing.length,
+      });
+      continue;
+    }
+
+    const hints = new Set<string>();
+    let scanned = 0;
+    for (const g of existing) {
+      scanned++;
+      const reason = reasonCannotJoinGeo(req, g);
+      if (reason) hints.add(reason);
+      if (hints.size >= 8) break;
+    }
+    trips.push({
+      trip_request_id: req.id,
+      requested_date: req.requested_date,
+      requested_time: String(req.requested_time),
+      origin_city: req.origin_city,
+      destination_city: req.destination_city,
+      outcome: 'no_match_in_existing_sample',
+      blocking_hints: Array.from(hints),
+      groups_scanned: scanned,
+    });
+  }
+
+  return {
+    trips,
+    existing_group_count: existing.length,
+    unassigned_in_pending_sample: unassigned.length,
+    pending_fetch_cap: pendingFetchCap,
+  };
+}
+
+/** Pedidos listos para `auto_group_classified_trip_requests` (pending + classified + corredor + bucket, sin miembro). */
+export type ClassifiedReadyRow = {
+  id: string;
+  corridor_id: string;
+  time_bucket: string;
+  requested_date: string;
+  requested_time: string;
+  origin_city: string | null;
+  destination_city: string | null;
+};
+
+export async function sampleClassifiedReadyExplain(
+  supabase: SupabaseClient,
+  opts?: { maxRows?: number; fetchCap?: number }
+): Promise<{
+  rows: ClassifiedReadyRow[];
+  fetch_size: number;
+  unassigned_in_fetch: number;
+  error?: string;
+}> {
+  const maxRows = Math.min(40, Math.max(1, opts?.maxRows ?? 15));
+  const fetchCap = Math.min(120, Math.max(20, opts?.fetchCap ?? 80));
+
+  const { data: mems, error: mErr } = await supabase.from('demand_route_members').select('trip_request_id');
+  if (mErr) {
+    return { rows: [], fetch_size: 0, unassigned_in_fetch: 0, error: mErr.message };
+  }
+  const assigned = new Set((mems ?? []).map((m) => m.trip_request_id));
+
+  const { data: raw, error } = await supabase
+    .from('trip_requests')
+    .select('id, corridor_id, time_bucket, requested_date, requested_time, origin_city, destination_city')
+    .eq('status', 'pending')
+    .eq('classification_status', 'classified')
+    .not('corridor_id', 'is', null)
+    .not('time_bucket', 'is', null)
+    .limit(fetchCap);
+
+  if (error) {
+    return { rows: [], fetch_size: 0, unassigned_in_fetch: 0, error: error.message };
+  }
+
+  const list = (raw ?? []).filter((r) => !assigned.has(r.id));
+  const rows: ClassifiedReadyRow[] = list.slice(0, maxRows).map((r) => ({
+    id: r.id,
+    corridor_id: String(r.corridor_id),
+    time_bucket: String(r.time_bucket),
+    requested_date: String(r.requested_date ?? ''),
+    requested_time: String(r.requested_time ?? ''),
+    origin_city: r.origin_city ?? null,
+    destination_city: r.destination_city ?? null,
+  }));
+
+  return {
+    rows,
+    fetch_size: raw?.length ?? 0,
+    unassigned_in_fetch: list.length,
+  };
+}

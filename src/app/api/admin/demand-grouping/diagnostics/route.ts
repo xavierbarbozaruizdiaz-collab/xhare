@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { sampleClassifiedReadyExplain, sampleGeoUnassignedExplain } from '@/lib/demand-routes-geo-sync';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,9 +15,11 @@ const DEMAND_STATUSES = ['pending', 'grouping', 'grouped', 'group_linked_pending
  * Lectura única para panel: conteos y señales de por qué no hay grupos/tubos.
  */
 export async function GET(request: NextRequest) {
-  return withAdminAuth(request, async () => {
+  return withAdminAuth(request, async (req) => {
     try {
       const service = createServiceClient();
+      const { searchParams } = new URL(req.url);
+      const withExplain = searchParams.get('explain') === '1';
       const notes: string[] = [];
 
       const byStatus: Record<string, number | null> = {};
@@ -127,9 +130,24 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      let explain_samples: Record<string, unknown> | undefined;
+      if (withExplain) {
+        const [geoEx, classifiedEx] = await Promise.all([
+          sampleGeoUnassignedExplain(service),
+          sampleClassifiedReadyExplain(service),
+        ]);
+        explain_samples = {
+          geo: geoEx,
+          classified_ready: classifiedEx,
+          note:
+            'Geo: blocking_hints salen de escanear grupos existentes (misma lógica que sync). classified_ready: filas que el RPC puede agrupar si corrés «Corredor+bucket».',
+        };
+      }
+
       logBlockOk(BLOCK);
       return NextResponse.json({
         ok: true,
+        explain: withExplain,
         audit: {
           pipelines: [
             'Geo sync: POST /api/demand-routes/sync — pending + (classification null o unclassified) + coords; excluye ya en demand_route_members.',
@@ -160,6 +178,7 @@ export async function GET(request: NextRequest) {
         demandRouteGroupsRequestedDateGte7d: groupsLast7d ?? null,
         demandRouteMembersTotal: membersTotal ?? null,
         notes,
+        ...(explain_samples ? { explain_samples } : {}),
       });
     } catch (e) {
       logBlockError(BLOCK, e instanceof Error ? e.message : 'unknown', e);

@@ -14,6 +14,8 @@ export default function AdminDemandGroupingPage() {
   const [runLoading, setRunLoading] = useState(false);
   const [runErr, setRunErr] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<unknown>(null);
+  /** GET diagnostics?explain=1 — muestras geo (motivos) + classified listos para RPC. */
+  const [includeExplain, setIncludeExplain] = useState(false);
 
   const authHeaders = useCallback((): HeadersInit => {
     const h: Record<string, string> = {};
@@ -26,15 +28,16 @@ export default function AdminDemandGroupingPage() {
     setDiagLoading(true);
     setDiagErr(null);
     try {
+      const q = includeExplain ? '?explain=1' : '';
       let token = accessToken;
-      let res = await fetch('/api/admin/demand-grouping/diagnostics', {
+      let res = await fetch(`/api/admin/demand-grouping/diagnostics${q}`, {
         credentials: 'include',
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 401) {
         token = (await refetch()) ?? '';
         if (token) {
-          res = await fetch('/api/admin/demand-grouping/diagnostics', {
+          res = await fetch(`/api/admin/demand-grouping/diagnostics${q}`, {
             credentials: 'include',
             headers: { Authorization: `Bearer ${token}` },
           });
@@ -53,12 +56,12 @@ export default function AdminDemandGroupingPage() {
     } finally {
       setDiagLoading(false);
     }
-  }, [accessToken, refetch]);
+  }, [accessToken, refetch, includeExplain]);
 
   useEffect(() => {
     if (!ready || !isAdmin || !accessToken) return;
     void loadDiagnostics();
-  }, [ready, isAdmin, accessToken, loadDiagnostics]);
+  }, [ready, isAdmin, accessToken, loadDiagnostics, includeExplain]);
 
   const runExecute = async (mode: 'both' | 'classified' | 'geo') => {
     if (!accessToken) return;
@@ -121,6 +124,11 @@ export default function AdminDemandGroupingPage() {
         <summary className="font-semibold cursor-pointer text-slate-900">Auditoría rápida (Fase 0) — qué hay hoy en el código</summary>
         <ul className="mt-3 list-disc pl-5 space-y-2">
           <li>
+            Activá <strong>Incluir muestras</strong> y refrescá: en el JSON verás <code className="text-xs bg-white px-1 rounded">explain_samples</code>{' '}
+            con intentos de encaje geo (motivos como <code className="text-xs bg-white px-1 rounded">outside_2km_corridor</code>) y filas
+            classified listas para el RPC.
+          </li>
+          <li>
             <strong>Dos pipelines:</strong> geo (<code className="text-xs bg-white px-1 rounded">/api/demand-routes/sync</code>) para
             pedidos <code className="text-xs bg-white px-1 rounded">pending</code> sin clasificar o <code className="text-xs bg-white px-1 rounded">unclassified</code>; y corredor+bucket (
             <code className="text-xs bg-white px-1 rounded">/api/demand-routes/auto-group-classified</code>) para <code className="text-xs bg-white px-1 rounded">classified</code> con{' '}
@@ -140,14 +148,24 @@ export default function AdminDemandGroupingPage() {
       <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <h2 className="text-lg font-semibold text-gray-900">Diagnóstico (lectura)</h2>
-          <button
-            type="button"
-            className="text-sm py-2 px-3 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
-            disabled={diagLoading || !accessToken}
-            onClick={() => void loadDiagnostics()}
-          >
-            {diagLoading ? 'Actualizando…' : 'Refrescar'}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeExplain}
+                onChange={(e) => setIncludeExplain(e.target.checked)}
+              />
+              Incluir muestras (motivos geo + classified listos)
+            </label>
+            <button
+              type="button"
+              className="text-sm py-2 px-3 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+              disabled={diagLoading || !accessToken}
+              onClick={() => void loadDiagnostics()}
+            >
+              {diagLoading ? 'Actualizando…' : 'Refrescar'}
+            </button>
+          </div>
         </div>
         {diagErr && <p className="text-sm text-red-700 mb-2">{diagErr}</p>}
         {diagnostics ? (
