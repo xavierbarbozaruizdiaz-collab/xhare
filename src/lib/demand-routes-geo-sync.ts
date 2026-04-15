@@ -53,6 +53,23 @@ async function fetchOsrmPolyline(origin: Point, destination: Point): Promise<Poi
   return [origin, destination];
 }
 
+export type DemandRoutesGeoSyncOptions = {
+  /** Si true: misma lógica de emparejado pero sin INSERT/UPDATE en base (solo lectura previa + OSRM). */
+  dryRun?: boolean;
+};
+
+export type GeoDryRunPlanned = {
+  trip_polyline_updates: string[];
+  append_to_existing: Array<{ group_id: string; trip_request_id: string }>;
+  new_group_queues: Array<{
+    base_trip_request_id: string;
+    member_trip_request_ids: string[];
+    passenger_count: number;
+    requested_date: string;
+    requested_time: string;
+  }>;
+};
+
 export type DemandRoutesGeoSyncResult =
   | {
       ok: true;
@@ -60,6 +77,8 @@ export type DemandRoutesGeoSyncResult =
       addedToExisting: number;
       newGroupsCreated: number;
       message?: string;
+      dryRun?: boolean;
+      planned?: GeoDryRunPlanned;
     }
   | { ok: false; error: string };
 
@@ -67,7 +86,16 @@ export type DemandRoutesGeoSyncResult =
  * Misma lógica que POST /api/demand-routes/sync (agrupación geo ~2 km, ventana 90 min, ciudades).
  * Usa service role: llamar solo tras validar admin/conductor o cron.
  */
-export async function runDemandRoutesGeoSync(supabase: SupabaseClient): Promise<DemandRoutesGeoSyncResult> {
+export async function runDemandRoutesGeoSync(
+  supabase: SupabaseClient,
+  options?: DemandRoutesGeoSyncOptions
+): Promise<DemandRoutesGeoSyncResult> {
+  const dryRun = Boolean(options?.dryRun);
+  const planned: GeoDryRunPlanned = {
+    trip_polyline_updates: [],
+    append_to_existing: [],
+    new_group_queues: [],
+  };
   try {
     const { data: alreadyInGroup } = await supabase.from('demand_route_members').select('trip_request_id');
     const assignedIds = new Set((alreadyInGroup ?? []).map((r) => r.trip_request_id));
@@ -94,6 +122,7 @@ export async function runDemandRoutesGeoSync(supabase: SupabaseClient): Promise<
         processed: 0,
         addedToExisting: 0,
         newGroupsCreated: 0,
+        ...(dryRun ? { dryRun: true, planned } : {}),
       };
     }
 
@@ -105,14 +134,18 @@ export async function runDemandRoutesGeoSync(supabase: SupabaseClient): Promise<
           { lat: r.destination_lat, lng: r.destination_lng }
         );
         const lengthKm = polylineLengthKm(polyline);
-        await supabase
-          .from('trip_requests')
-          .update({
-            route_polyline: polyline,
-            route_length_km: lengthKm,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', r.id);
+        if (dryRun) {
+          planned.trip_polyline_updates.push(r.id);
+        } else {
+          await supabase
+            .from('trip_requests')
+            .update({
+              route_polyline: polyline,
+              route_length_km: lengthKm,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', r.id);
+        }
         (r as { route_polyline?: Point[]; route_length_km?: number }).route_polyline = polyline;
         (r as { route_polyline?: Point[]; route_length_km?: number }).route_length_km = lengthKm;
       } else {
@@ -196,17 +229,21 @@ export async function runDemandRoutesGeoSync(supabase: SupabaseClient): Promise<
         if (!sameOrigin || !sameDest) continue;
         if (!fitsGroup(g.base_polyline)) continue;
 
-        const { error: memErr } = await supabase
-          .from('demand_route_members')
-          .insert({ group_id: g.id, trip_request_id: req.id });
-        if (memErr) continue;
-        await supabase
-          .from('demand_route_groups')
-          .update({
-            passenger_count: g.passenger_count + 1,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', g.id);
+        if (dryRun) {
+          planned.append_to_existing.push({ group_id: g.id, trip_request_id: req.id });
+        } else {
+          const { error: memErr } = await supabase
+            .from('demand_route_members')
+            .insert({ group_id: g.id, trip_request_id: req.id });
+          if (memErr) continue;
+          await supabase
+            .from('demand_route_groups')
+            .update({
+              passenger_count: g.passenger_count + 1,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', g.id);
+        }
         g.passenger_count += 1;
         addedToExisting++;
         placed = true;
@@ -257,38 +294,50 @@ export async function runDemandRoutesGeoSync(supabase: SupabaseClient): Promise<
       }
     }
 
-    for (const g of newGroups) {
-      const { data: inserted, error: insErr } = await supabase
-        .from('demand_route_groups')
-        .insert({
-          base_polyline: g.base_polyline,
-          base_length_km: g.base_length_km,
+    if (dryRun) {
+      for (const g of newGroups) {
+        planned.new_group_queues.push({
           base_trip_request_id: g.base_trip_request_id,
+          member_trip_request_ids: [...g.memberIds],
+          passenger_count: g.passenger_count,
           requested_date: g.requested_date,
           requested_time: g.requested_time,
-          origin_city: g.origin_city,
-          origin_department: g.origin_department,
-          origin_barrio: g.origin_barrio,
-          destination_city: g.destination_city,
-          destination_department: g.destination_department,
-          destination_barrio: g.destination_barrio,
-          passenger_count: g.passenger_count,
-        })
-        .select('id')
-        .single();
-
-      if (insErr) {
-        console.error('demand-routes sync insert group error:', insErr);
-        continue;
-      }
-      const groupId = inserted?.id;
-      if (!groupId) continue;
-
-      for (const tripRequestId of g.memberIds) {
-        await supabase.from('demand_route_members').insert({
-          group_id: groupId,
-          trip_request_id: tripRequestId,
         });
+      }
+    } else {
+      for (const g of newGroups) {
+        const { data: inserted, error: insErr } = await supabase
+          .from('demand_route_groups')
+          .insert({
+            base_polyline: g.base_polyline,
+            base_length_km: g.base_length_km,
+            base_trip_request_id: g.base_trip_request_id,
+            requested_date: g.requested_date,
+            requested_time: g.requested_time,
+            origin_city: g.origin_city,
+            origin_department: g.origin_department,
+            origin_barrio: g.origin_barrio,
+            destination_city: g.destination_city,
+            destination_department: g.destination_department,
+            destination_barrio: g.destination_barrio,
+            passenger_count: g.passenger_count,
+          })
+          .select('id')
+          .single();
+
+        if (insErr) {
+          console.error('demand-routes sync insert group error:', insErr);
+          continue;
+        }
+        const groupId = inserted?.id;
+        if (!groupId) continue;
+
+        for (const tripRequestId of g.memberIds) {
+          await supabase.from('demand_route_members').insert({
+            group_id: groupId,
+            trip_request_id: tripRequestId,
+          });
+        }
       }
     }
 
@@ -297,6 +346,7 @@ export async function runDemandRoutesGeoSync(supabase: SupabaseClient): Promise<
       processed: unassigned.length,
       addedToExisting,
       newGroupsCreated: newGroups.length,
+      ...(dryRun ? { dryRun: true, planned } : {}),
     };
   } catch (e) {
     return {

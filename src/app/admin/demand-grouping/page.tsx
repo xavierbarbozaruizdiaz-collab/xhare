@@ -14,6 +14,9 @@ export default function AdminDemandGroupingPage() {
   const [runLoading, setRunLoading] = useState(false);
   const [runErr, setRunErr] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<unknown>(null);
+  const [dryRunLoading, setDryRunLoading] = useState(false);
+  const [dryRunErr, setDryRunErr] = useState<string | null>(null);
+  const [lastDryRun, setLastDryRun] = useState<unknown>(null);
   /** GET diagnostics?explain=1 — muestras geo (motivos) + classified listos para RPC. */
   const [includeExplain, setIncludeExplain] = useState(false);
 
@@ -62,6 +65,47 @@ export default function AdminDemandGroupingPage() {
     if (!ready || !isAdmin || !accessToken) return;
     void loadDiagnostics();
   }, [ready, isAdmin, accessToken, loadDiagnostics, includeExplain]);
+
+  const runDryRunGeo = async () => {
+    if (!accessToken) return;
+    setDryRunErr(null);
+    setDryRunLoading(true);
+    try {
+      let token = accessToken;
+      let res = await fetch('/api/admin/demand-grouping/dry-run', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (res.status === 401) {
+        token = (await refetch()) ?? '';
+        if (token) {
+          res = await fetch('/api/admin/demand-grouping/dry-run', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({}),
+          });
+        }
+      }
+      const body = await res.json();
+      if (!res.ok) {
+        setDryRunErr(typeof (body as { error?: string }).error === 'string' ? (body as { error: string }).error : 'Falló el dry-run');
+        setLastDryRun(body);
+        return;
+      }
+      setLastDryRun(body);
+      await loadDiagnostics();
+    } catch (e) {
+      setDryRunErr(e instanceof Error ? e.message : 'Error de red');
+    } finally {
+      setDryRunLoading(false);
+    }
+  };
 
   const runExecute = async (mode: 'both' | 'classified' | 'geo') => {
     if (!accessToken) return;
@@ -129,6 +173,10 @@ export default function AdminDemandGroupingPage() {
             classified listas para el RPC.
           </li>
           <li>
+            <strong>Dry-run geo:</strong> simula el sync sin INSERT/UPDATE en Supabase; igual puede llamar a <strong>OSRM</strong> para
+            calcular polilíneas que faltan (solo no las guarda). El RPC classified no tiene simulación en servidor sin tocar Postgres.
+          </li>
+          <li>
             <strong>Dos pipelines:</strong> geo (<code className="text-xs bg-white px-1 rounded">/api/demand-routes/sync</code>) para
             pedidos <code className="text-xs bg-white px-1 rounded">pending</code> sin clasificar o <code className="text-xs bg-white px-1 rounded">unclassified</code>; y corredor+bucket (
             <code className="text-xs bg-white px-1 rounded">/api/demand-routes/auto-group-classified</code>) para <code className="text-xs bg-white px-1 rounded">classified</code> con{' '}
@@ -187,6 +235,14 @@ export default function AdminDemandGroupingPage() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            className="text-sm py-2 px-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100 disabled:opacity-50"
+            disabled={dryRunLoading || !accessToken}
+            onClick={() => void runDryRunGeo()}
+          >
+            {dryRunLoading ? 'Simulando…' : 'Simular geo (dry-run)'}
+          </button>
+          <button
+            type="button"
             className="btn-primary text-sm py-2 px-4 disabled:opacity-50"
             disabled={runLoading || !accessToken}
             onClick={() => void runExecute('both')}
@@ -210,9 +266,18 @@ export default function AdminDemandGroupingPage() {
             Solo sync geo
           </button>
         </div>
+        {dryRunErr && <p className="text-sm text-red-700 mb-2">{dryRunErr}</p>}
+        {lastDryRun != null && (
+          <div className="mt-4">
+            <h3 className="text-sm font-medium text-amber-900 mb-1">Última simulación geo (sin escribir en base)</h3>
+            <pre className="text-xs bg-amber-950 text-amber-50 p-3 rounded-lg overflow-x-auto max-h-[320px] overflow-y-auto">
+              {JSON.stringify(lastDryRun, null, 2)}
+            </pre>
+          </div>
+        )}
         {lastRun != null && (
           <div className="mt-4">
-            <h3 className="text-sm font-medium text-gray-800 mb-1">Última respuesta</h3>
+            <h3 className="text-sm font-medium text-gray-800 mb-1">Última ejecución real</h3>
             <pre className="text-xs bg-gray-900 text-amber-100 p-3 rounded-lg overflow-x-auto max-h-[360px] overflow-y-auto">
               {JSON.stringify(lastRun, null, 2)}
             </pre>
@@ -221,8 +286,7 @@ export default function AdminDemandGroupingPage() {
       </div>
 
       <p className="text-xs text-gray-500">
-        Siguiente fase (cuando la pidas): orquestador único en servidor + motivos de exclusión por pedido y dry-run, sin romper
-        contratos actuales de <code className="bg-gray-100 px-1 rounded">demand_route_groups</code>.
+        Siguiente mejora opcional: RPC classified con función Postgres de simulación, o exportar CSV del <code className="bg-gray-100 px-1 rounded">planned</code> del dry-run geo.
       </p>
     </div>
   );
