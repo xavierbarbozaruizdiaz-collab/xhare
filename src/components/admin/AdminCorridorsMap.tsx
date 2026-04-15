@@ -34,6 +34,8 @@ export type DemandTubeLayer = {
   label: string;
   requested_date: string;
   passenger_count: number;
+  /** Eje resuelto desde `trip_requests` porque `base_polyline` del grupo no servía. */
+  axis_fallback?: boolean;
 };
 
 type RectMeta = { corridorId: string; kind: 'origin' | 'destination' };
@@ -172,8 +174,11 @@ export default function AdminCorridorsMap({
         if (!ring || ring.length < 3) continue;
         const latlngs = ring.map((p) => L.latLng(p.lat, p.lng));
         const poly = L.polygon(latlngs, tubeOpts).addTo(group);
+        const axisNote = t.axis_fallback
+          ? '<br/><em style="font-size:11px;color:#5b21b6">Eje desde trip_requests (fallback).</em>'
+          : '';
         const tubePopup =
-          `<strong>Tubo sync (~${DEMAND_SYNC_CORRIDOR_METERS / 1000} km)</strong><br/><span style="font-size:12px;color:#444">${escapePopup(t.label)}<br/>Fecha: ${escapePopup(t.requested_date)} · ${t.passenger_count} plaza(s)<br/>Grupo <code>${escapePopup(t.id.slice(0, 8))}…</code></span>`;
+          `<strong>Tubo sync (~${DEMAND_SYNC_CORRIDOR_METERS / 1000} km)</strong><br/><span style="font-size:12px;color:#444">${escapePopup(t.label)}<br/>Fecha: ${escapePopup(t.requested_date)} · ${t.passenger_count} plaza(s)<br/>Grupo <code>${escapePopup(t.id.slice(0, 8))}…</code>${axisNote}</span>`;
         poly.bindPopup(tubePopup);
         for (const p of ring) {
           allCorners.push(L.latLng(p.lat, p.lng));
@@ -271,9 +276,10 @@ export default function AdminCorridorsMap({
                 <code className="text-xs bg-gray-100 px-1 rounded">corridors</code>.
               </p>
               <p>
-                Si esperabas <strong>tubos violeta</strong>: en esas fechas no hay grupos con{' '}
-                <code className="text-xs bg-gray-100 px-1 rounded">base_polyline</code>. Corré el sync geográfico de
-                demanda o ampliá el rango de fechas.
+                Si esperabas <strong>tubos violeta</strong>: en esas fechas no hay grupos con polilínea usable (ni en{' '}
+                <code className="text-xs bg-gray-100 px-1 rounded">demand_route_groups.base_polyline</code> ni en el
+                pedido base vía <code className="text-xs bg-gray-100 px-1 rounded">trip_requests</code>). Corré el sync
+                de demanda o ampliá el rango de fechas.
               </p>
             </div>
           </div>

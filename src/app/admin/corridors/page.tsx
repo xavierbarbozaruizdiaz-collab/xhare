@@ -63,6 +63,11 @@ export default function AdminCorridorsPage() {
   const [showDemandTubes, setShowDemandTubes] = useState(true);
   const [tubesLoading, setTubesLoading] = useState(false);
   const [tubesErr, setTubesErr] = useState<string | null>(null);
+  const [tubesMeta, setTubesMeta] = useState<{
+    groupsInRange: number;
+    tubesDrawn: number;
+    axisFallback: number;
+  } | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -109,6 +114,7 @@ export default function AdminCorridorsPage() {
   const loadTubes = useCallback(async () => {
     if (!showDemandTubes) {
       setDemandTubes([]);
+      setTubesMeta(null);
       return;
     }
     if (!accessToken) return;
@@ -129,16 +135,31 @@ export default function AdminCorridorsPage() {
           );
         }
       }
-      const body = (await res.json()) as { tubes?: DemandTubeLayer[]; error?: string };
+      const body = (await res.json()) as {
+        tubes?: DemandTubeLayer[];
+        error?: string;
+        groups_in_range?: number;
+        tubes_drawn?: number;
+        tubes_axis_fallback?: number;
+      };
       if (!res.ok) {
         setTubesErr(typeof body.error === 'string' ? body.error : 'No se pudieron cargar los tubos');
         setDemandTubes([]);
+        setTubesMeta(null);
         return;
       }
-      setDemandTubes(body.tubes ?? []);
+      const list = body.tubes ?? [];
+      const drawn = typeof body.tubes_drawn === 'number' ? body.tubes_drawn : list.length;
+      setTubesMeta({
+        groupsInRange: typeof body.groups_in_range === 'number' ? body.groups_in_range : list.length,
+        tubesDrawn: drawn,
+        axisFallback: typeof body.tubes_axis_fallback === 'number' ? body.tubes_axis_fallback : 0,
+      });
+      setDemandTubes(list);
     } catch (e) {
       setTubesErr(e instanceof Error ? e.message : 'Error de red');
       setDemandTubes([]);
+      setTubesMeta(null);
     } finally {
       setTubesLoading(false);
     }
@@ -274,8 +295,9 @@ export default function AdminCorridorsPage() {
             cajas.
           </li>
           <li>
-            Los <strong>tubos violeta</strong> son la misma idea de radio (~2 km al eje) que usa el sync geográfico de
-            grupos; son aproximación visual, no el motor exacto celda a celda.
+            Los <strong>tubos violeta</strong> usan el mismo radio (~2 km al eje) que el sync geográfico de grupos. El
+            eje sigue la <strong>polilínea de ruta</strong> guardada (el sync suele armarla con OSRM sobre la red vial);
+            no es una copia del estilo &quot;calles principales&quot; del mapa base.
           </li>
         </ul>
       </div>
@@ -358,12 +380,22 @@ export default function AdminCorridorsPage() {
             >
               {tubesLoading ? 'Cargando tubos…' : 'Recargar tubos'}
             </button>
-            {demandTubes.length > 0 && (
+            {showDemandTubes && !tubesLoading && tubesMeta !== null && (
               <span className="text-xs text-violet-800">
-                {demandTubes.length} grupo(s) con polilínea en el rango
+                Grupos en rango: {tubesMeta.groupsInRange} · Tubos dibujados: {tubesMeta.tubesDrawn}
+                {tubesMeta.axisFallback > 0
+                  ? ` (${tubesMeta.axisFallback} con eje desde trip_requests)`
+                  : ''}
               </span>
             )}
           </div>
+          {showDemandTubes && !tubesLoading && tubesMeta && tubesMeta.groupsInRange > 0 && tubesMeta.tubesDrawn === 0 && (
+            <div className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Hay {tubesMeta.groupsInRange} fila(s) en <code className="text-xs bg-amber-100/80 px-1 rounded">demand_route_groups</code> en
+              esas fechas, pero ninguna produce un tubo: revisá <code className="text-xs bg-amber-100/80 px-1 rounded">base_polyline</code> o
+              corré <strong>POST /api/demand-routes/sync</strong> para regenerar grupos con ruta.
+            </div>
+          )}
           {tubesErr && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{tubesErr}</div>
           )}
