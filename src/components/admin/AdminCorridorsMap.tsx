@@ -313,23 +313,37 @@ export default function AdminCorridorsMap({
               preventMarkerRemoval: true,
               snappable: true,
             });
-            border.on('pm:update', () => {
-              const nextPoly = polygonFromLeaflet(border.getLatLngs() as L.LatLng[] | L.LatLng[][]);
-              if (nextPoly.length < 3) return;
-              const nextAll = cityPolysAll.map((cp) =>
-                cp.id === city.id ? { ...cp, polygon_latlng: nextPoly } : cp
-              );
-              const bbox = bboxFromCityPolygons(nextAll);
-              if (!bbox) return;
-              onZoneEditedRef.current(c.id, kind, {
-                ...bbox,
-                city_polygons: nextAll.map((cp) => ({
-                  id: cp.id,
-                  name: cp.name,
-                  active: cp.active,
-                  polygon_latlng: cp.polygon_latlng,
-                })),
-              });
+            let saveTimer: ReturnType<typeof setTimeout> | null = null;
+            const persistCityEdit = () => {
+              if (saveTimer) clearTimeout(saveTimer);
+              saveTimer = setTimeout(() => {
+                saveTimer = null;
+                const nextPoly = polygonFromLeaflet(border.getLatLngs() as L.LatLng[] | L.LatLng[][]);
+                if (nextPoly.length < 3) return;
+                const nextAll = cityPolysAll.map((cp) =>
+                  cp.id === city.id ? { ...cp, polygon_latlng: nextPoly } : cp
+                );
+                const bbox = bboxFromCityPolygons(nextAll);
+                if (!bbox) return;
+                onZoneEditedRef.current(c.id, kind, {
+                  ...bbox,
+                  city_polygons: nextAll.map((cp) => ({
+                    id: cp.id,
+                    name: cp.name,
+                    active: cp.active,
+                    polygon_latlng: cp.polygon_latlng,
+                  })),
+                });
+              }, 220);
+            };
+            // `pm:update` no siempre dispara en global edit mode; estos sí lo hacen al editar vértices.
+            border.on('pm:markerdragend', persistCityEdit);
+            border.on('pm:vertexadded', persistCityEdit);
+            border.on('pm:vertexremoved', persistCityEdit);
+            border.on('pm:edit', persistCityEdit);
+            border.on('pm:update', persistCityEdit);
+            border.on('remove', () => {
+              if (saveTimer) clearTimeout(saveTimer);
             });
           }
           for (const p of ring) {
