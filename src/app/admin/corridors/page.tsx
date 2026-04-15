@@ -36,6 +36,7 @@ type CorridorRow = {
   is_active: boolean;
   created_at: string;
 };
+type DrawKind = 'origin' | 'destination';
 
 function zoneSummary(z: Record<string, unknown>): string {
   const o = z as CorridorZone;
@@ -60,7 +61,7 @@ export default function AdminCorridorsPage() {
     return u.toISOString().slice(0, 10);
   });
   const [demandTubes, setDemandTubes] = useState<DemandTubeLayer[]>([]);
-  const [showDemandTubes, setShowDemandTubes] = useState(true);
+  const [showDemandTubes, setShowDemandTubes] = useState(false);
   const [tubesLoading, setTubesLoading] = useState(false);
   const [tubesErr, setTubesErr] = useState<string | null>(null);
   const [tubesMeta, setTubesMeta] = useState<{
@@ -69,6 +70,8 @@ export default function AdminCorridorsPage() {
     axisFallback: number;
   } | null>(null);
   const [corridorOutlineOnly, setCorridorOutlineOnly] = useState(false);
+  const [drawCorridorId, setDrawCorridorId] = useState<string>('');
+  const [drawKind, setDrawKind] = useState<DrawKind>('origin');
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -173,8 +176,9 @@ export default function AdminCorridorsPage() {
 
   useEffect(() => {
     try {
-      if (typeof window !== 'undefined' && localStorage.getItem('admin:corridors:outlineOnly') === '1') {
-        setCorridorOutlineOnly(true);
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('admin:corridors:outlineOnly');
+        setCorridorOutlineOnly(saved == null ? true : saved === '1');
       }
     } catch {
       /* ignore */
@@ -193,6 +197,16 @@ export default function AdminCorridorsPage() {
       return next;
     });
   }, [rows]);
+
+  useEffect(() => {
+    if (rows.length === 0) {
+      setDrawCorridorId('');
+      return;
+    }
+    if (!drawCorridorId || !rows.some((r) => r.id === drawCorridorId)) {
+      setDrawCorridorId(rows[0].id);
+    }
+  }, [rows, drawCorridorId]);
 
   const patchZone = useCallback(
     async (corridorId: string, kind: 'origin' | 'destination', payload: CorridorZoneEditPayload) => {
@@ -391,6 +405,33 @@ export default function AdminCorridorsPage() {
             >
               {tubesLoading ? 'Cargando tubos…' : 'Recargar tubos'}
             </button>
+            <div>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Dibujar en corredor</label>
+              <select
+                value={drawCorridorId}
+                onChange={(e) => setDrawCorridorId(e.target.value)}
+                className="border border-violet-300 rounded-lg px-2 py-1 text-sm min-w-[180px]"
+                disabled={rows.length === 0}
+              >
+                {rows.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name} ({r.slug})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Zona objetivo</label>
+              <select
+                value={drawKind}
+                onChange={(e) => setDrawKind(e.target.value as DrawKind)}
+                className="border border-violet-300 rounded-lg px-2 py-1 text-sm"
+                disabled={!drawCorridorId}
+              >
+                <option value="origin">Origen</option>
+                <option value="destination">Destino</option>
+              </select>
+            </div>
             {showDemandTubes && !tubesLoading && tubesMeta !== null && (
               <span className="text-xs text-violet-800">
                 Grupos en rango: {tubesMeta.groupsInRange} · Tubos dibujados: {tubesMeta.tubesDrawn}
@@ -427,6 +468,9 @@ export default function AdminCorridorsPage() {
               />
               Solo bordes (sin relleno)
             </label>
+            <span className="text-[11px] text-gray-500">
+              En modo solo bordes se mantienen visibles los contornos de cada hexágono, sin relleno.
+            </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="inline-block w-4 h-3 rounded border border-violet-700 bg-violet-400/40" /> Tubo sync
             </span>
@@ -448,6 +492,7 @@ export default function AdminCorridorsPage() {
             demandTubes={demandTubes}
             showDemandTubes={showDemandTubes}
             corridorZonesOutlineOnly={corridorOutlineOnly}
+            drawTarget={drawCorridorId ? { corridorId: drawCorridorId, kind: drawKind } : null}
           />
         </div>
       )}

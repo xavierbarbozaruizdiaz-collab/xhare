@@ -19,6 +19,8 @@ const zoneSchema = z.object({
   maxLng: z.number().finite(),
   /** Si viene, la clasificación usa PostGIS `ST_Covers` sobre el polígono (6 vértices). */
   hex_latlng: z.array(hexPointSchema).length(6).optional(),
+  /** Si viene, tiene prioridad para clasificar (polígono contenedor libre). */
+  polygon_latlng: z.array(hexPointSchema).min(3).max(256).optional(),
 });
 
 const bodySchema = z
@@ -51,6 +53,9 @@ function zoneToJson(box: z.infer<typeof zoneSchema>): Record<string, unknown> {
   };
   if (box.hex_latlng && box.hex_latlng.length === 6) {
     out.hex_latlng = box.hex_latlng.map((p) => ({ lat: p.lat, lng: p.lng }));
+  }
+  if (box.polygon_latlng && box.polygon_latlng.length >= 3) {
+    out.polygon_latlng = box.polygon_latlng.map((p) => ({ lat: p.lat, lng: p.lng }));
   }
   return out;
 }

@@ -11,10 +11,12 @@ import {
   boundsToBox,
   boundsToContainingFlatTopHex,
   DEFAULT_CORRIDOR_HEX_EDGE_M,
-  hexGridCellsInPolygon,
+  hexGridCellsTouchingPolygonGlobal,
   hexRingToLeafletLatLngs,
   leafletRingToHexLatLngs,
+  leafletRingToPolygonLatLngs,
   parseHexLatlngFromZone,
+  parsePolygonLatlngFromZone,
 } from '@/lib/corridorZoneHex';
 
 export type AdminCorridorMapItem = {
@@ -38,7 +40,8 @@ export type CorridorZoneBox = {
 
 /** Payload al guardar una zona editada en el mapa (bbox + hexágono). */
 export type CorridorZoneEditPayload = CorridorZoneBox & {
-  hex_latlng: Array<{ lat: number; lng: number }>;
+  hex_latlng?: Array<{ lat: number; lng: number }>;
+  polygon_latlng?: Array<{ lat: number; lng: number }>;
 };
 
 /** Polilínea base de un grupo `demand_route_groups` (sync geo) para el tubo visual. */
@@ -95,6 +98,8 @@ type Props = {
   corridorHexCellEdgeM?: number;
   /** Si true: celdas y zona macro sin relleno (solo contornos, estilo referencia móvil). */
   corridorZonesOutlineOnly?: boolean;
+  /** Si se define, habilita dibujar un polígono contenedor para ese corredor/zona. */
+  drawTarget?: ZoneMeta | null;
   height?: string;
   className?: string;
 };
@@ -119,6 +124,7 @@ export default function AdminCorridorsMap({
   showDemandTubes = false,
   corridorHexCellEdgeM = DEFAULT_CORRIDOR_HEX_EDGE_M,
   corridorZonesOutlineOnly = false,
+  drawTarget = null,
   height = 'min(52vh, 480px)',
   className = '',
 }: Props) {
@@ -128,6 +134,8 @@ export default function AdminCorridorsMap({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onZoneEditedRef = useRef(onZoneEdited);
   onZoneEditedRef.current = onZoneEdited;
+  const drawTargetRef = useRef<ZoneMeta | null>(drawTarget);
+  drawTargetRef.current = drawTarget;
 
   const scheduleCommit = useCallback((meta: ZoneMeta, layer: L.Polygon) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -136,10 +144,10 @@ export default function AdminCorridorsMap({
       const b = layer.getBounds();
       const raw = layer.getLatLngs();
       const ring0 = Array.isArray(raw[0]) ? (raw[0] as L.LatLng[]) : (raw as L.LatLng[]);
-      const hex = leafletRingToHexLatLngs(ring0);
+      const polygon = leafletRingToPolygonLatLngs(ring0);
       const box = boundsToBox(b);
-      if (hex.length === 6) {
-        onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, hex_latlng: hex });
+      if (polygon.length >= 3) {
+        onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, polygon_latlng: polygon });
       } else {
         const fallback = boundsToContainingFlatTopHex(b);
         onZoneEditedRef.current(meta.corridorId, meta.kind, { ...box, hex_latlng: fallback });
@@ -157,6 +165,33 @@ export default function AdminCorridorsMap({
     overlayRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
+    const mpm = (map as MapWithPm).pm;
+    mpm?.addControls({
+      position: 'topleft',
+      drawPolygon: true,
+      drawRectangle: false,
+      drawCircle: false,
+      drawCircleMarker: false,
+      drawPolyline: false,
+      drawMarker: false,
+      drawText: false,
+      cutPolygon: false,
+      dragMode: false,
+      rotateMode: false,
+      editMode: false,
+      removalMode: false,
+    });
+    map.on('pm:create', (e: L.LeafletEvent & { layer?: L.Layer }) => {
+      const target = drawTargetRef.current;
+      const layer = e.layer;
+      if (!target || !(layer instanceof L.Polygon)) {
+        if (layer && 'remove' in layer && typeof layer.remove === 'function') layer.remove();
+        return;
+      }
+      scheduleCommit(target, layer);
+      layer.remove();
+    });
+
     const t = setTimeout(() => map.invalidateSize(), 200);
     return () => {
       clearTimeout(t);
@@ -165,6 +200,7 @@ export default function AdminCorridorsMap({
         debounceRef.current = null;
       }
       (map as MapWithPm).pm?.disableGlobalEditMode();
+      (map as MapWithPm).pm?.removeControls();
       map.remove();
       mapRef.current = null;
       overlayRef.current = null;
@@ -250,9 +286,10 @@ export default function AdminCorridorsMap({
         fill: string
       ) => {
         if (!show) return;
-        const stored = parseHexLatlngFromZone(zone);
-        const ring = stored ?? boundsToContainingFlatTopHex(bounds);
-        const { cells, effectiveEdgeM, capped } = hexGridCellsInPolygon(ring, corridorHexCellEdgeM);
+        const storedPoly = parsePolygonLatlngFromZone(zone);
+        const storedHex = parseHexLatlngFromZone(zone);
+        const ring = storedPoly ?? storedHex ?? boundsToContainingFlatTopHex(bounds);
+        const { cells, effectiveEdgeM, capped } = hexGridCellsTouchingPolygonGlobal(ring, corridorHexCellEdgeM);
         const cellHint = capped
           ? ` · malla ${Math.round(effectiveEdgeM)} m (tope ${cells.length} celdas)`
           : ` · malla ~${Math.round(effectiveEdgeM)} m (${cells.length} celdas)`;
@@ -260,9 +297,9 @@ export default function AdminCorridorsMap({
           L.polygon(hexRingToLeafletLatLngs(cell), {
             color: stroke,
             fillColor: fill,
-            fillOpacity: cellFill,
-            weight: cellWeight,
-            opacity: 1,
+            fillOpacity: corridorZonesOutlineOnly ? 0 : cellFill,
+            weight: corridorZonesOutlineOnly ? 1.1 : cellWeight,
+            opacity: corridorZonesOutlineOnly ? 0.9 : 1,
             pmIgnore: true,
           } as PathOptsPm).addTo(group);
         }
@@ -325,6 +362,7 @@ export default function AdminCorridorsMap({
     showDemandTubes,
     corridorHexCellEdgeM,
     corridorZonesOutlineOnly,
+    drawTarget,
   ]);
 
   const hasCorridors = corridors.length > 0;
@@ -338,7 +376,7 @@ export default function AdminCorridorsMap({
         <strong>sync geográfico</strong> (2 km al eje de la polilínea del grupo).{' '}
         <span className="text-sky-900 font-medium">Azul / naranja</span>: contorno editable + malla hexagonal de
         referencia (~{Math.round(corridorHexCellEdgeM)} m por celda; la clasificación sigue el contorno guardado). Los
-        tubos no se editan acá.
+        tubos no se editan acá. Usá la herramienta de polígono para redibujar la zona seleccionada.
       </p>
       <div
         className={`relative w-full z-0 rounded-xl overflow-hidden border border-gray-200 ${className}`}
