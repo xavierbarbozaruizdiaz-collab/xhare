@@ -15,7 +15,7 @@ const cityPolygonSchema = z.object({
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   active: z.boolean().optional(),
-  polygon_latlng: z.array(hexPointSchema).min(3).max(512),
+  polygon_latlng: z.array(hexPointSchema).min(3).max(3000),
 });
 
 const zoneSchema = z.object({
@@ -26,7 +26,7 @@ const zoneSchema = z.object({
   /** Si viene, la clasificación usa PostGIS `ST_Covers` sobre el polígono (6 vértices). */
   hex_latlng: z.array(hexPointSchema).length(6).optional(),
   /** Si viene, tiene prioridad para clasificar (polígono contenedor libre). */
-  polygon_latlng: z.array(hexPointSchema).min(3).max(256).optional(),
+  polygon_latlng: z.array(hexPointSchema).min(3).max(3000).optional(),
   /** Lista de ciudades (ej. Central) activables/desactivables por zona. */
   city_polygons: z.array(cityPolygonSchema).max(128).optional(),
 });
