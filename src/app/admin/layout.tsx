@@ -23,6 +23,7 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
   const nav = [
     { href: '/admin', label: 'Inicio' },
     { href: '/admin/dispatch-map', label: 'Mapa despacho' },
+    { href: '/admin/demand-grouping', label: 'Agrupación' },
     { href: '/admin/corridors', label: 'Corredores' },
     { href: '/admin/pricing', label: 'Pricing' },
     { href: '/admin/drivers', label: 'Conductores' },
