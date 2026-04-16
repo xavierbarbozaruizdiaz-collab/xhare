@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { normalizeDemandGroupingParams, runDemandGroupingPipeline } from '@/lib/demand-grouping-pipeline';
+
+export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/demand-routes/auto-group-classified
- * Agrupa trip_requests pending + classified por (corridor_id, time_bucket) en demand_route_groups/members.
- * Misma autorización que sync: conductor/admin o Bearer DEMAND_ROUTES_SYNC_SECRET.
+ * Solo paso classified: v2 (score) con fallback v1, mismos parámetros opcionales que admin/cron.
+ * Auth: conductor/admin o Bearer DEMAND_ROUTES_SYNC_SECRET.
  */
 export async function POST(request: Request) {
   try {
@@ -27,22 +30,32 @@ export async function POST(request: Request) {
       }
     }
 
-    const supabase = createServiceClient();
-    const { data, error } = await supabase.rpc('auto_group_classified_trip_requests', {
-      p_max_seats: 15,
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await request.json()) as Record<string, unknown>;
+    } catch {
+      body = {};
+    }
+    const params = normalizeDemandGroupingParams({
+      maxSeats: body.maxSeats as number | undefined,
+      minScore: body.minScore as number | undefined,
+      maxOriginKm: body.maxOriginKm as number | undefined,
+      maxDestKm: body.maxDestKm as number | undefined,
     });
 
-    if (error) {
-      console.error('[auto-group-classified] rpc error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    const supabase = createServiceClient();
+    const { steps } = await runDemandGroupingPipeline(supabase, 'classified', params);
+    const step = steps[0];
+    const ok = step?.status === 200;
+
+    if (process.env.NODE_ENV !== 'production' && ok) {
+      console.info('[classification] auto_group_classified pipeline', step?.body);
     }
 
-    const payload = data as Record<string, unknown> | null;
-    if (process.env.NODE_ENV !== 'production') {
-      console.info('[classification] auto_group_classified', payload);
-    }
-
-    return NextResponse.json(payload ?? { ok: false });
+    return NextResponse.json(
+      { ok, steps, params },
+      { status: ok ? 200 : 500 }
+    );
   } catch (e) {
     console.error('[auto-group-classified] error:', e);
     return NextResponse.json(
