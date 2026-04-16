@@ -1,0 +1,25 @@
+# Opcional: reemplaza crons de Vercel en plan Hobby (no permiten */5 en vercel.json).
+# Secrets en el repo (Settings → Secrets → Actions):
+#   VERCEL_GROUPING_CRON_URL = https://TU-DOMINIO.vercel.app/api/cron/demand-grouping
+#   VERCEL_CRON_SECRET        = mismo valor que CRON_SECRET en Vercel
+name: Demand grouping cron
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET /api/cron/demand-grouping
+        env:
+          URL: ${{ secrets.VERCEL_GROUPING_CRON_URL }}
+          SECRET: ${{ secrets.VERCEL_CRON_SECRET }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$SECRET" ]; then
+            echo "Omitido: definí VERCEL_GROUPING_CRON_URL y VERCEL_CRON_SECRET en Actions secrets."
+            exit 0
+          fi
+          curl -sS -f -H "Authorization: Bearer $SECRET" "$URL"

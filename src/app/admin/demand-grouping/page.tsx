@@ -165,9 +165,12 @@ export default function AdminDemandGroupingPage() {
         <p className="text-sm text-gray-600 mt-1 max-w-3xl">
           Fase 1–2: diagnóstico en vivo y ejecución <strong>en proceso</strong> (service role tras validar admin): mismo RPC y mismo
           sync geo que antes, sin depender de un HTTP interno al deploy. Ves conteos antes/después y el resultado de cada paso. En
-          producción Vercel, el cron <code className="text-xs bg-gray-100 px-1 rounded">/api/cron/demand-grouping</code> cada
-          5 min corre el mismo pipeline si configurás <code className="text-xs bg-gray-100 px-1 rounded">CRON_SECRET</code> (o reutilizás{' '}
-          <code className="text-xs bg-gray-100 px-1 rounded">DEMAND_ROUTES_SYNC_SECRET</code> como bearer en un cron externo).
+          endpoint <code className="text-xs bg-gray-100 px-1 rounded">GET /api/cron/demand-grouping</code> con{' '}
+          <code className="text-xs bg-gray-100 px-1 rounded">Authorization: Bearer CRON_SECRET</code> (o{' '}
+          <code className="text-xs bg-gray-100 px-1 rounded">DEMAND_ROUTES_SYNC_SECRET</code>) ejecuta el mismo pipeline. En Vercel{' '}
+          <strong>Hobby</strong> no se puede declarar un cron cada 5 min en <code className="text-xs bg-gray-100 px-1 rounded">vercel.json</code>{' '}
+          (bloquea el deploy); usá plan <strong>Pro</strong> para crons frecuentes en Vercel o el workflow de GitHub{' '}
+          <code className="text-xs bg-gray-100 px-1 rounded">.github/workflows/demand-grouping-cron.yml</code> con secrets del repo.
         </p>
       </div>
 

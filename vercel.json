@@ -2,11 +2,5 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install",
   "framework": "nextjs",
-  "regions": ["iad1"],
-  "crons": [
-    {
-      "path": "/api/cron/demand-grouping",
-      "schedule": "*/5 * * * *"
-    }
-  ]
+  "regions": ["iad1"]
 }
