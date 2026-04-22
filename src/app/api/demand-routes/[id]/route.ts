@@ -14,6 +14,16 @@ function toPoint(lat: number | null | undefined, lng: number | null | undefined)
   return { lat: Number(lat), lng: Number(lng) };
 }
 
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const aa =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((aLat * Math.PI) / 180) * Math.cos((bLat * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+}
+
 async function fetchGoogleRoute(origin: Point, destination: Point, waypoints: Point[]): Promise<Point[] | null> {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
   if (!apiKey) return null;
@@ -222,19 +232,6 @@ export async function GET(
           minFareComputed
         );
         const pygPerKm = Math.round((Number(activePricing?.pyg_per_km_100 ?? 2780) * discount) / roundTo) * roundTo;
-
-        function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
-          const R = 6371;
-          const dLat = ((bLat - aLat) * Math.PI) / 180;
-          const dLng = ((bLng - aLng) * Math.PI) / 180;
-          const aa =
-            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos((aLat * Math.PI) / 180) *
-              Math.cos((bLat * Math.PI) / 180) *
-              Math.sin(dLng / 2) *
-              Math.sin(dLng / 2);
-          return R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
-        }
 
         const memberRowsRaw = (members ?? []).filter((m) => requests.some((r) => r.id === m.trip_request_id));
         const memberRows = dedupeDemandRouteMemberRows(memberRowsRaw);
