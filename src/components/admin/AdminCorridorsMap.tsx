@@ -5,6 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
+import { cellToBoundary, polygonToCells } from 'h3-js';
 import type { Point } from '@/types';
 import { DEMAND_SYNC_CORRIDOR_METERS, tubePolygonFromPolyline } from '@/lib/polylineTube';
 import {
@@ -14,6 +15,7 @@ import {
   hexRingToLeafletLatLngs,
   parseCityPolygonsFromZone,
 } from '@/lib/corridorZoneHex';
+import { TRIP_REQUEST_SUPER_HEX_RES } from '@/lib/trip-request-h3';
 
 export type AdminCorridorMapItem = {
   id: string;
@@ -178,6 +180,8 @@ type Props = {
   showDemandTubes?: boolean;
   /** Lado aproximado de cada celda hexagonal de vista (~150 m). */
   corridorHexCellEdgeM?: number;
+  /** Muestra super-hex de agrupación (H3 res 6 ~ 4-5 km). */
+  showSuperHex?: boolean;
   /** Mantener para compatibilidad del caller; hex se dibuja siempre solo bordes. */
   corridorZonesOutlineOnly?: boolean;
   /** Mantener para compatibilidad del caller; edición manual desactivada. */
@@ -213,6 +217,7 @@ export default function AdminCorridorsMap({
   demandTubes = [],
   showDemandTubes = false,
   corridorHexCellEdgeM = DEFAULT_CORRIDOR_HEX_EDGE_M,
+  showSuperHex = false,
   corridorZonesOutlineOnly = true,
   drawTarget = null,
   editCityId = null,
@@ -386,6 +391,7 @@ export default function AdminCorridorsMap({
         let totalCells = 0;
         let cappedAny = false;
         let effectiveSum = 0;
+        const macroSuperHex = new Set<string>();
         for (const ring of rings) {
           const { cells, effectiveEdgeM, capped } = hexGridCellsTouchingPolygonGlobal(ring, corridorHexCellEdgeM);
           totalCells += cells.length;
@@ -403,6 +409,19 @@ export default function AdminCorridorsMap({
               } as PathOptsPm).addTo(group);
             }
           }
+          if (showSuperHex && ring.length >= 3) {
+            try {
+              const h3Cells = polygonToCells(
+                [
+                  ring.map((p) => [p.lat, p.lng] as [number, number]),
+                ],
+                TRIP_REQUEST_SUPER_HEX_RES
+              );
+              for (const idx of h3Cells) macroSuperHex.add(idx);
+            } catch {
+              // no-op: una geometría inválida no debe romper el resto de capas
+            }
+          }
         }
         const effectiveAvg = rings.length > 0 ? effectiveSum / rings.length : corridorHexCellEdgeM;
         const cellHint = corridorZonesOutlineOnly
@@ -410,6 +429,10 @@ export default function AdminCorridorsMap({
           : cappedAny
             ? ` · malla ${Math.round(effectiveAvg)} m (tope ${totalCells} celdas)`
             : ` · malla ~${Math.round(effectiveAvg)} m (${totalCells} celdas)`;
+        const superHint =
+          showSuperHex && macroSuperHex.size > 0
+            ? ` · super-hex r${TRIP_REQUEST_SUPER_HEX_RES}: ${macroSuperHex.size}`
+            : '';
 
         for (let idx = 0; idx < rings.length; idx++) {
           const ring = rings[idx];
@@ -432,7 +455,7 @@ export default function AdminCorridorsMap({
           } as PathOptsPm).addTo(group);
           border.bindPopup(
             `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(
-              `${title} · ${cityName}${cellHint}`
+              `${title} · ${cityName}${cellHint}${superHint}`
             )}<br/>Zona automática de ciudad (Central).</span>`
           );
           if (canEdit && city && (border as PmPolygon).pm) {
@@ -482,6 +505,24 @@ export default function AdminCorridorsMap({
           }
           for (const p of ring) {
             allCorners.push(L.latLng(p.lat, p.lng));
+          }
+        }
+        if (showSuperHex && macroSuperHex.size > 0) {
+          for (const idx of Array.from(macroSuperHex)) {
+            const boundary = cellToBoundary(idx);
+            if (!Array.isArray(boundary) || boundary.length < 3) continue;
+            const latlngs = boundary.map(([lat, lng]) => [lat, lng] as L.LatLngExpression);
+            L.polygon(latlngs, {
+              color: kind === 'origin' ? '#1d4ed8' : '#b45309',
+              weight: 2.2,
+              opacity: 0.75,
+              fillOpacity: 0,
+              dashArray: '7 4',
+              pmIgnore: true,
+            } as PathOptsPm).addTo(group);
+            for (const [lat, lng] of boundary) {
+              allCorners.push(L.latLng(lat, lng));
+            }
           }
         }
       };
@@ -539,6 +580,7 @@ export default function AdminCorridorsMap({
     demandTubes,
     showDemandTubes,
     corridorHexCellEdgeM,
+    showSuperHex,
     corridorZonesOutlineOnly,
     drawTarget,
     editCityId,
@@ -557,7 +599,13 @@ export default function AdminCorridorsMap({
         <span className="text-violet-900 font-medium">Violeta</span>: tubo aproximado del mismo radio que usa el{' '}
         <strong>sync geográfico</strong> (2 km al eje de la polilínea del grupo).{' '}
         <span className="text-sky-900 font-medium">Azul / naranja</span>: malla hexagonal automática por ciudades de
-        Central (~{Math.round(corridorHexCellEdgeM)} m por celda), visible solo por bordes.
+        Central (~{Math.round(corridorHexCellEdgeM)} m por celda), visible solo por bordes.{' '}
+        {showSuperHex && (
+          <>
+            <span className="font-medium text-indigo-900">Trazos punteados</span>: super-hex de agrupación H3 r
+            {TRIP_REQUEST_SUPER_HEX_RES} (~4-5 km).
+          </>
+        )}
       </p>
       <div
         className={`relative w-full z-0 rounded-xl overflow-hidden border border-gray-200 ${className}`}

@@ -194,6 +194,7 @@ export default function AdminCorridorsPage() {
     axisFallback: number;
   } | null>(null);
   const [corridorOutlineOnly, setCorridorOutlineOnly] = useState(false);
+  const [showSuperHex, setShowSuperHex] = useState(false);
   const [drawCorridorId, setDrawCorridorId] = useState<string>('');
   const [drawKind, setDrawKind] = useState<DrawKind>('origin');
   const [editCityId, setEditCityId] = useState<string>('');
@@ -948,6 +949,14 @@ export default function AdminCorridorsPage() {
               />
               Solo bordes (sin relleno)
             </label>
+            <label className="inline-flex items-center gap-2 cursor-pointer text-gray-800 font-medium">
+              <input
+                type="checkbox"
+                checked={showSuperHex}
+                onChange={(e) => setShowSuperHex(e.target.checked)}
+              />
+              Ver super-hex de agrupación (H3 r6)
+            </label>
             <span className="text-[11px] text-gray-500">
               En modo solo bordes se muestra solo el contorno de ciudad (sin dibujar la malla interna).
             </span>
@@ -969,6 +978,10 @@ export default function AdminCorridorsPage() {
               <span className="inline-block w-4 h-3 rounded border border-gray-400 border-dashed bg-gray-200/80" />{' '}
               Corredor inactivo (más tenue)
             </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block w-4 h-3 rounded border-2 border-indigo-700 border-dashed bg-transparent" />{' '}
+              Super-hex H3 r6 (~4-5 km)
+            </span>
           </div>
           <AdminCorridorsMap
             corridors={rows}
@@ -976,6 +989,7 @@ export default function AdminCorridorsPage() {
             onZoneEdited={patchZone}
             demandTubes={demandTubes}
             showDemandTubes={showDemandTubes}
+            showSuperHex={showSuperHex}
             corridorZonesOutlineOnly={corridorOutlineOnly}
             drawTarget={drawCorridorId ? { corridorId: drawCorridorId, kind: drawKind } : null}
             editCityId={editCityId || null}
