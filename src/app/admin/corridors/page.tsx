@@ -979,8 +979,11 @@ export default function AdminCorridorsPage() {
               Corredor inactivo (más tenue)
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block w-4 h-3 rounded border-2 border-indigo-700 border-dashed bg-transparent" />{' '}
-              Super-hex H3 r6 (~4-5 km)
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-4 h-3 rounded border-2 border-fuchsia-500 border-dashed bg-transparent" />
+                <span className="inline-block w-4 h-3 rounded border-2 border-lime-600 border-dashed bg-transparent" />
+              </span>{' '}
+              Super-hex H3 r6 (~4-5 km, colores separados)
             </span>
           </div>
           <AdminCorridorsMap

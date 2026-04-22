@@ -513,7 +513,8 @@ export default function AdminCorridorsMap({
             if (!Array.isArray(boundary) || boundary.length < 3) continue;
             const latlngs = boundary.map(([lat, lng]) => [lat, lng] as L.LatLngExpression);
             L.polygon(latlngs, {
-              color: kind === 'origin' ? '#1d4ed8' : '#b45309',
+              // Paleta separada de origen/destino para no confundir con la capa base.
+              color: kind === 'origin' ? '#d946ef' : '#65a30d',
               weight: 2.2,
               opacity: 0.75,
               fillOpacity: 0,
@@ -602,8 +603,8 @@ export default function AdminCorridorsMap({
         Central (~{Math.round(corridorHexCellEdgeM)} m por celda), visible solo por bordes.{' '}
         {showSuperHex && (
           <>
-            <span className="font-medium text-indigo-900">Trazos punteados</span>: super-hex de agrupación H3 r
-            {TRIP_REQUEST_SUPER_HEX_RES} (~4-5 km).
+            <span className="font-medium text-fuchsia-800">Fucsia / verde</span>: super-hex de agrupación H3 r
+            {TRIP_REQUEST_SUPER_HEX_RES} (~4-5 km), distinto a la capa base azul/naranja.
           </>
         )}
       </p>
