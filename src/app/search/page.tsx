@@ -8,6 +8,7 @@ import dynamic from 'next/dynamic';
 import UserRoleBadge from '@/components/UserRoleBadge';
 import AppDrawer from '@/components/AppDrawer';
 import { rideProximityCheck } from '@/lib/search-proximity';
+import { tripRequestSuperHexPair } from '@/lib/trip-request-h3';
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), {
   ssr: false,
@@ -344,18 +345,25 @@ export default function SearchPage() {
         return;
       }
       const timeStr = requestTime.trim().match(/^\d{1,2}:\d{2}$/) ? requestTime.trim() : '08:00';
+      const olat = parseFloat(o.lat);
+      const olng = parseFloat(o.lon);
+      const dlat = parseFloat(d.lat);
+      const dlng = parseFloat(d.lon);
+      const hex = tripRequestSuperHexPair(olat, olng, dlat, dlng);
       const { error } = await supabase.from('trip_requests').insert({
         user_id: user.id,
-        origin_lat: parseFloat(o.lat),
-        origin_lng: parseFloat(o.lon),
+        origin_lat: olat,
+        origin_lng: olng,
         origin_label: filters.origin.trim().slice(0, 500),
-        destination_lat: parseFloat(d.lat),
-        destination_lng: parseFloat(d.lon),
+        destination_lat: dlat,
+        destination_lng: dlng,
         destination_label: filters.destination.trim().slice(0, 500),
         requested_date: filters.date,
         requested_time: timeStr,
         seats: Math.max(1, Math.min(50, filters.seats)),
         status: 'pending',
+        origin_super_hex: hex.origin_super_hex,
+        dest_super_hex: hex.dest_super_hex,
       });
       if (error) throw error;
       setRequestSaved(true);

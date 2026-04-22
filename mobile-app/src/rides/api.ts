@@ -7,6 +7,7 @@ import { apiPost } from '../backend/api';
 import { env } from '../core/env';
 import { raceWithTimeout } from '../backend/withTimeout';
 import { distanceMeters, distancePointToPolylineMeters, type Point } from '../lib/geo';
+import { tripRequestSuperHexPair } from '@/lib/tripRequestH3';
 
 const SUPABASE_QUERY_TIMEOUT_MS = 28_000;
 const SAVE_TRIP_REQUEST_INSERT_TIMEOUT_MS = 22_000;
@@ -713,6 +714,14 @@ function buildTripRequestRow(params: {
   if (params.passengerFavoriteSlot?.trim()) {
     row.passenger_favorite_slot = params.passengerFavoriteSlot.trim().slice(0, 120);
   }
+  const hex = tripRequestSuperHexPair(
+    params.originLat,
+    params.originLng,
+    params.destinationLat,
+    params.destinationLng
+  );
+  row.origin_super_hex = hex.origin_super_hex;
+  row.dest_super_hex = hex.dest_super_hex;
   return row;
 }
 

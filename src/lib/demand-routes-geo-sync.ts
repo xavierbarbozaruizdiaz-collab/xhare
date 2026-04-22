@@ -336,6 +336,7 @@ export async function runDemandRoutesGeoSync(
           await supabase.from('demand_route_members').insert({
             group_id: groupId,
             trip_request_id: tripRequestId,
+            stop_type: 'LEGACY',
           });
         }
       }

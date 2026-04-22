@@ -18,6 +18,14 @@ function getGoogleRoutesTimeoutMs(): number {
   return 15_000;
 }
 
+/** Agrupación hex (Hobby): tope 12s para no bloquear el cron. */
+export function getGoogleRoutesTimeoutMsHexCap(): number {
+  return Math.min(12_000, getGoogleRoutesTimeoutMs());
+}
+
+const FIELD_MASK_WITH_WAYPOINT_OPTIMIZATION =
+  'routes.optimizedIntermediateWaypointIndex,routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline';
+
 function isValidLatLngPoint(p: unknown): p is LatLngPoint {
   if (p == null || typeof p !== 'object') return false;
   const o = p as Record<string, unknown>;
@@ -208,4 +216,150 @@ export async function computeGoogleDrivingRoute(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export type OptimizedPickupRouteResult = {
+  /** Índices en el array de intermediates en el orden de visita tras el origen fijo. */
+  optimizedIntermediateWaypointIndex: number[];
+  distanceMeters: number;
+  durationSeconds: number;
+  polyline: LatLngPoint[];
+};
+
+/** Alias semántico: misma respuesta que optimización de pickups. */
+export type OptimizedDropoffRouteResult = OptimizedPickupRouteResult;
+
+async function computeRoutesOptimizeWaypointOrder(
+  apiKey: string,
+  origin: LatLngPoint,
+  destination: LatLngPoint,
+  intermediates: LatLngPoint[],
+  timeoutMs: number
+): Promise<OptimizedPickupRouteResult | null> {
+  if (!isValidLatLngPoint(origin) || !isValidLatLngPoint(destination)) return null;
+  const mids = intermediates.filter(isValidLatLngPoint);
+  if (mids.length > MAX_INTERMEDIATES_PER_REQUEST) return null;
+
+  const body: Record<string, unknown> = {
+    origin: {
+      location: {
+        latLng: { latitude: origin.lat, longitude: origin.lng },
+      },
+    },
+    destination: {
+      location: {
+        latLng: { latitude: destination.lat, longitude: destination.lng },
+      },
+    },
+    travelMode: 'DRIVE',
+    optimizeWaypointOrder: true,
+  };
+
+  if (mids.length > 0) {
+    body.intermediates = mids.map((p) => ({
+      location: {
+        latLng: { latitude: p.lat, longitude: p.lng },
+      },
+    }));
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(COMPUTE_ROUTES_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': FIELD_MASK_WITH_WAYPOINT_OPTIMIZATION,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) return null;
+
+    let data: { routes?: Array<Record<string, unknown>> };
+    try {
+      data = (await res.json()) as { routes?: Array<Record<string, unknown>> };
+    } catch {
+      return null;
+    }
+
+    const route = data.routes?.[0];
+    if (!route) return null;
+
+    const rawIdx = route.optimizedIntermediateWaypointIndex;
+    let ordered: number[];
+    if (mids.length === 0) {
+      ordered = [];
+    } else if (Array.isArray(rawIdx) && rawIdx.length === mids.length) {
+      ordered = rawIdx.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0 && n < mids.length);
+      if (ordered.length !== mids.length) {
+        ordered = mids.map((_, i) => i);
+      }
+    } else {
+      ordered = mids.map((_, i) => i);
+    }
+
+    const polyObj = route.polyline as { encodedPolyline?: string } | undefined;
+    const enc = polyObj?.encodedPolyline;
+    if (!enc || typeof enc !== 'string') return null;
+
+    const durationSeconds = parseGoogleDurationSeconds(route.duration);
+    if (durationSeconds == null) return null;
+
+    const distanceMeters = Number(route.distanceMeters);
+    if (!Number.isFinite(distanceMeters) || distanceMeters < 0) return null;
+
+    const polyline = decodeEncodedPolyline(enc);
+    if (polyline.length < 2) return null;
+
+    return {
+      optimizedIntermediateWaypointIndex: ordered,
+      distanceMeters,
+      durationSeconds,
+      polyline,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Fase 1 PDP: origen = primer pickup; intermediates = resto de pickups; destino = cierre (p. ej. centroide drops).
+ * `optimizeWaypointOrder: true` en Routes API v2.
+ */
+export async function computePickupOrderWithGoogle(
+  apiKey: string,
+  firstPickup: LatLngPoint,
+  dropoffAnchor: LatLngPoint,
+  intermediatePickups: LatLngPoint[],
+  timeoutMs?: number
+): Promise<OptimizedPickupRouteResult | null> {
+  const tMs = Math.min(12_000, Math.max(3_000, timeoutMs ?? getGoogleRoutesTimeoutMsHexCap()));
+  const mids = intermediatePickups.filter(isValidLatLngPoint);
+  if (mids.length > MAX_INTERMEDIATES_PER_REQUEST) return null;
+  return computeRoutesOptimizeWaypointOrder(apiKey, firstPickup, dropoffAnchor, mids, tMs);
+}
+
+/**
+ * Fase 2 PDP: origen = última recogida (posición tras pickups); intermediates = n−1 destinos;
+ * destino fijo = destino del último pasajero en el orden de recogida (cierra la ruta de entregas).
+ */
+export async function computeDropoffOrderWithGoogle(
+  apiKey: string,
+  lastPickupLocation: LatLngPoint,
+  intermediateDropoffs: LatLngPoint[],
+  finalDropoff: LatLngPoint,
+  timeoutMs?: number
+): Promise<OptimizedDropoffRouteResult | null> {
+  const tMs = Math.min(12_000, Math.max(3_000, timeoutMs ?? getGoogleRoutesTimeoutMsHexCap()));
+  const mids = intermediateDropoffs.filter(isValidLatLngPoint);
+  if (mids.length > MAX_INTERMEDIATES_PER_REQUEST) return null;
+  return computeRoutesOptimizeWaypointOrder(apiKey, lastPickupLocation, finalDropoff, mids, tMs);
 }

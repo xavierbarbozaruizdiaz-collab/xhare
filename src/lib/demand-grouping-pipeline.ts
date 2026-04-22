@@ -1,5 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { runHexGroupingGooglePass } from '@/lib/demand-hex-google-optimize';
 import { runDemandRoutesGeoSync } from '@/lib/demand-routes-geo-sync';
+
+function parseHexGroupIds(data: unknown): string[] {
+  if (!data || typeof data !== 'object') return [];
+  const raw = (data as Record<string, unknown>).group_ids;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x): x is string => typeof x === 'string' && x.length > 0);
+}
 
 export type DemandGroupingStep = { name: string; status: number; body: unknown };
 
@@ -28,8 +36,9 @@ export function normalizeDemandGroupingParams(body: {
 }
 
 /**
- * 1) Agrupa classified (v2 con score; fallback v1 si falla el RPC v2).
- * 2) Sync geo para pending unclassified (misma lógica que POST /api/demand-routes/sync).
+ * 1) Agrupa por super-hex (v3) + optimización Google fase pickups (degradación FIFO si falla).
+ * 2) Agrupa classified (v2 con score; fallback v1 si falla el RPC v2).
+ * 3) Sync geo para pending unclassified (misma lógica que POST /api/demand-routes/sync).
  */
 export async function runDemandGroupingPipeline(
   service: SupabaseClient,
@@ -38,6 +47,41 @@ export async function runDemandGroupingPipeline(
 ): Promise<{ steps: DemandGroupingStep[] }> {
   const steps: DemandGroupingStep[] = [];
   const { maxSeats, minScore, maxOriginKm, maxDestKm } = params;
+
+  if (mode === 'both' || mode === 'classified') {
+    const { data: hexData, error: hexErr } = await service.rpc('auto_group_hex_trip_requests_v3', {
+      p_max_seats: maxSeats,
+    });
+    if (hexErr) {
+      steps.push({
+        name: 'auto_group_hex_trip_requests_v3',
+        status: 500,
+        body: {
+          error: hexErr.message,
+          code: hexErr.code,
+          hint: 'Revisá migración 076 (hex_bucket + RPC v3).',
+        },
+      });
+    } else {
+      steps.push({
+        name: 'auto_group_hex_trip_requests_v3',
+        status: 200,
+        body: hexData ?? { ok: true },
+      });
+      const groupIds = parseHexGroupIds(hexData);
+      if (groupIds.length > 0) {
+        const opt = await runHexGroupingGooglePass(service, groupIds);
+        steps.push({
+          name: 'hex_google_pdp',
+          status: 200,
+          body: {
+            ok: opt.ok,
+            results: opt.results,
+          },
+        });
+      }
+    }
+  }
 
   if (mode === 'both' || mode === 'classified') {
     const { data, error } = await service.rpc('auto_group_classified_trip_requests_v2', {

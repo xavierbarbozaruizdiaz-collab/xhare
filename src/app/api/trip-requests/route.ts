@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getAuth } from '@/lib/api-auth';
+import { tripRequestSuperHexPair } from '@/lib/trip-request-h3';
 import { classificationLogFromRow } from '@/lib/trip-request-classification';
 
 const polyPoint = z.object({ lat: z.number(), lng: z.number() });
@@ -169,6 +170,10 @@ export async function POST(request: NextRequest) {
 
     const favSlot = p.passenger_favorite_slot?.trim();
     if (favSlot) row.passenger_favorite_slot = favSlot.slice(0, 120);
+
+    const hex = tripRequestSuperHexPair(p.origin_lat, p.origin_lng, p.destination_lat, p.destination_lng);
+    row.origin_super_hex = hex.origin_super_hex;
+    row.dest_super_hex = hex.dest_super_hex;
 
     if (kind === 'long_distance' && p.passenger_desired_price_per_seat_gs != null) {
       row.passenger_desired_price_per_seat_gs = Math.round(p.passenger_desired_price_per_seat_gs);
