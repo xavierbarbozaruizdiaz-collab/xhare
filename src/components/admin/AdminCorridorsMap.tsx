@@ -366,8 +366,8 @@ export default function AdminCorridorsMap({
 
     for (const c of sorted) {
       const vis = visibility[c.id];
-      const showOrigin = showCorridorZoneLines && vis?.origin !== false;
-      const showDest = showCorridorZoneLines && vis?.dest !== false;
+      const showOrigin = vis?.origin !== false;
+      const showDest = vis?.dest !== false;
       const active = c.is_active;
       const oB = zoneToBounds(c.origin_zone);
       const dB = zoneToBounds(c.destination_zone);
@@ -386,7 +386,7 @@ export default function AdminCorridorsMap({
         stroke: string,
         fill: string
       ) => {
-        if (!show) return;
+        if (!show && !showSuperHex) return;
         const cityPolysAll = parseCityPolygonsFromZone(zone);
         const cityPolys = cityPolysAll.filter((cp) => cp.active);
         const rings = cityPolys.map((cp) => cp.polygon_latlng);
@@ -448,66 +448,68 @@ export default function AdminCorridorsMap({
             drawTarget.kind === kind &&
             !!city &&
             (!editCityId || city.id === editCityId);
-          const border = L.polygon(hexRingToLeafletLatLngs(ring), {
-            color: stroke,
-            fillColor: fill,
-            fillOpacity: macroFill,
-            weight: macroWeight,
-            ...(macroDash ? { dashArray: macroDash } : {}),
-            pmIgnore: !canEdit,
-          } as PathOptsPm).addTo(group);
-          border.bindPopup(
-            `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(
-              `${title} · ${cityName}${cellHint}${superHint}`
-            )}<br/>Zona automática de ciudad (Central).</span>`
-          );
-          if (canEdit && city && (border as PmPolygon).pm) {
-            splitContextRef.current = {
-              corridorId: c.id,
-              kind,
-              cityId: city.id,
-              cityPolysAll,
-              currentRing: ring,
-            };
-            (border as PmPolygon).pm?.enable({
-              preventMarkerRemoval: true,
-              snappable: true,
-            });
-            let saveTimer: ReturnType<typeof setTimeout> | null = null;
-            const persistCityEdit = () => {
-              if (saveTimer) clearTimeout(saveTimer);
-              saveTimer = setTimeout(() => {
-                saveTimer = null;
-                const nextPoly = polygonFromLeaflet(border.getLatLngs() as L.LatLng[] | L.LatLng[][]);
-                if (nextPoly.length < 3) return;
-                const nextAll = cityPolysAll.map((cp) =>
-                  cp.id === city.id ? { ...cp, polygon_latlng: nextPoly } : cp
-                );
-                const bbox = bboxFromCityPolygons(nextAll);
-                if (!bbox) return;
-                onZoneEditedRef.current(c.id, kind, {
-                  ...bbox,
-                  city_polygons: nextAll.map((cp) => ({
-                    id: cp.id,
-                    name: cp.name,
-                    active: cp.active,
-                    polygon_latlng: cp.polygon_latlng,
-                  })),
-                });
-              }, 220);
-            };
-            // `pm:update` no siempre dispara en global edit mode; estos sí lo hacen al editar vértices.
-            border.on('pm:markerdragend', persistCityEdit);
-            border.on('pm:vertexadded', persistCityEdit);
-            border.on('pm:vertexremoved', persistCityEdit);
-            border.on('pm:edit', persistCityEdit);
-            border.on('pm:update', persistCityEdit);
-            border.on('remove', () => {
-              if (saveTimer) clearTimeout(saveTimer);
-            });
-          }
-          for (const p of ring) {
-            allCorners.push(L.latLng(p.lat, p.lng));
+          if (showCorridorZoneLines && show) {
+            const border = L.polygon(hexRingToLeafletLatLngs(ring), {
+              color: stroke,
+              fillColor: fill,
+              fillOpacity: macroFill,
+              weight: macroWeight,
+              ...(macroDash ? { dashArray: macroDash } : {}),
+              pmIgnore: !canEdit,
+            } as PathOptsPm).addTo(group);
+            border.bindPopup(
+              `<strong>${escapePopup(c.name)}</strong><br/><span style="font-size:12px;color:#444">${escapePopup(
+                `${title} · ${cityName}${cellHint}${superHint}`
+              )}<br/>Zona automática de ciudad (Central).</span>`
+            );
+            if (canEdit && city && (border as PmPolygon).pm) {
+              splitContextRef.current = {
+                corridorId: c.id,
+                kind,
+                cityId: city.id,
+                cityPolysAll,
+                currentRing: ring,
+              };
+              (border as PmPolygon).pm?.enable({
+                preventMarkerRemoval: true,
+                snappable: true,
+              });
+              let saveTimer: ReturnType<typeof setTimeout> | null = null;
+              const persistCityEdit = () => {
+                if (saveTimer) clearTimeout(saveTimer);
+                saveTimer = setTimeout(() => {
+                  saveTimer = null;
+                  const nextPoly = polygonFromLeaflet(border.getLatLngs() as L.LatLng[] | L.LatLng[][]);
+                  if (nextPoly.length < 3) return;
+                  const nextAll = cityPolysAll.map((cp) =>
+                    cp.id === city.id ? { ...cp, polygon_latlng: nextPoly } : cp
+                  );
+                  const bbox = bboxFromCityPolygons(nextAll);
+                  if (!bbox) return;
+                  onZoneEditedRef.current(c.id, kind, {
+                    ...bbox,
+                    city_polygons: nextAll.map((cp) => ({
+                      id: cp.id,
+                      name: cp.name,
+                      active: cp.active,
+                      polygon_latlng: cp.polygon_latlng,
+                    })),
+                  });
+                }, 220);
+              };
+              // `pm:update` no siempre dispara en global edit mode; estos sí lo hacen al editar vértices.
+              border.on('pm:markerdragend', persistCityEdit);
+              border.on('pm:vertexadded', persistCityEdit);
+              border.on('pm:vertexremoved', persistCityEdit);
+              border.on('pm:edit', persistCityEdit);
+              border.on('pm:update', persistCityEdit);
+              border.on('remove', () => {
+                if (saveTimer) clearTimeout(saveTimer);
+              });
+            }
+            for (const p of ring) {
+              allCorners.push(L.latLng(p.lat, p.lng));
+            }
           }
         }
         if (showSuperHex && macroSuperHex.size > 0) {

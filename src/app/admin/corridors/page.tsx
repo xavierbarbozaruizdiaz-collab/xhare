@@ -998,7 +998,7 @@ export default function AdminCorridorsPage() {
               <span className="inline-block w-4 h-3 rounded border border-gray-400 border-dashed bg-gray-200/80" />{' '}
               Corredor inactivo (más tenue)
             </span>
-            {showCorridorZoneLines && (
+            {showSuperHex && (
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-flex items-center gap-1">
                   <span className="inline-block w-4 h-3 rounded border-2 border-fuchsia-500 border-dashed bg-transparent" />
