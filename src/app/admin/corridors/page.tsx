@@ -194,6 +194,7 @@ export default function AdminCorridorsPage() {
     axisFallback: number;
   } | null>(null);
   const [corridorOutlineOnly, setCorridorOutlineOnly] = useState(false);
+  const [showCorridorZoneLines, setShowCorridorZoneLines] = useState(true);
   const [showSuperHex, setShowSuperHex] = useState(false);
   const [drawCorridorId, setDrawCorridorId] = useState<string>('');
   const [drawKind, setDrawKind] = useState<DrawKind>('origin');
@@ -818,101 +819,108 @@ export default function AdminCorridorsPage() {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-violet-900 mb-0.5">Zona objetivo (auto)</label>
-              <select
-                value={drawKind}
-                onChange={(e) => setDrawKind(e.target.value as DrawKind)}
-                className="border border-violet-300 rounded-lg px-2 py-1 text-sm"
-                disabled={!drawCorridorId}
-              >
-                <option value="origin">Origen</option>
-                <option value="destination">Destino</option>
-              </select>
-            </div>
-            <button
-              type="button"
-              onClick={() => void importCentral()}
-              className="text-sm font-medium text-indigo-800 border border-indigo-500 rounded-lg px-3 py-1 hover:bg-indigo-100 disabled:opacity-50"
-              disabled={!drawCorridorId || importingCentral}
-            >
-              {importingCentral ? 'Importando Central…' : 'Importar ciudades de Central (auto)'}
-            </button>
-            <button
-              type="button"
-              onClick={() => void undoLastChange()}
-              className="text-sm font-medium text-gray-700 border border-gray-400 rounded-lg px-2.5 py-1 hover:bg-gray-100 disabled:opacity-50"
-              disabled={!lastUndo || saving || importingCentral}
-              title="Deshacer último cambio guardado"
-            >
-              ↶ Deshacer
-            </button>
-            <div>
-              <label className="block text-xs font-medium text-violet-900 mb-0.5">Ciudad a modificar</label>
-              <select
-                value={editCityId}
-                onChange={(e) => setEditCityId(e.target.value)}
-                className="border border-violet-300 rounded-lg px-2 py-1 text-sm min-w-[220px]"
-                disabled={selectedCities.length === 0}
-              >
-                {selectedCities.length === 0 && <option value="">(sin ciudades importadas)</option>}
-                {selectedCities.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} {c.active ? '' : '(inactiva)'}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <label className="inline-flex items-center gap-2 text-sm text-violet-950 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={vertexEditMode}
-                onChange={(e) => setVertexEditMode(e.target.checked)}
-                disabled={!editCityId}
-              />
-              Editar vértices
-            </label>
-            <div className="flex items-end gap-2">
-              <button
-                type="button"
-                onClick={() => void simplifySelectedCity(0.00008)}
-                className="text-sm font-medium text-amber-800 border border-amber-500 rounded-lg px-3 py-1 hover:bg-amber-100 disabled:opacity-50"
-                disabled={!editCityId || simplifyingCity}
-                title="Reduce algunos vértices manteniendo forma general"
-              >
-                {simplifyingCity ? 'Simplificando…' : 'Simplificar suave'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void simplifySelectedCity(0.00015)}
-                className="text-sm font-medium text-amber-900 border border-amber-600 rounded-lg px-3 py-1 hover:bg-amber-100 disabled:opacity-50"
-                disabled={!editCityId || simplifyingCity}
-                title="Reduce más vértices para edición rápida"
-              >
-                Simplificar fuerte
-              </button>
-            </div>
-            <label className="inline-flex items-center gap-2 text-sm text-violet-950 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={splitLineMode}
-                onChange={(e) => setSplitLineMode(e.target.checked)}
-                disabled={!editCityId}
-              />
-              Cortar por línea
-            </label>
-            <div>
-              <label className="block text-xs font-medium text-violet-900 mb-0.5">Al cortar, conservar</label>
-              <select
-                value={splitKeepSide}
-                onChange={(e) => setSplitKeepSide(e.target.value as 'left' | 'right')}
-                className="border border-violet-300 rounded-lg px-2 py-1 text-sm"
-                disabled={!splitLineMode}
-              >
-                <option value="left">Lado izquierdo de la línea</option>
-                <option value="right">Lado derecho de la línea</option>
-              </select>
-            </div>
+            <details className="rounded-lg border border-violet-300 bg-violet-50/60 px-3 py-2 text-sm">
+              <summary className="cursor-pointer font-medium text-violet-900">Herramientas legacy de edición</summary>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-violet-900 mb-0.5">Zona objetivo (auto)</label>
+                  <select
+                    value={drawKind}
+                    onChange={(e) => setDrawKind(e.target.value as DrawKind)}
+                    className="border border-violet-300 rounded-lg px-2 py-1 text-sm w-full"
+                    disabled={!drawCorridorId}
+                  >
+                    <option value="origin">Origen</option>
+                    <option value="destination">Destino</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-violet-900 mb-0.5">Ciudad a modificar</label>
+                  <select
+                    value={editCityId}
+                    onChange={(e) => setEditCityId(e.target.value)}
+                    className="border border-violet-300 rounded-lg px-2 py-1 text-sm w-full"
+                    disabled={selectedCities.length === 0}
+                  >
+                    {selectedCities.length === 0 && <option value="">(sin ciudades importadas)</option>}
+                    {selectedCities.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.active ? '' : '(inactiva)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+                  <button
+                    type="button"
+                    onClick={() => void importCentral()}
+                    className="text-sm font-medium text-indigo-800 border border-indigo-500 rounded-lg px-3 py-1 hover:bg-indigo-100 disabled:opacity-50"
+                    disabled={!drawCorridorId || importingCentral}
+                  >
+                    {importingCentral ? 'Importando Central…' : 'Importar ciudades de Central (auto)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void undoLastChange()}
+                    className="text-sm font-medium text-gray-700 border border-gray-400 rounded-lg px-2.5 py-1 hover:bg-gray-100 disabled:opacity-50"
+                    disabled={!lastUndo || saving || importingCentral}
+                    title="Deshacer último cambio guardado"
+                  >
+                    ↶ Deshacer
+                  </button>
+                  <label className="inline-flex items-center gap-2 text-sm text-violet-950 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={vertexEditMode}
+                      onChange={(e) => setVertexEditMode(e.target.checked)}
+                      disabled={!editCityId}
+                    />
+                    Editar vértices
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-sm text-violet-950 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={splitLineMode}
+                      onChange={(e) => setSplitLineMode(e.target.checked)}
+                      disabled={!editCityId}
+                    />
+                    Cortar por línea
+                  </label>
+                </div>
+                <div className="flex items-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void simplifySelectedCity(0.00008)}
+                    className="text-sm font-medium text-amber-800 border border-amber-500 rounded-lg px-3 py-1 hover:bg-amber-100 disabled:opacity-50"
+                    disabled={!editCityId || simplifyingCity}
+                    title="Reduce algunos vértices manteniendo forma general"
+                  >
+                    {simplifyingCity ? 'Simplificando…' : 'Simplificar suave'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void simplifySelectedCity(0.00015)}
+                    className="text-sm font-medium text-amber-900 border border-amber-600 rounded-lg px-3 py-1 hover:bg-amber-100 disabled:opacity-50"
+                    disabled={!editCityId || simplifyingCity}
+                    title="Reduce más vértices para edición rápida"
+                  >
+                    Simplificar fuerte
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-violet-900 mb-0.5">Al cortar, conservar</label>
+                  <select
+                    value={splitKeepSide}
+                    onChange={(e) => setSplitKeepSide(e.target.value as 'left' | 'right')}
+                    className="border border-violet-300 rounded-lg px-2 py-1 text-sm w-full"
+                    disabled={!splitLineMode}
+                  >
+                    <option value="left">Lado izquierdo de la línea</option>
+                    <option value="right">Lado derecho de la línea</option>
+                  </select>
+                </div>
+              </div>
+            </details>
             {showDemandTubes && !tubesLoading && tubesMeta !== null && (
               <span className="text-xs text-violet-800">
                 Grupos en rango: {tubesMeta.groupsInRange} · Tubos dibujados: {tubesMeta.tubesDrawn}
@@ -957,6 +965,14 @@ export default function AdminCorridorsPage() {
               />
               Ver super-hex de agrupación (H3 r6)
             </label>
+            <label className="inline-flex items-center gap-2 cursor-pointer text-gray-800 font-medium">
+              <input
+                type="checkbox"
+                checked={showCorridorZoneLines}
+                onChange={(e) => setShowCorridorZoneLines(e.target.checked)}
+              />
+              Mostrar líneas de zonas
+            </label>
             <span className="text-[11px] text-gray-500">
               En modo solo bordes se muestra solo el contorno de ciudad (sin dibujar la malla interna).
             </span>
@@ -968,23 +984,29 @@ export default function AdminCorridorsPage() {
             <span className="inline-flex items-center gap-1.5">
               <span className="inline-block w-4 h-3 rounded border border-violet-700 bg-violet-400/40" /> Tubo sync
             </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block w-4 h-3 rounded border-2 border-sky-800 bg-sky-500/30" /> Zona origen
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block w-4 h-3 rounded border-2 border-orange-700 bg-orange-500/30" /> Zona destino
-            </span>
+            {showCorridorZoneLines && (
+              <>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block w-4 h-3 rounded border-2 border-sky-800 bg-sky-500/30" /> Zona origen
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block w-4 h-3 rounded border-2 border-orange-700 bg-orange-500/30" /> Zona destino
+                </span>
+              </>
+            )}
             <span className="inline-flex items-center gap-1.5">
               <span className="inline-block w-4 h-3 rounded border border-gray-400 border-dashed bg-gray-200/80" />{' '}
               Corredor inactivo (más tenue)
             </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block w-4 h-3 rounded border-2 border-fuchsia-500 border-dashed bg-transparent" />
-                <span className="inline-block w-4 h-3 rounded border-2 border-lime-600 border-dashed bg-transparent" />
-              </span>{' '}
-              Super-hex H3 r6 (~4-5 km, colores separados)
-            </span>
+            {showCorridorZoneLines && (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block w-4 h-3 rounded border-2 border-fuchsia-500 border-dashed bg-transparent" />
+                  <span className="inline-block w-4 h-3 rounded border-2 border-lime-600 border-dashed bg-transparent" />
+                </span>{' '}
+                Super-hex H3 r6 (~4-5 km, colores separados)
+              </span>
+            )}
           </div>
           <AdminCorridorsMap
             corridors={rows}
@@ -992,6 +1014,7 @@ export default function AdminCorridorsPage() {
             onZoneEdited={patchZone}
             demandTubes={demandTubes}
             showDemandTubes={showDemandTubes}
+            showCorridorZoneLines={showCorridorZoneLines}
             showSuperHex={showSuperHex}
             corridorZonesOutlineOnly={corridorOutlineOnly}
             drawTarget={drawCorridorId ? { corridorId: drawCorridorId, kind: drawKind } : null}

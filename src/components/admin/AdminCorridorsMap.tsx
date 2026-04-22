@@ -180,6 +180,8 @@ type Props = {
   showDemandTubes?: boolean;
   /** Lado aproximado de cada celda hexagonal de vista (~150 m). */
   corridorHexCellEdgeM?: number;
+  /** Muestra/oculta líneas de zonas (origen/destino) y super-hex. */
+  showCorridorZoneLines?: boolean;
   /** Muestra super-hex de agrupación (H3 res 6 ~ 4-5 km). */
   showSuperHex?: boolean;
   /** Mantener para compatibilidad del caller; hex se dibuja siempre solo bordes. */
@@ -217,6 +219,7 @@ export default function AdminCorridorsMap({
   demandTubes = [],
   showDemandTubes = false,
   corridorHexCellEdgeM = DEFAULT_CORRIDOR_HEX_EDGE_M,
+  showCorridorZoneLines = true,
   showSuperHex = false,
   corridorZonesOutlineOnly = true,
   drawTarget = null,
@@ -363,8 +366,8 @@ export default function AdminCorridorsMap({
 
     for (const c of sorted) {
       const vis = visibility[c.id];
-      const showOrigin = vis?.origin !== false;
-      const showDest = vis?.dest !== false;
+      const showOrigin = showCorridorZoneLines && vis?.origin !== false;
+      const showDest = showCorridorZoneLines && vis?.dest !== false;
       const active = c.is_active;
       const oB = zoneToBounds(c.origin_zone);
       const dB = zoneToBounds(c.destination_zone);
@@ -581,6 +584,7 @@ export default function AdminCorridorsMap({
     demandTubes,
     showDemandTubes,
     corridorHexCellEdgeM,
+    showCorridorZoneLines,
     showSuperHex,
     corridorZonesOutlineOnly,
     drawTarget,
@@ -599,12 +603,16 @@ export default function AdminCorridorsMap({
       <p className="text-xs text-gray-600">
         <span className="text-violet-900 font-medium">Violeta</span>: tubo aproximado del mismo radio que usa el{' '}
         <strong>sync geográfico</strong> (2 km al eje de la polilínea del grupo).{' '}
-        <span className="text-sky-900 font-medium">Azul / naranja</span>: malla hexagonal automática por ciudades de
-        Central (~{Math.round(corridorHexCellEdgeM)} m por celda), visible solo por bordes.{' '}
-        {showSuperHex && (
+        {showCorridorZoneLines && (
           <>
-            <span className="font-medium text-fuchsia-800">Fucsia / verde</span>: super-hex de agrupación H3 r
-            {TRIP_REQUEST_SUPER_HEX_RES} (~4-5 km), distinto a la capa base azul/naranja.
+            <span className="text-sky-900 font-medium">Azul / naranja</span>: malla hexagonal automática por ciudades
+            de Central (~{Math.round(corridorHexCellEdgeM)} m por celda), visible solo por bordes.{' '}
+            {showSuperHex && (
+              <>
+                <span className="font-medium text-fuchsia-800">Fucsia / verde</span>: super-hex de agrupación H3 r
+                {TRIP_REQUEST_SUPER_HEX_RES} (~4-5 km), distinto a la capa base azul/naranja.
+              </>
+            )}
           </>
         )}
       </p>
