@@ -8,7 +8,9 @@
 import { apiGet, apiPost } from './api';
 import { supabase, isEnvConfigured } from './supabase';
 import { env } from '../core/env';
+import { dedupeDemandRouteLegsForUi, dedupeDemandRouteMemberRows } from '../lib/demandRouteMembersDedupe';
 import { raceWithTimeout } from './withTimeout';
+import { computeEffectivePricing, loadActivePricingSettings } from '../lib/pricing/runtime-pricing';
 
 const SUPABASE_QUERY_TIMEOUT_MS = 28_000;
 
@@ -34,6 +36,27 @@ export type DemandRouteGroup = {
 
 export type DemandRouteDetail = DemandRouteGroup & {
   base_trip_request_id?: string | null;
+  ride_id?: string | null;
+  route_polyline?: Array<{ lat: number; lng: number }>;
+  legs?: Array<{
+    visit_order: number;
+    stop_type: 'PICKUP' | 'DROPOFF' | 'LEGACY';
+    trip_request_id: string;
+    passenger_name: string;
+    label: string;
+    action: string;
+    fare_amount?: number | null;
+    lat: number | null;
+    lng: number | null;
+  }>;
+  financial_summary?: {
+    total_passengers: number;
+    total_to_collect_gs: number;
+    driver_fee_percent: number;
+    driver_fee_gs: number;
+    driver_net_earnings_gs: number;
+    currency: 'PYG';
+  };
   passengers: Array<{
     trip_request_id: string;
     origin_lat: number;
@@ -137,7 +160,7 @@ async function fetchDemandRouteDetailFromSupabase(
 
   const { data: members, error: mErr } = await supabase
     .from('demand_route_members')
-    .select('trip_request_id')
+    .select('trip_request_id, stop_type, visit_order')
     .eq('group_id', groupId);
 
   if (mErr) return { detail: null, error: mErr.message };
@@ -145,13 +168,54 @@ async function fetchDemandRouteDetailFromSupabase(
   const requestIds = (members ?? []).map((m) => m.trip_request_id).filter(Boolean) as string[];
 
   let passengers: DemandRouteDetail['passengers'] = [];
-  if (requestIds.length > 0) {
-    const { data: reqs, error: rErr } = await supabase
+  let legs: NonNullable<DemandRouteDetail['legs']> = [];
+  let totalToCollectFromRequests = 0;
+  {
+    const { data: reqsByGroup, error: byGroupErr } = await supabase
       .from('trip_requests')
-      .select('id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label')
-      .in('id', requestIds);
+      .select(
+        'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, passenger_desired_price_per_seat_gs, seats'
+      )
+      .eq('demand_group_id', groupId);
+    if (byGroupErr) return { detail: null, error: byGroupErr.message };
 
-    if (rErr) return { detail: null, error: rErr.message };
+    let reqsByMembers: typeof reqsByGroup = [];
+    if (requestIds.length > 0) {
+      const { data: reqsMembers, error: rErr } = await supabase
+      .from('trip_requests')
+      .select(
+        'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, passenger_desired_price_per_seat_gs, seats'
+      )
+      .in('id', requestIds);
+      if (rErr) return { detail: null, error: rErr.message };
+      reqsByMembers = reqsMembers ?? [];
+    }
+
+    const byId = new Map<string, NonNullable<typeof reqsByGroup>[number]>();
+    for (const r of reqsByGroup ?? []) byId.set(String(r.id), r);
+    for (const r of reqsByMembers ?? []) byId.set(String(r.id), r);
+    let reqs = Array.from(byId.values());
+    if (requestIds.length > 0) {
+      const memberTripIds = new Set(requestIds.map((id) => String(id)));
+      reqs = reqs.filter((r) => memberTripIds.has(String(r.id)));
+    }
+
+    if (requestIds.length > 0 && reqs.length === 0) {
+      return {
+        detail: null,
+        error:
+          'No se pudieron leer los pedidos del grupo (RLS). En Supabase aplicá la migración 080, o configurá EXPO_PUBLIC_API_BASE_URL para usar el detalle vía API.',
+      };
+    }
+
+    totalToCollectFromRequests = reqs.reduce((sum, r) => {
+      const perSeat = Number((r as { passenger_desired_price_per_seat_gs?: number | null }).passenger_desired_price_per_seat_gs ?? 0);
+      const seats = Number.isFinite(Number((r as { seats?: number }).seats))
+        ? Math.max(1, Number((r as { seats?: number }).seats))
+        : 1;
+      return sum + (Number.isFinite(perSeat) ? Math.max(0, perSeat) * seats : 0);
+    }, 0);
+
     passengers = (reqs ?? []).map((r) => ({
       trip_request_id: r.id,
       origin_lat: Number(r.origin_lat),
@@ -161,10 +225,138 @@ async function fetchDemandRouteDetailFromSupabase(
       destination_lng: Number(r.destination_lng),
       destination_label: r.destination_label ?? null,
     }));
+
+    const byReq: Record<
+      string,
+      {
+        user_id: string | null;
+        origin_label: string | null;
+        destination_label: string | null;
+        origin_lat: number;
+        origin_lng: number;
+        destination_lat: number;
+        destination_lng: number;
+        fare_amount: number | null;
+        seats: number;
+      }
+    > = {};
+    for (const r of reqs ?? []) {
+      const seats = Number.isFinite(Number((r as { seats?: number }).seats))
+        ? Math.max(1, Number((r as { seats?: number }).seats))
+        : 1;
+      byReq[String(r.id)] = {
+        user_id: r.user_id ?? null,
+        origin_label: r.origin_label ?? null,
+        destination_label: r.destination_label ?? null,
+        origin_lat: Number(r.origin_lat),
+        origin_lng: Number(r.origin_lng),
+        destination_lat: Number(r.destination_lat),
+        destination_lng: Number(r.destination_lng),
+        fare_amount:
+          r.passenger_desired_price_per_seat_gs != null &&
+          Number.isFinite(Number(r.passenger_desired_price_per_seat_gs))
+            ? Number(r.passenger_desired_price_per_seat_gs)
+            : null,
+        seats,
+      };
+    }
+
+    const uids = Array.from(
+      new Set(
+        (reqs ?? [])
+          .map((r) => String(r.user_id ?? '').trim())
+          .filter((x) => x.length > 0)
+      )
+    );
+    const nameByUid: Record<string, string> = {};
+    if (uids.length > 0) {
+      const { data: profs } = await supabase.from('profiles').select('id, full_name').in('id', uids);
+      for (const p of profs ?? []) {
+        const id = String(p.id ?? '');
+        const nm = String(p.full_name ?? '').trim();
+        if (id) nameByUid[id] = nm || `Pasajero ${id.slice(0, 6)}`;
+      }
+    }
+
+    const rawMembersFiltered = (members ?? []).filter((m) => byReq[String(m.trip_request_id ?? '')]);
+    const memberRows =
+      rawMembersFiltered.length > 0
+        ? dedupeDemandRouteMemberRows(
+            rawMembersFiltered as Array<{
+              trip_request_id: string;
+              stop_type: string | null;
+              visit_order: number | null;
+            }>
+          )
+        : reqs.flatMap((r, i) => [
+            { trip_request_id: r.id, stop_type: 'PICKUP' as const, visit_order: i * 2 + 1 },
+            { trip_request_id: r.id, stop_type: 'DROPOFF' as const, visit_order: i * 2 + 2 },
+          ]);
+
+    legs = memberRows
+      .map((m) => {
+        const reqId = String(m.trip_request_id ?? '');
+        const req = byReq[reqId];
+        if (!req) return null;
+        const stRaw = String(m.stop_type ?? 'LEGACY').toUpperCase();
+        const st: 'PICKUP' | 'DROPOFF' | 'LEGACY' =
+          stRaw === 'PICKUP' || stRaw === 'DROPOFF' ? stRaw : 'LEGACY';
+        const nm =
+          (req.user_id && nameByUid[req.user_id]) ||
+          `Pasajero ${(req.user_id ?? reqId).slice(0, 6)}`;
+        const label = st === 'DROPOFF' ? req.destination_label ?? 'Destino' : req.origin_label ?? 'Origen';
+        const lat = st === 'DROPOFF' ? req.destination_lat : req.origin_lat;
+        const lng = st === 'DROPOFF' ? req.destination_lng : req.origin_lng;
+        const pickupTotalGs =
+          st === 'PICKUP' && req.fare_amount != null && Number.isFinite(req.fare_amount)
+            ? Math.round(Math.max(0, req.fare_amount) * req.seats)
+            : null;
+        return {
+          visit_order: Number(m.visit_order ?? 0),
+          stop_type: st,
+          trip_request_id: reqId,
+          passenger_name: nm,
+          label,
+          action: st === 'DROPOFF' ? `Baja ${nm}` : `Sube ${nm}`,
+          fare_amount: pickupTotalGs,
+          lat: Number.isFinite(lat) ? lat : null,
+          lng: Number.isFinite(lng) ? lng : null,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x != null)
+      .sort((a, b) => a.visit_order - b.visit_order);
+
+    legs = dedupeDemandRouteLegsForUi(
+      legs as Array<{ trip_request_id: string; stop_type: string; visit_order: number }>
+    ) as typeof legs;
   }
 
+  const pricingSettings = await loadActivePricingSettings();
+  const driverFeePercent = pricingSettings
+    ? computeEffectivePricing(pricingSettings).driverFeePercentOfCollected
+    : 10;
+  const totalToCollectGs = totalToCollectFromRequests;
+  const driverFeeGs = Math.round((totalToCollectGs * driverFeePercent) / 100);
+  const driverNetEarningsGs = Math.max(0, totalToCollectGs - driverFeeGs);
+
   const base = mapGroupRow(row as Record<string, unknown>);
-  return { detail: { ...base, passengers } };
+  return {
+    detail: {
+      ...base,
+      passenger_count: passengers.length,
+      route_polyline: parsePolyline((row as Record<string, unknown>).route_polyline ?? (row as Record<string, unknown>).base_polyline),
+      passengers,
+      legs,
+      financial_summary: {
+        total_passengers: passengers.length,
+        total_to_collect_gs: totalToCollectGs,
+        driver_fee_percent: driverFeePercent,
+        driver_fee_gs: driverFeeGs,
+        driver_net_earnings_gs: driverNetEarningsGs,
+        currency: 'PYG',
+      },
+    },
+  };
     })(),
     SUPABASE_QUERY_TIMEOUT_MS,
     () => ({

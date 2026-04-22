@@ -4,7 +4,8 @@ import type { Point } from '@/types';
 
 const OSRM_BASE = 'https://router.project-osrm.org';
 const CORRIDOR_METERS = 2000;
-const TIME_WINDOW_MINUTES = 90;
+/** Misma regla que hex merge: hora de llegada deseada ±15 min respecto al grupo (misma fecha). */
+const TIME_WINDOW_MINUTES = 15;
 const MAX_PASSENGERS_PER_GROUP = 15;
 
 function timeToMinutes(t: string | null | undefined): number {
@@ -83,7 +84,7 @@ export type DemandRoutesGeoSyncResult =
   | { ok: false; error: string };
 
 /**
- * Misma lógica que POST /api/demand-routes/sync (agrupación geo ~2 km, ventana 90 min, ciudades).
+ * Misma lógica que POST /api/demand-routes/sync (agrupación geo ~2 km, ventana ±15 min en hora pedida, ciudades).
  * Usa service role: llamar solo tras validar admin/conductor o cron.
  */
 export async function runDemandRoutesGeoSync(
@@ -236,6 +237,16 @@ export async function runDemandRoutesGeoSync(
             .from('demand_route_members')
             .insert({ group_id: g.id, trip_request_id: req.id });
           if (memErr) continue;
+          const { error: trErr } = await supabase
+            .from('trip_requests')
+            .update({
+              status: 'grouped',
+              demand_group_id: g.id,
+              ride_id: null,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', req.id);
+          if (trErr) continue;
           await supabase
             .from('demand_route_groups')
             .update({
@@ -305,6 +316,7 @@ export async function runDemandRoutesGeoSync(
         });
       }
     } else {
+      let createdGroups = 0;
       for (const g of newGroups) {
         const { data: inserted, error: insErr } = await supabase
           .from('demand_route_groups')
@@ -332,14 +344,44 @@ export async function runDemandRoutesGeoSync(
         const groupId = inserted?.id;
         if (!groupId) continue;
 
+        const linkedIds: string[] = [];
         for (const tripRequestId of g.memberIds) {
-          await supabase.from('demand_route_members').insert({
+          const { error: memErr } = await supabase.from('demand_route_members').insert({
             group_id: groupId,
             trip_request_id: tripRequestId,
             stop_type: 'LEGACY',
           });
+          if (!memErr) linkedIds.push(tripRequestId);
         }
+
+        if (linkedIds.length === 0) {
+          await supabase.from('demand_route_groups').delete().eq('id', groupId);
+          continue;
+        }
+
+        await supabase
+          .from('trip_requests')
+          .update({
+            status: 'grouped',
+            demand_group_id: groupId,
+            ride_id: null,
+            updated_at: new Date().toISOString(),
+          })
+          .in('id', linkedIds);
+
+        await supabase
+          .from('demand_route_groups')
+          .update({ passenger_count: linkedIds.length, updated_at: new Date().toISOString() })
+          .eq('id', groupId);
+        createdGroups += 1;
       }
+
+      return {
+        ok: true,
+        processed: unassigned.length,
+        addedToExisting,
+        newGroupsCreated: createdGroups,
+      };
     }
 
     return {
@@ -398,7 +440,7 @@ function reasonCannotJoinGeo(req: TripReqLite, g: GroupLite): string | null {
   if (g.passenger_count >= MAX_PASSENGERS_PER_GROUP) return 'group_full';
   if (g.requested_date !== req.requested_date) return 'different_date';
   if (!timeWithinWindow(timeToMinutes(g.requested_time), timeToMinutes(req.requested_time))) {
-    return 'outside_time_window_90m';
+    return 'outside_time_window_15m';
   }
   const originCity = req.origin_city?.trim() || null;
   const destCity = req.destination_city?.trim() || null;
