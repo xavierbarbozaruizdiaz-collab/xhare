@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { getAuth } from '@/lib/api-auth';
 import { tripRequestSuperHexPair } from '@/lib/trip-request-h3';
 import { classificationLogFromRow } from '@/lib/trip-request-classification';
+import { insertOrUpdatePendingTripRequestFromFavorite } from '@/lib/trip-request-favorite-pending-upsert';
+import { detachPassengerFavoriteGroupedRequests } from '@/lib/trip-request-favorite-ungroup';
+import { createServiceClient } from '@/lib/supabase/server';
+import { sendDriverDemandPassengerLeftPush } from '@/lib/push/sendDriverDemandPassengerLeftPush';
 
 const polyPoint = z.object({ lat: z.number(), lng: z.number() });
 
@@ -48,6 +52,8 @@ const insertBodySchema = z
     internal_quote_acknowledged: z.boolean().nullable().optional(),
     /** Preset de favorito (ej. home_to_gym) si la solicitud sale de Inicio / guardar favorito. */
     passenger_favorite_slot: z.string().max(120).optional(),
+    /** Si ya hay una solicitud agrupada con el mismo slot/fecha/hora, el pasajero debe confirmar salida del grupo. */
+    confirm_leave_group: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
     const olat = data.origin_lat;
@@ -170,6 +176,51 @@ export async function POST(request: NextRequest) {
 
     const favSlot = p.passenger_favorite_slot?.trim();
     if (favSlot) row.passenger_favorite_slot = favSlot.slice(0, 120);
+    const confirmLeaveGroup = p.confirm_leave_group === true;
+
+    if (favSlot) {
+      const { data: groupedHits, error: gErr } = await auth.supabase
+        .from('trip_requests')
+        .select('id')
+        .eq('user_id', auth.user.id)
+        .eq('passenger_favorite_slot', favSlot.slice(0, 120))
+        .eq('requested_date', p.requested_date.trim())
+        .eq('requested_time', p.requested_time.trim())
+        .in('status', ['grouping', 'grouped', 'group_linked_pending']);
+      if (gErr) {
+        return NextResponse.json({ error: gErr.message }, { status: 400 });
+      }
+      const groupedCount = groupedHits?.length ?? 0;
+      if (groupedCount > 0 && !confirmLeaveGroup) {
+        return NextResponse.json(
+          {
+            code: 'GROUPED_FAVORITE_EXISTS',
+            error:
+              'Esta solicitud del favorito ya está en un grupo de demanda. Si guardás de nuevo, saldrás de ese grupo y se registrará una solicitud nueva para buscar otro grupo.',
+          },
+          { status: 409 }
+        );
+      }
+      if (groupedCount > 0 && confirmLeaveGroup) {
+        const service = createServiceClient();
+        const detached = await detachPassengerFavoriteGroupedRequests(service, {
+          userId: auth.user.id,
+          favoriteSlot: favSlot.slice(0, 120),
+          requestedDate: p.requested_date.trim(),
+          requestedTime: p.requested_time.trim(),
+        });
+        if (!detached.ok) {
+          if (detached.code === 'GROUP_HAS_ACTIVE_RIDE') {
+            return NextResponse.json(
+              { code: detached.code, error: detached.error },
+              { status: 409 }
+            );
+          }
+          return NextResponse.json({ error: detached.error }, { status: 400 });
+        }
+        void sendDriverDemandPassengerLeftPush(service, detached.notifyDriverRides);
+      }
+    }
 
     const hex = tripRequestSuperHexPair(p.origin_lat, p.origin_lng, p.destination_lat, p.destination_lng);
     row.origin_super_hex = hex.origin_super_hex;
@@ -183,21 +234,59 @@ export async function POST(request: NextRequest) {
       row.internal_quote_acknowledged = p.internal_quote_acknowledged === true ? true : null;
     }
 
-    const { data: inserted, error } = await auth.supabase
-      .from('trip_requests')
-      .insert(row)
-      .select(
-        'id, requested_mode, requested_time_start, requested_time_end, seats, corridor_id, time_bucket, classification_status, origin_node_key, destination_node_key'
-      )
-      .single();
+    type InsertedTripSummary = {
+      id: string;
+      requested_mode?: string | null;
+      requested_time_start?: string | null;
+      requested_time_end?: string | null;
+      seats?: number | null;
+      corridor_id?: string | null;
+      time_bucket?: string | null;
+      classification_status?: string | null;
+      origin_node_key?: string | null;
+      destination_node_key?: string | null;
+    };
+    let inserted: InsertedTripSummary | null = null;
 
-    if (error) {
-      console.error('[api/trip-requests] insert failed', {
-        userId: auth.user.id,
-        message: error.message,
-        code: error.code,
-      });
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    if (favSlot) {
+      const up = await insertOrUpdatePendingTripRequestFromFavorite(auth.supabase, row);
+      if (!up.ok) {
+        console.error('[api/trip-requests] favorite pending upsert failed', {
+          userId: auth.user.id,
+          message: up.error,
+        });
+        return NextResponse.json({ error: up.error }, { status: 400 });
+      }
+      const { data: sel, error: selErr } = await auth.supabase
+        .from('trip_requests')
+        .select(
+          'id, requested_mode, requested_time_start, requested_time_end, seats, corridor_id, time_bucket, classification_status, origin_node_key, destination_node_key'
+        )
+        .eq('id', up.id)
+        .single();
+      if (selErr || !sel) {
+        console.error('[api/trip-requests] select after upsert failed', { message: selErr?.message });
+        return NextResponse.json({ error: selErr?.message ?? 'No se pudo leer la solicitud.' }, { status: 400 });
+      }
+      inserted = sel as InsertedTripSummary;
+    } else {
+      const { data: ins, error } = await auth.supabase
+        .from('trip_requests')
+        .insert(row)
+        .select(
+          'id, requested_mode, requested_time_start, requested_time_end, seats, corridor_id, time_bucket, classification_status, origin_node_key, destination_node_key'
+        )
+        .single();
+
+      if (error) {
+        console.error('[api/trip-requests] insert failed', {
+          userId: auth.user.id,
+          message: error.message,
+          code: error.code,
+        });
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      inserted = ins as InsertedTripSummary;
     }
 
     console.info('[api/trip-requests] insert ok', {

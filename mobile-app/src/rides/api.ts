@@ -8,6 +8,7 @@ import { env } from '../core/env';
 import { raceWithTimeout } from '../backend/withTimeout';
 import { distanceMeters, distancePointToPolylineMeters, type Point } from '../lib/geo';
 import { tripRequestSuperHexPair } from '@/lib/tripRequestH3';
+import { insertOrUpdatePendingTripRequestFromFavorite } from '../lib/trip-request-favorite-pending-upsert';
 
 const SUPABASE_QUERY_TIMEOUT_MS = 28_000;
 const SAVE_TRIP_REQUEST_INSERT_TIMEOUT_MS = 22_000;
@@ -767,7 +768,9 @@ export async function saveTripRequest(params: {
   passengerDesiredPricePerSeatGs?: number | null;
   internalQuoteAcknowledged?: boolean | null;
   passengerFavoriteSlot?: string | null;
-}): Promise<{ ok: boolean; error?: string }> {
+  /** Solo vía API Next: desvincular solicitud agrupada previa del mismo favorito/fecha/hora. */
+  confirmLeaveGroupedFavorite?: boolean;
+}): Promise<{ ok: boolean; error?: string; code?: string }> {
   const row = buildTripRequestRow(params);
   const base = env.apiBaseUrl?.trim().replace(/\/$/, '');
   const token = params.accessToken?.trim();
@@ -794,6 +797,9 @@ export async function saveTripRequest(params: {
     if (pk === 'long_distance' && typeof pp === 'number' && Number.isFinite(pp)) {
       apiBody.passenger_desired_price_per_seat_gs = Math.round(pp);
     }
+    if (params.confirmLeaveGroupedFavorite === true) {
+      apiBody.confirm_leave_group = true;
+    }
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), SAVE_TRIP_REQUEST_API_TIMEOUT_MS);
     try {
@@ -808,17 +814,37 @@ export async function saveTripRequest(params: {
       });
       // RN/Hermes: a veces `res.json()` puede colgarse; leer texto y parsear es más fiable.
       const text = await res.text();
-      let data: { error?: string } = {};
+      let data: { error?: string; code?: string } = {};
       if (text.trim()) {
         try {
-          data = JSON.parse(text) as { error?: string };
+          data = JSON.parse(text) as { error?: string; code?: string };
         } catch {
           data = {};
         }
       }
       if (res.ok) return { ok: true };
+      if (res.status === 409 && data.code === 'GROUPED_FAVORITE_EXISTS') {
+        return {
+          ok: false,
+          code: 'GROUPED_FAVORITE_EXISTS',
+          error:
+            typeof data.error === 'string' && data.error.trim()
+              ? data.error
+              : 'Esta solicitud del favorito ya está en un grupo de demanda.',
+        };
+      }
+      if (res.status === 409 && data.code === 'GROUP_HAS_ACTIVE_RIDE') {
+        return {
+          ok: false,
+          code: 'GROUP_HAS_ACTIVE_RIDE',
+          error:
+            typeof data.error === 'string' && data.error.trim()
+              ? data.error
+              : 'Ya hay un viaje publicado o en curso desde este grupo.',
+        };
+      }
       // 401/404: el JWT suele no coincidir con el proyecto del Next o la ruta no existe; el cliente Supabase puede guardar igual.
-      if (res.status !== 401 && res.status !== 404) {
+      if (res.status !== 401 && res.status !== 404 && res.status !== 409) {
         const brief =
           res.status === 400 && typeof data.error === 'string' && data.error.length <= 72
             ? data.error
@@ -833,6 +859,48 @@ export async function saveTripRequest(params: {
   }
 
   try {
+    if (row.passenger_favorite_slot && !params.confirmLeaveGroupedFavorite) {
+      const { data: groupedHits, error: gErr } = await supabase
+        .from('trip_requests')
+        .select('id')
+        .eq('user_id', params.userId)
+        .eq('passenger_favorite_slot', String(row.passenger_favorite_slot))
+        .eq('requested_date', String(row.requested_date))
+        .eq('requested_time', String(row.requested_time))
+        .in('status', ['grouping', 'grouped', 'group_linked_pending']);
+      if (gErr) return { ok: false, error: humanizeTripRequestInsertError(gErr.message) };
+      if ((groupedHits?.length ?? 0) > 0) {
+        return {
+          ok: false,
+          code: 'GROUPED_FAVORITE_EXISTS',
+          error:
+            'Esta solicitud del favorito ya está en un grupo. Para salir del grupo y guardar de nuevo configurá EXPO_PUBLIC_API_BASE_URL (servidor) o usá la app con el backend en línea.',
+        };
+      }
+    }
+    if (row.passenger_favorite_slot && params.confirmLeaveGroupedFavorite) {
+      return {
+        ok: false,
+        error:
+          'Salir de un grupo agrupado solo puede hacerlo el servidor. Configurá EXPO_PUBLIC_API_BASE_URL y reintentá.',
+      };
+    }
+
+    if (row.passenger_favorite_slot) {
+      const up = await raceWithTimeout(
+        insertOrUpdatePendingTripRequestFromFavorite(supabase, row),
+        SAVE_TRIP_REQUEST_INSERT_TIMEOUT_MS,
+        (): { ok: false; error: string } => ({ ok: false, error: 'SUPABASE_INSERT_TIMEOUT' })
+      );
+      if (!up.ok) {
+        if (up.error === 'SUPABASE_INSERT_TIMEOUT') {
+          return { ok: false, error: 'Sin respuesta. Reintentá.' };
+        }
+        return { ok: false, error: humanizeTripRequestInsertError(up.error) };
+      }
+      return { ok: true };
+    }
+
     const insertBuilder = supabase.from('trip_requests').insert(row);
     const { error } = await raceWithTimeout(
       insertBuilder,
@@ -977,6 +1045,84 @@ export async function cancelTripRequest(requestId: string, userId: string) {
     .eq('user_id', userId)
     .eq('status', 'pending');
   if (error) throw error;
+}
+
+const LEAVE_DEMAND_GROUP_TIMEOUT_MS = 28_000;
+
+/** Salir de demanda agrupada (vía Next + service RPC). Requiere `env.apiBaseUrl` y JWT. */
+export async function leaveDemandGroupForTripRequest(
+  accessToken: string,
+  tripRequestId: string
+): Promise<{ ok: true } | { ok: false; error: string; code?: string }> {
+  const base = env.apiBaseUrl?.replace(/\/$/, '') ?? '';
+  if (!base) {
+    return {
+      ok: false,
+      error:
+        'Falta EXPO_PUBLIC_API_BASE_URL: salir del grupo solo puede hacerlo el servidor. Configurá la URL del backend y reintentá.',
+    };
+  }
+  let bearer = accessToken?.trim() ?? '';
+  if (!bearer) {
+    return { ok: false, error: 'Sesión inválida. Volvé a iniciar sesión.' };
+  }
+  try {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    const next = refreshed.session?.access_token?.trim();
+    if (next) bearer = next;
+  } catch {
+    // usar token del caller
+  }
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), LEAVE_DEMAND_GROUP_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${base}/api/trip-requests/${encodeURIComponent(tripRequestId)}/leave-demand-group`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${bearer}`,
+      },
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let data: { error?: string; message?: string; code?: string } = {};
+    if (text.trim()) {
+      try {
+        data = JSON.parse(text) as { error?: string; message?: string; code?: string };
+      } catch {
+        data = {};
+      }
+    }
+    if (res.ok) return { ok: true };
+    if (res.status === 409 && data.code === 'GROUP_HAS_ACTIVE_RIDE') {
+      return {
+        ok: false,
+        code: 'GROUP_HAS_ACTIVE_RIDE',
+        error:
+          typeof data.error === 'string' && data.error.trim()
+            ? data.error
+            : 'Ya hay un viaje publicado o en curso desde este grupo.',
+      };
+    }
+    const fromJson =
+      (typeof data.error === 'string' && data.error.trim()) ||
+      (typeof data.message === 'string' && data.message.trim()) ||
+      '';
+    const trimmed = text.trim();
+    const looksHtml = /^<!DOCTYPE/i.test(trimmed) || /^<html/i.test(trimmed);
+    const brief = fromJson
+      ? fromJson
+      : res.status === 401
+        ? 'No autorizado. Revisá que el backend use el mismo proyecto de Supabase que la app.'
+        : res.status === 404 || looksHtml
+          ? 'El servidor no expone POST /api/trip-requests/[id]/leave-demand-group (404 o respuesta HTML). Desplegá el backend actualizado o revisá EXPO_PUBLIC_API_BASE_URL.'
+          : `No se pudo salir del grupo (HTTP ${res.status}).`;
+    return { ok: false, error: brief.length > 220 ? `${brief.slice(0, 220)}…` : brief, code: data.code };
+  } catch {
+    return { ok: false, error: 'Sin respuesta. Revisá tu conexión o el servidor.' };
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 /** My bookings (passenger). */

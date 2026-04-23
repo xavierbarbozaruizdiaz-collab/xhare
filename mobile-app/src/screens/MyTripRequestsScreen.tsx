@@ -12,14 +12,17 @@ import {
   RefreshControl,
   Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
-import { fetchMyTripRequests, cancelTripRequest } from '../rides/api';
+import { fetchMyTripRequests, cancelTripRequest, leaveDemandGroupForTripRequest } from '../rides/api';
 import type { MainStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'MyTripRequests'>;
+
+const GROUP_LEAVE_STATUSES = new Set(['grouping', 'grouped', 'group_linked_pending']);
 
 function shortLabel(label: string | null | undefined, max = 50): string {
   if (!label) return '—';
@@ -63,6 +66,7 @@ export function MyTripRequestsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [leavingGroupId, setLeavingGroupId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!session?.id) return;
@@ -129,12 +133,50 @@ export function MyTripRequestsScreen() {
     [session?.id]
   );
 
+  const handleLeaveDemandGroup = useCallback(
+    (id: string) => {
+      const token = session?.access_token?.trim();
+      if (!token) {
+        Alert.alert('Sesión', 'Volvé a iniciar sesión para salir del grupo.');
+        return;
+      }
+      Alert.alert(
+        'Salir del grupo',
+        '¿Querés salir de la demanda agrupada? La solicitud se cancelará y dejarás de contar en ese grupo.',
+        [
+          { text: 'No', style: 'cancel' },
+          {
+            text: 'Sí, salir',
+            style: 'destructive',
+            onPress: async () => {
+              setLeavingGroupId(id);
+              try {
+                const res = await leaveDemandGroupForTripRequest(token, id);
+                if (!res.ok) {
+                  Alert.alert('No se pudo salir', res.error);
+                  return;
+                }
+                await load();
+              } finally {
+                setLeavingGroupId(null);
+              }
+            },
+          },
+        ]
+      );
+    },
+    [session?.access_token, load]
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: Record<string, unknown> }) => {
       const id = item.id as string;
       const status = (item.status as string) ?? '';
       const sc = requestStatusConfig(status);
       const canCancel = status === 'pending' && cancellingId !== id;
+      const showLeaveGroup =
+        GROUP_LEAVE_STATUSES.has(status) && leavingGroupId !== id && cancellingId === null;
+      const leaveBusy = leavingGroupId === id;
       const rideId = item.ride_id as string | null | undefined;
       return (
         <View style={styles.card}>
@@ -147,8 +189,25 @@ export function MyTripRequestsScreen() {
                 → {shortLabel(item.destination_label as string)}
               </Text>
             </View>
-            <View style={[styles.badge, { backgroundColor: sc.color + '20' }]}>
-              <Text style={[styles.badgeText, { color: sc.color }]}>{sc.label}</Text>
+            <View style={styles.cardHeaderRight}>
+              {showLeaveGroup && (
+                <TouchableOpacity
+                  style={styles.leaveGroupBtn}
+                  onPress={() => handleLeaveDemandGroup(id)}
+                  disabled={leaveBusy || cancellingId !== null}
+                  accessibilityRole="button"
+                  accessibilityLabel="Salir del grupo de demanda"
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={20} color="#b91c1c" />
+                </TouchableOpacity>
+              )}
+              {leaveBusy && (
+                <ActivityIndicator size="small" color="#0369a1" style={styles.leaveGroupSpinner} />
+              )}
+              <View style={[styles.badge, { backgroundColor: sc.color + '20' }]}>
+                <Text style={[styles.badgeText, { color: sc.color }]}>{sc.label}</Text>
+              </View>
             </View>
           </View>
           <Text style={styles.meta}>
@@ -186,7 +245,7 @@ export function MyTripRequestsScreen() {
         </View>
       );
     },
-    [navigation, cancellingId, handleCancel]
+    [navigation, cancellingId, leavingGroupId, handleCancel, handleLeaveDemandGroup]
   );
 
   if (loading && requests.length === 0) {
@@ -258,6 +317,9 @@ const styles = StyleSheet.create({
   },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
   cardRoute: { flex: 1, minWidth: 0 },
+  cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
+  leaveGroupBtn: { padding: 2, justifyContent: 'center', alignItems: 'center' },
+  leaveGroupSpinner: { marginRight: 2 },
   origin: { fontSize: 15, fontWeight: '600', color: '#111' },
   destination: { fontSize: 14, color: '#6b7280', marginTop: 2 },
   badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
