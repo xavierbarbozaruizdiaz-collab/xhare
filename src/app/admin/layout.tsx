@@ -38,11 +38,15 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <Link href="/admin" className="text-lg font-bold text-green-600 whitespace-nowrap">Xhare Admin</Link>
+        <div className="max-w-6xl mx-auto px-4 py-3 min-w-0">
+          <div className="flex items-center justify-between gap-2 mb-3 min-w-0">
+            <Link href="/admin" className="text-lg font-bold text-green-600 whitespace-nowrap min-w-0 truncate">
+              Xhare Admin
+            </Link>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <Link href="/" className="text-sm text-gray-500 hover:text-green-600 whitespace-nowrap">Ver app</Link>
+              <Link href="/" className="text-sm text-gray-500 hover:text-green-600 whitespace-nowrap">
+                Ver app
+              </Link>
               <button
                 type="button"
                 onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })}
@@ -52,24 +56,27 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
               </button>
             </div>
           </div>
-          <nav
-            className="flex gap-1 overflow-x-auto pb-1 -mx-1 scrollbar-thin min-h-[44px] items-center"
-            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-          >
-            {nav.map(({ href, label }) => (
-              <Link
-                key={href}
-                href={href}
-                className={`tab-segment flex-shrink-0 ${
-                  pathname === href || (href !== '/admin' && pathname.startsWith(href + '/'))
-                    ? 'tab-segment-active'
-                    : ''
-                }`}
-              >
-                {label}
-              </Link>
-            ))}
-          </nav>
+          {/* min-w-0: el flex no hereda el ancho del contenido; overflow-x + touch-pan-x: deslizar en móvil */}
+          <div className="w-full min-w-0 -mx-1 px-1 sm:mx-0 sm:px-0">
+            <nav
+              className="flex w-full min-w-0 max-w-full flex-nowrap gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x pb-2 min-h-[44px] items-center [scrollbar-width:thin] [-webkit-overflow-scrolling:touch]"
+              aria-label="Navegación administración"
+            >
+              {nav.map(({ href, label }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className={`tab-segment flex-shrink-0 ${
+                    pathname === href || (href !== '/admin' && pathname.startsWith(href + '/'))
+                      ? 'tab-segment-active'
+                      : ''
+                  }`}
+                >
+                  {label}
+                </Link>
+              ))}
+            </nav>
+          </div>
         </div>
       </header>
       <main className="max-w-6xl mx-auto px-4 py-6">
