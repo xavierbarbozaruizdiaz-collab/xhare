@@ -217,7 +217,7 @@ export function MyTripRequestsScreen() {
             Number(item.passenger_desired_price_per_seat_gs) > 0
               ? ` · Hasta ${Number(item.passenger_desired_price_per_seat_gs).toLocaleString('es-PY')} Gs/asiento`
               : item.pricing_kind === 'internal'
-                ? ' · Interno (cotizado)'
+                ? ' · Viajes disponibles (cotizado)'
                 : ''}
           </Text>
           <View style={styles.actions}>

@@ -12,15 +12,17 @@ IMMUTABLE
 STRICT
 AS $$
   SELECT mod(
-    degrees(
-      atan2(
-        sin(radians(lon2 - lon1)) * cos(radians(lat2)),
-        cos(radians(lat1)) * sin(radians(lat2))
-        - sin(radians(lat1)) * cos(radians(lat2)) * cos(radians(lon2 - lon1))
-      )
-    ) + 360.0,
-    360.0
-  );
+    (
+      degrees(
+        atan2(
+          sin(radians(lon2 - lon1)) * cos(radians(lat2)),
+          cos(radians(lat1)) * sin(radians(lat2))
+          - sin(radians(lat1)) * cos(radians(lat2)) * cos(radians(lon2 - lon1))
+        )
+      ) + 360.0
+    )::numeric,
+    360::numeric
+  )::double precision;
 $$;
 
 CREATE OR REPLACE FUNCTION public._heading_similarity(

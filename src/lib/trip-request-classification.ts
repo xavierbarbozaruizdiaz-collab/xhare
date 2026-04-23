@@ -2,6 +2,9 @@
  * Clasificación de demanda (Fase 2): la fuente de verdad vive en Postgres
  * (`trip_request_time_bucket_15m`, `z_trip_requests_classify_before_insert`).
  * Este módulo tipa el resultado y arma payloads de log en Node.
+ *
+ * Los pipelines de agrupación deben ignorar `trip_requests` en estado terminal `cancelled`
+ * (p. ej. tras `detach_passenger_favorite_grouped_requests`).
  */
 
 export type TripRequestClassificationLog = {

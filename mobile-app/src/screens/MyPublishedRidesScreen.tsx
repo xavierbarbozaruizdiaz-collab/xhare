@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { CommonActions, useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -20,6 +21,8 @@ import {
   fetchAwaitingDriverRides,
   fetchAcceptedTripRequestSeatsByRide,
 } from '../rides/api';
+import { supabase } from '../backend/supabase';
+import { updateRideStatus } from '../backend/rideStatus';
 import { SystemGeneratedRideCard, type SystemGeneratedRideRow } from '../components/SystemGeneratedRideCard';
 import type { MainStackParamList } from '../navigation/types';
 
@@ -84,9 +87,15 @@ function statusLabel(s: string | null | undefined): string {
 function RideCard({
   r,
   onPress,
+  onCancel,
+  cancelling,
+  cancelDisabled,
 }: {
   r: RideRow;
   onPress: () => void;
+  onCancel?: () => void;
+  cancelling?: boolean;
+  cancelDisabled?: boolean;
 }) {
   const origin = String(r.origin_label ?? 'Origen');
   const dest = String(r.destination_label ?? 'Destino');
@@ -112,6 +121,20 @@ function RideCard({
         {reserved > 0 ? ` · ${reserved} asiento(s) reservados` : ''}
         {seats > 0 ? ` · ${seats} libres` : ''}
       </Text>
+      {onCancel ? (
+        <TouchableOpacity
+          style={[styles.cancelChip, (cancelling || cancelDisabled) && styles.cancelChipDisabled]}
+          onPress={(e) => {
+            e.stopPropagation();
+            onCancel();
+          }}
+          disabled={Boolean(cancelling || cancelDisabled)}
+        >
+          <Text style={styles.cancelChipText}>
+            {cancelling ? 'Cancelando…' : cancelDisabled ? 'Cancelar' : 'Cancelar'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
     </TouchableOpacity>
   );
 }
@@ -126,6 +149,7 @@ export function MyPublishedRidesScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
 
   const load = useCallback(async (opts?: { isActive?: () => boolean }) => {
     const alive = () => opts?.isActive?.() ?? true;
@@ -201,6 +225,46 @@ export function MyPublishedRidesScreen() {
     setRefreshing(true);
     void load();
   }, [load]);
+
+  const cancelScheduledRide = useCallback(
+    (ride: RideRow) => {
+      const rideId = String(ride.id);
+      Alert.alert(
+        'Cancelar viaje',
+        '¿Seguro que querés cancelar este viaje? Se notificará a los pasajeros y, si viene de sistema, volverá a disponible.',
+        [
+          { text: 'No', style: 'cancel' },
+          {
+            text: 'Sí, cancelar',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                setCancellingRideId(rideId);
+                try {
+                  const { data: auth } = await supabase.auth.getSession();
+                  const token = auth.session?.access_token;
+                  if (!token) {
+                    Alert.alert('Sesión', 'Volvé a iniciar sesión.');
+                    return;
+                  }
+                  const r = await updateRideStatus(rideId, 'cancelled', token);
+                  if (!r.ok) {
+                    Alert.alert('No se pudo cancelar', r.details ?? 'Intentá de nuevo.');
+                    return;
+                  }
+                  await load();
+                  Alert.alert('Listo', 'Viaje cancelado.');
+                } finally {
+                  setCancellingRideId(null);
+                }
+              })();
+            },
+          },
+        ]
+      );
+    },
+    [load]
+  );
 
   const buckets = useMemo(() => {
     const now = Date.now();
@@ -417,7 +481,20 @@ export function MyPublishedRidesScreen() {
                 </View>
               }
               renderItem={({ item }) => (
-                <RideCard r={item} onPress={() => navigation.navigate('RideDetail', { rideId: item.id })} />
+                <RideCard
+                  r={item}
+                  onPress={() => navigation.navigate('RideDetail', { rideId: item.id })}
+                  onCancel={
+                    openBucket === 'programados' &&
+                    (String(item.status) === 'published' ||
+                      String(item.status) === 'booked' ||
+                      String(item.status) === 'draft')
+                      ? () => cancelScheduledRide(item)
+                      : undefined
+                  }
+                  cancelling={cancellingRideId === item.id}
+                  cancelDisabled={cancellingRideId != null && cancellingRideId !== item.id}
+                />
               )}
             />
           )}
@@ -492,6 +569,18 @@ const styles = StyleSheet.create({
   whenEnRoute: { color: '#1d4ed8' },
   route: { fontSize: 15, fontWeight: '600', color: '#111' },
   meta: { fontSize: 13, color: '#6b7280', marginTop: 8 },
+  cancelChip: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  cancelChipDisabled: { opacity: 0.65 },
+  cancelChipText: { fontSize: 12, fontWeight: '700', color: '#b91c1c' },
   empty: { alignItems: 'center', paddingVertical: 40 },
   emptyText: { fontSize: 16, color: '#6b7280', textAlign: 'center', marginBottom: 16 },
   linkBtn: { backgroundColor: '#166534', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },

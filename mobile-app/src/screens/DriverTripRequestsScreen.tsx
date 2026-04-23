@@ -1,6 +1,6 @@
 /**
- * Solicitudes de viaje (conductor): pestañas Interno / Larga distancia / De sistema;
- * rutas con demanda + solicitudes sueltas + viajes generados (awaiting_driver).
+ * Solicitudes de viaje (conductor): pestañas Viajes disponibles / Ofertas de viajes / De sistema.
+ * "De sistema" agrupa rutas generadas por el motor de agrupación + viajes awaiting_driver.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -16,7 +16,12 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
-import { fetchDemandRoutes, syncDemandRoutes, type DemandRouteGroup } from '../backend/demandRoutesApi';
+import {
+  buildRideIdToDemandGroupMap,
+  fetchDemandRoutes,
+  syncDemandRoutes,
+  type DemandRouteGroup,
+} from '../backend/demandRoutesApi';
 import { raceWithTimeout } from '../backend/withTimeout';
 import { env } from '../core/env';
 import type { MainStackParamList } from '../navigation/types';
@@ -30,10 +35,14 @@ import { SystemGeneratedRideCard, type SystemGeneratedRideRow } from '../compone
 type Nav = NativeStackNavigationProp<MainStackParamList, 'DriverTripRequests'>;
 
 type RequestTab = 'internal' | 'long_distance' | 'system';
+type SystemSubTab = 'hex' | 'interior';
 
 type InternalListItem =
   | { kind: 'group'; g: DemandRouteGroup }
   | { kind: 'request'; r: Record<string, unknown> };
+type SystemListItem =
+  | { kind: 'group'; g: DemandRouteGroup }
+  | { kind: 'ride'; r: SystemGeneratedRideRow };
 
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '—';
@@ -59,10 +68,19 @@ function shortLabel(label: string | null | undefined, max = 45): string {
 const SUPABASE_QUERY_TIMEOUT_MS = 35_000;
 
 const TAB_LABELS: Record<RequestTab, string> = {
-  internal: 'Interno',
-  long_distance: 'Larga distancia',
+  internal: 'Viajes disponibles',
+  long_distance: 'Ofertas de viajes',
   system: 'De sistema',
 };
+const SYSTEM_SUBTAB_LABELS: Record<SystemSubTab, string> = {
+  hex: 'Hex',
+  interior: 'Interior',
+};
+
+function isHexSystemGroup(g: DemandRouteGroup): boolean {
+  const src = String(g.grouping_source ?? '').trim().toLowerCase();
+  return src === 'hex_bucket' || src === 'hex';
+}
 
 export function DriverTripRequestsScreen() {
   const navigation = useNavigation<Nav>();
@@ -71,10 +89,12 @@ export function DriverTripRequestsScreen() {
   const [fallbackRequests, setFallbackRequests] = useState<Record<string, unknown>[]>([]);
   const [systemRides, setSystemRides] = useState<SystemGeneratedRideRow[]>([]);
   const [systemSeats, setSystemSeats] = useState<Record<string, number>>({});
+  const [systemRideGroupByRideId, setSystemRideGroupByRideId] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<RequestTab>('internal');
+  const [activeSystemSubTab, setActiveSystemSubTab] = useState<SystemSubTab>('hex');
 
   const load = useCallback(async () => {
     const trace = (...args: unknown[]) => {
@@ -90,6 +110,7 @@ export function DriverTripRequestsScreen() {
       setFallbackRequests([]);
       setSystemRides([]);
       setSystemSeats({});
+      setSystemRideGroupByRideId({});
       return;
     }
 
@@ -156,6 +177,12 @@ export function DriverTripRequestsScreen() {
       const seatsMap =
         dIds.length > 0 ? await fetchAcceptedTripRequestSeatsByRide(dIds).catch(() => ({})) : {};
       setSystemSeats(seatsMap as Record<string, number>);
+      if (dIds.length > 0) {
+        const byRide = await buildRideIdToDemandGroupMap(dIds.map((id) => String(id)));
+        setSystemRideGroupByRideId(byRide);
+      } else {
+        setSystemRideGroupByRideId({});
+      }
     } catch (e) {
       trace('load:catch', e);
       setApiError(e instanceof Error ? e.message : 'Error al cargar solicitudes');
@@ -163,6 +190,7 @@ export function DriverTripRequestsScreen() {
       setFallbackRequests([]);
       setSystemRides([]);
       setSystemSeats({});
+      setSystemRideGroupByRideId({});
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -194,13 +222,44 @@ export function DriverTripRequestsScreen() {
     [fallbackRequests]
   );
 
+  const systemEligibleGroups = useMemo(
+    () => groups.filter((g) => Number(g.passenger_count ?? 0) >= 2),
+    [groups]
+  );
+  const systemSingleGroups = useMemo(
+    () => groups.filter((g) => Number(g.passenger_count ?? 0) < 2),
+    [groups]
+  );
+  const systemHexGroups = useMemo(
+    () => systemEligibleGroups.filter((g) => isHexSystemGroup(g)),
+    [systemEligibleGroups]
+  );
+  const systemInteriorGroups = useMemo(
+    () => systemEligibleGroups.filter((g) => !isHexSystemGroup(g)),
+    [systemEligibleGroups]
+  );
+
   const internalListData: InternalListItem[] = useMemo(() => {
-    const rows: InternalListItem[] = groups.map((g) => ({ kind: 'group', g }));
-    for (const r of internalRequests) {
-      rows.push({ kind: 'request', r });
+    const rows: InternalListItem[] = internalRequests.map((r) => ({ kind: 'request', r }));
+    for (const g of systemSingleGroups) rows.unshift({ kind: 'group', g });
+    return rows;
+  }, [internalRequests, systemSingleGroups]);
+
+  const systemListData: SystemListItem[] = useMemo(() => {
+    const visibleGroups = activeSystemSubTab === 'hex' ? systemHexGroups : systemInteriorGroups;
+    const rows: SystemListItem[] = visibleGroups.map((g) => ({ kind: 'group', g }));
+    const materializedRideIds = new Set(
+      visibleGroups
+        .map((g) => String(g.ride_id ?? '').trim())
+        .filter((id) => id.length > 0)
+    );
+    for (const r of systemRides) {
+      const rid = String((r as { id?: string }).id ?? '').trim();
+      if (materializedRideIds.has(rid)) continue;
+      rows.push({ kind: 'ride', r });
     }
     return rows;
-  }, [groups, internalRequests]);
+  }, [activeSystemSubTab, systemHexGroups, systemInteriorGroups, systemRides]);
 
   const renderInternalItem = useCallback(
     ({ item }: { item: InternalListItem }) => {
@@ -213,13 +272,15 @@ export function DriverTripRequestsScreen() {
             accessibilityLabel={`Ruta ${g.origin_city ?? 'Origen'} a ${g.destination_city ?? 'Destino'}, ${g.passenger_count} pasajeros`}
             accessibilityRole="button"
           >
+            <View style={styles.kindBadgeRow}>
+              <Text style={[styles.kindBadge, styles.kindBadgeInternal]}>Sistema (1)</Text>
+            </View>
             <Text style={styles.origin} numberOfLines={1}>
               {g.origin_city ?? 'Origen'} → {g.destination_city ?? 'Destino'}
             </Text>
             <Text style={styles.meta}>
               {formatDate(g.requested_date)} · {formatTime(g.requested_time)} · {g.passenger_count} pasajero(s)
             </Text>
-            <Text style={styles.hint}>Tocá para ver el mapa y publicar un viaje</Text>
           </TouchableOpacity>
         );
       }
@@ -228,7 +289,7 @@ export function DriverTripRequestsScreen() {
       return (
         <View style={styles.card}>
           <View style={styles.kindBadgeRow}>
-            <Text style={[styles.kindBadge, styles.kindBadgeInternal]}>Interno</Text>
+            <Text style={[styles.kindBadge, styles.kindBadgeInternal]}>Disponible</Text>
           </View>
           <Text style={styles.origin} numberOfLines={1}>
             {shortLabel(r.origin_label as string)}
@@ -245,10 +306,10 @@ export function DriverTripRequestsScreen() {
             onPress={() =>
               navigation.navigate('PublishRide', { tripRequestId: reqId, publishKind: 'internal' })
             }
-            accessibilityLabel="Crear ruta para solicitud interna"
+            accessibilityLabel="Crear ruta para solicitud disponible"
             accessibilityRole="button"
           >
-            <Text style={styles.primaryBtnText}>Crear ruta (interno)</Text>
+            <Text style={styles.primaryBtnText}>Crear ruta</Text>
           </TouchableOpacity>
         </View>
       );
@@ -262,7 +323,7 @@ export function DriverTripRequestsScreen() {
       return (
         <View style={styles.card}>
           <View style={styles.kindBadgeRow}>
-            <Text style={[styles.kindBadge, styles.kindBadgeLong]}>Larga distancia</Text>
+            <Text style={[styles.kindBadge, styles.kindBadgeLong]}>Oferta de viaje</Text>
           </View>
           <Text style={styles.origin} numberOfLines={1}>
             {shortLabel(r.origin_label as string)}
@@ -294,13 +355,16 @@ export function DriverTripRequestsScreen() {
 
   const introForTab = useMemo(() => {
     if (activeTab === 'internal') {
-      return 'Interno: rutas con demanda agrupadas y solicitudes internas pendientes. Deslizá hacia abajo para recalcular grupos.';
+      return 'Viajes disponibles: solicitudes pendientes + grupos de sistema que quedaron con menos de 2 solicitudes.';
     }
     if (activeTab === 'long_distance') {
-      return 'Larga distancia: ofertá precio y compará con otros conductores.';
+      return 'Ofertas de viajes: ofertá precio y compará con otros conductores.';
     }
-    return 'De sistema: viajes creados por despacho sin conductor asignado. También aparecen en Mis viajes publicados.';
-  }, [activeTab]);
+    if (activeSystemSubTab === 'hex') {
+      return 'De sistema / Hex: rutas agrupadas por hexágonos (mínimo 2 solicitudes).';
+    }
+    return 'De sistema / Interior: rutas agrupadas por cercanía (mínimo 2 solicitudes).';
+  }, [activeTab, activeSystemSubTab]);
 
   if (loading && !refreshing) {
     return (
@@ -326,7 +390,10 @@ export function DriverTripRequestsScreen() {
           <TouchableOpacity
             key={tab}
             style={[styles.tabBtn, activeTab === tab && styles.tabBtnActive]}
-            onPress={() => setActiveTab(tab)}
+            onPress={() => {
+              setActiveTab(tab);
+              if (tab !== 'system') setActiveSystemSubTab('hex');
+            }}
             accessibilityRole="button"
             accessibilityState={{ selected: activeTab === tab }}
             accessibilityLabel={TAB_LABELS[tab]}
@@ -345,13 +412,13 @@ export function DriverTripRequestsScreen() {
       {activeTab === 'internal' &&
         (internalListData.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No hay rutas agrupadas ni solicitudes internas pendientes.</Text>
+            <Text style={styles.emptyText}>No hay solicitudes disponibles pendientes.</Text>
           </View>
         ) : (
           <FlatList
             data={internalListData}
             keyExtractor={(item) =>
-              item.kind === 'group' ? item.g.id : String(item.r.id)
+              item.kind === 'group' ? `sys1_${item.g.id}` : `req_${String(item.r.id)}`
             }
             renderItem={renderInternalItem}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -362,7 +429,7 @@ export function DriverTripRequestsScreen() {
       {activeTab === 'long_distance' &&
         (longRequests.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No hay solicitudes larga distancia pendientes.</Text>
+            <Text style={styles.emptyText}>No hay ofertas de viajes pendientes.</Text>
           </View>
         ) : (
           <FlatList
@@ -376,26 +443,76 @@ export function DriverTripRequestsScreen() {
 
       {activeTab === 'system' && (
         <FlatList
-          data={systemRides}
-          keyExtractor={(item) => item.id}
+          data={systemListData}
+          keyExtractor={(item) => (item.kind === 'group' ? `g_${item.g.id}` : `r_${item.r.id}`)}
           ListHeaderComponent={
-            <Text style={styles.systemSectionTitle}>Viajes generados por el sistema</Text>
+            <View>
+              <View style={styles.systemSubtabRow}>
+                {(['hex', 'interior'] as const).map((sub) => (
+                  <TouchableOpacity
+                    key={sub}
+                    style={[styles.systemSubtabBtn, activeSystemSubTab === sub && styles.systemSubtabBtnActive]}
+                    onPress={() => setActiveSystemSubTab(sub)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: activeSystemSubTab === sub }}
+                    accessibilityLabel={SYSTEM_SUBTAB_LABELS[sub]}
+                  >
+                    <Text
+                      style={[
+                        styles.systemSubtabBtnText,
+                        activeSystemSubTab === sub && styles.systemSubtabBtnTextActive,
+                      ]}
+                    >
+                      {SYSTEM_SUBTAB_LABELS[sub]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.systemSectionTitle}>Rutas y viajes de sistema</Text>
+            </View>
           }
           ListEmptyComponent={
             <View style={styles.systemEmptyWrap}>
               <Text style={styles.emptyText}>
-                No hay viajes generados por el sistema por ahora. Aparecen cuando el despacho crea un viaje sin
-                conductor asignado (estado awaiting_driver).
+                No hay rutas o viajes de sistema para {activeSystemSubTab === 'hex' ? 'Hex' : 'Interior'}.
               </Text>
             </View>
           }
-          renderItem={({ item }) => (
-            <SystemGeneratedRideCard
-              r={item}
-              passengerSeats={systemSeats[item.id] ?? 0}
-              onOpenDetail={() => navigation.navigate('RideDetail', { rideId: item.id })}
-            />
-          )}
+          renderItem={({ item }) =>
+            item.kind === 'group' ? (
+              <TouchableOpacity
+                style={styles.card}
+                onPress={() => navigation.navigate('DriverRouteGroupDetail', { groupId: item.g.id })}
+                accessibilityLabel={`Ruta ${item.g.origin_city ?? 'Origen'} a ${item.g.destination_city ?? 'Destino'}, ${item.g.passenger_count} pasajeros`}
+                accessibilityRole="button"
+              >
+                <Text style={styles.origin} numberOfLines={1}>
+                  {item.g.origin_city ?? 'Origen'} → {item.g.destination_city ?? 'Destino'}
+                </Text>
+                <Text style={styles.meta}>
+                  {formatDate(item.g.requested_date)} · {formatTime(item.g.requested_time)} · {item.g.passenger_count}{' '}
+                  pasajero(s)
+                </Text>
+                <Text style={styles.hint}>Tocá para ver el mapa y publicar un viaje</Text>
+              </TouchableOpacity>
+            ) : (
+              <SystemGeneratedRideCard
+                r={item.r}
+                passengerSeats={systemSeats[item.r.id] ?? 0}
+                onOpenDetail={() => {
+                  const groupId = systemRideGroupByRideId[item.r.id];
+                  if (groupId) {
+                    navigation.navigate('DriverRouteGroupDetail', { groupId });
+                    return;
+                  }
+                  navigation.navigate('PublishRide', {
+                    fromRideId: item.r.id,
+                    publishKind: 'internal',
+                  });
+                }}
+              />
+            )
+          }
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           contentContainerStyle={styles.listContent}
         />
@@ -447,6 +564,19 @@ const styles = StyleSheet.create({
     color: '#0f766e',
     marginBottom: 12,
   },
+  systemSubtabRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  systemSubtabBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+  },
+  systemSubtabBtnActive: { borderColor: '#0f766e', backgroundColor: '#ecfeff' },
+  systemSubtabBtnText: { fontSize: 12, fontWeight: '700', color: '#6b7280' },
+  systemSubtabBtnTextActive: { color: '#0f766e' },
   systemEmptyWrap: { paddingVertical: 8, paddingHorizontal: 4 },
   listContent: { paddingBottom: 24 },
   card: {

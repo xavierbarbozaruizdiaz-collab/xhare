@@ -18,6 +18,7 @@
     "android:passenger:no-bundler": "cross-env APP_FLAVOR=passenger node scripts/run-android-debug-no-bundler.cjs",
     "android:driver:no-bundler": "cross-env APP_FLAVOR=driver node scripts/run-android-debug-no-bundler.cjs",
     "android:emulator": "node scripts/start-android-emulator-safe.cjs",
+    "android:recover": "node scripts/recover-android-dev.cjs",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "check": "npm run check:ts",

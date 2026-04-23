@@ -212,7 +212,9 @@ export function AvailableRidesScreen() {
           onPress={() => setRideKind('internal')}
           accessibilityRole="button"
         >
-          <Text style={[styles.kindChipText, rideKind === 'internal' && styles.kindChipTextActive]}>Interno</Text>
+          <Text style={[styles.kindChipText, rideKind === 'internal' && styles.kindChipTextActive]}>
+            Viajes disponibles
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.kindChip, rideKind === 'long_distance' && styles.kindChipActive]}
@@ -220,7 +222,7 @@ export function AvailableRidesScreen() {
           accessibilityRole="button"
         >
           <Text style={[styles.kindChipText, rideKind === 'long_distance' && styles.kindChipTextActive]}>
-            Larga distancia
+            Ofertas de viajes
           </Text>
         </TouchableOpacity>
       </View>

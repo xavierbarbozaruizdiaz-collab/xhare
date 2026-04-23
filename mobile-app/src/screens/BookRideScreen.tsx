@@ -53,6 +53,7 @@ const FALLBACK_PRICING: EffectivePricing = {
   roundTo: 100,
   blockSize: 4,
   blockMultiplier: 1.5,
+  driverFeePercentOfCollected: 10,
   pricingSettingsId: null,
 };
 

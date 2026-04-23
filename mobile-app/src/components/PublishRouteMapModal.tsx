@@ -34,11 +34,19 @@ type Props = {
   origin: { lat: number; lng: number } | null;
   destination: { lat: number; lng: number } | null;
   waypoints: Array<{ lat: number; lng: number }>;
+  passengerFixedPoints?: Array<{
+    lat: number;
+    lng: number;
+    label?: string;
+    role?: 'first_pickup' | 'last_dropoff' | 'normal';
+  }>;
   onMapPress: (e: MapPressEvent) => void;
   originDestinationReady: boolean;
   waypointCount: number;
   maxWaypoints?: number;
   onRemoveWaypoint: (index: number) => void;
+  allowEditingPoints?: boolean;
+  showWaypointMode?: boolean;
 };
 
 export function PublishRouteMapModal({
@@ -51,11 +59,14 @@ export function PublishRouteMapModal({
   origin,
   destination,
   waypoints,
+  passengerFixedPoints = [],
   onMapPress,
   originDestinationReady,
   waypointCount,
   maxWaypoints = MAX_DRIVER_PUBLISH_WAYPOINTS,
   onRemoveWaypoint,
+  allowEditingPoints = true,
+  showWaypointMode = true,
 }: Props) {
   const mapRef = useRef<MapView>(null);
   /** Tras quitar una parada con `onMarkerPress`, Android también dispara `onPress` del mapa: lo ignoramos un instante. */
@@ -85,6 +96,7 @@ export function PublishRouteMapModal({
     if (origin) coords.push({ latitude: origin.lat, longitude: origin.lng });
     if (destination) coords.push({ latitude: destination.lat, longitude: destination.lng });
     waypoints.forEach((w) => coords.push({ latitude: w.lat, longitude: w.lng }));
+    passengerFixedPoints.forEach((p) => coords.push({ latitude: p.lat, longitude: p.lng }));
     const t = setTimeout(() => {
       if (coords.length >= 2) {
         mapRef.current?.fitToCoordinates(coords, {
@@ -105,7 +117,7 @@ export function PublishRouteMapModal({
       didFitForOpenRef.current = true;
     }, 320);
     return () => clearTimeout(t);
-  }, [visible, origin, destination, waypoints, region.latitudeDelta, region.longitudeDelta]);
+  }, [visible, origin, destination, waypoints, passengerFixedPoints, region.latitudeDelta, region.longitudeDelta]);
 
   const goToMyLocation = useCallback(async () => {
     setLocating(true);
@@ -141,13 +153,14 @@ export function PublishRouteMapModal({
 
   const requestRemoveWaypoint = useCallback(
     (index: number) => {
+      if (!allowEditingPoints) return;
       const now = Date.now();
       if (now - removeWpDebounceRef.current < 350) return;
       removeWpDebounceRef.current = now;
       mapPressSilenceUntilRef.current = now + 700;
       onRemoveWaypoint(index);
     },
-    [onRemoveWaypoint]
+    [onRemoveWaypoint, allowEditingPoints]
   );
 
   const handleMapMarkerPress = useCallback(
@@ -164,10 +177,11 @@ export function PublishRouteMapModal({
 
   const handleMapPress = useCallback(
     (ev: MapPressEvent) => {
+      if (!allowEditingPoints) return;
       if (Date.now() < mapPressSilenceUntilRef.current) return;
       onMapPress(ev);
     },
-    [onMapPress]
+    [onMapPress, allowEditingPoints]
   );
 
   const modeLabel =
@@ -187,8 +201,10 @@ export function PublishRouteMapModal({
           <View style={styles.headerSpacer} />
         </View>
         <Text style={styles.hint}>
-          Tocá el mapa para colocar el punto. La ruta verde es por calles (origen → paradas → destino).
-          {mapMode === 'waypoint'
+          {allowEditingPoints
+            ? 'Tocá el mapa para colocar el punto. La ruta verde es por calles (origen → paradas → destino).'
+            : 'Vista de solo lectura: los puntos del grupo son fijos y no se pueden editar.'}
+          {allowEditingPoints && mapMode === 'waypoint'
             ? ' Colocá la parada donde quieras (entre origen y destino). Para quitarla, tocá el pin o la etiqueta.'
             : ''}
         </Text>
@@ -219,7 +235,7 @@ export function PublishRouteMapModal({
                 anchor={{ x: 0.5, y: 1 }}
                 tracksViewChanges={false}
                 stopPropagation
-                onPress={() => requestRemoveWaypoint(i)}
+                onPress={allowEditingPoints ? () => requestRemoveWaypoint(i) : undefined}
               >
                 <View style={styles.wpMarker} pointerEvents="box-none" collapsable={false}>
                   <View style={styles.wpChip} collapsable={false}>
@@ -236,14 +252,42 @@ export function PublishRouteMapModal({
                 </View>
               </Marker>
             ))}
+            {passengerFixedPoints.map((p, i) => (
+              <Marker
+                key={`m-pax-fixed-${p.lat}-${p.lng}-${i}`}
+                coordinate={{ latitude: p.lat, longitude: p.lng }}
+                title={
+                  p.role === 'first_pickup'
+                    ? 'Primer pasajero a recoger'
+                    : p.role === 'last_dropoff'
+                      ? 'Último punto de pasajeros'
+                      : p.label ?? 'Punto de pasajero'
+                }
+                description={p.label ?? undefined}
+                anchor={{ x: 0.5, y: 0.5 }}
+                tracksViewChanges={false}
+              >
+                <View
+                  style={[
+                    styles.passengerDot,
+                    p.role === 'first_pickup'
+                      ? styles.passengerDotFirstPickup
+                      : p.role === 'last_dropoff'
+                        ? styles.passengerDotLastDropoff
+                        : styles.passengerDotRegular,
+                  ]}
+                  collapsable={false}
+                />
+              </Marker>
+            ))}
             {origin && (
-              <Marker coordinate={{ latitude: origin.lat, longitude: origin.lng }} title="Origen" pinColor="red" />
+              <Marker coordinate={{ latitude: origin.lat, longitude: origin.lng }} title="Origen" pinColor="green" />
             )}
             {destination && (
               <Marker
                 coordinate={{ latitude: destination.lat, longitude: destination.lng }}
                 title="Destino"
-                pinColor="green"
+                pinColor="red"
               />
             )}
           </MapView>
@@ -261,30 +305,50 @@ export function PublishRouteMapModal({
           <View style={styles.modeRow}>
             <TouchableOpacity
               style={[styles.modeBtn, mapMode === 'origin' && styles.modeBtnActive]}
-              onPress={() => onMapModeChange('origin')}
-            >
-              <Text style={[styles.modeText, mapMode === 'origin' && styles.modeTextActive]}>Origen</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.modeBtn, mapMode === 'waypoint' && styles.modeBtnActive]}
-              onPress={() => originDestinationReady && onMapModeChange('waypoint')}
-              disabled={!originDestinationReady}
+              onPress={() => allowEditingPoints && onMapModeChange('origin')}
+              disabled={!allowEditingPoints}
             >
               <Text
                 style={[
                   styles.modeText,
-                  mapMode === 'waypoint' && styles.modeTextActive,
-                  !originDestinationReady && styles.modeTextDisabled,
+                  mapMode === 'origin' && styles.modeTextActive,
+                  !allowEditingPoints && styles.modeTextDisabled,
                 ]}
               >
-                + Parada ({waypointCount}/{maxWaypoints})
+                Origen
               </Text>
             </TouchableOpacity>
+            {showWaypointMode ? (
+              <TouchableOpacity
+                style={[styles.modeBtn, mapMode === 'waypoint' && styles.modeBtnActive]}
+                onPress={() => allowEditingPoints && originDestinationReady && onMapModeChange('waypoint')}
+                disabled={!originDestinationReady || !allowEditingPoints}
+              >
+                <Text
+                  style={[
+                    styles.modeText,
+                    mapMode === 'waypoint' && styles.modeTextActive,
+                    !originDestinationReady && styles.modeTextDisabled,
+                  ]}
+                >
+                  + Parada ({waypointCount}/{maxWaypoints})
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={[styles.modeBtn, mapMode === 'destination' && styles.modeBtnActive]}
-              onPress={() => onMapModeChange('destination')}
+              onPress={() => allowEditingPoints && onMapModeChange('destination')}
+              disabled={!allowEditingPoints}
             >
-              <Text style={[styles.modeText, mapMode === 'destination' && styles.modeTextActive]}>Destino</Text>
+              <Text
+                style={[
+                  styles.modeText,
+                  mapMode === 'destination' && styles.modeTextActive,
+                  !allowEditingPoints && styles.modeTextDisabled,
+                ]}
+              >
+                Destino
+              </Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -403,4 +467,27 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  passengerDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#fff',
+    ...Platform.select({
+      android: { elevation: 2 },
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.15,
+        shadowRadius: 1,
+      },
+    }),
+  },
+  passengerDotRegular: { backgroundColor: '#2563eb' },
+  passengerDotFirstPickup: {
+    backgroundColor: '#a855f7',
+    borderColor: '#ffffff',
+    borderStyle: 'dashed',
+  },
+  passengerDotLastDropoff: { backgroundColor: '#d97706' },
 });

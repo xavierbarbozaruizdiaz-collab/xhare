@@ -38,7 +38,23 @@ function forceOpenMainActivity(adbPath, appId) {
   } catch (_) {
     // ignore
   }
-  execFileSync(adbPath, ['shell', 'am', 'start', '-n', `${appId}/.MainActivity`], { stdio: 'inherit' });
+  let resolvedComponent = '';
+  try {
+    const out = execFileSync(adbPath, ['shell', 'cmd', 'package', 'resolve-activity', '--brief', appId], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const lines = out
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const component = lines.find((line) => line.includes('/'));
+    if (component) resolvedComponent = component;
+  } catch (_) {
+    // ignore and use fallback below
+  }
+  const componentToOpen = resolvedComponent || `${appId}/.MainActivity`;
+  execFileSync(adbPath, ['shell', 'am', 'start', '-n', componentToOpen], { stdio: 'inherit' });
 }
 
 const flavor = getFlavor();

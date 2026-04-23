@@ -11,6 +11,7 @@ export interface PricingSettingsRow {
   round_to: number;
   block_size: number;
   block_multiplier: number;
+  driver_fee_percent_of_collected?: number;
   min_fare_floor_pyg?: number;
   is_active: boolean;
 }
@@ -21,6 +22,7 @@ export interface EffectivePricing {
   roundTo: number;
   blockSize: number;
   blockMultiplier: number;
+  driverFeePercentOfCollected: number;
   pricingSettingsId: string | null;
 }
 
@@ -36,7 +38,7 @@ export async function loadActivePricingSettings(): Promise<PricingSettingsRow | 
   const { data, error } = await supabase
     .from('pricing_settings')
     .select(
-      'id, min_fare_100, pyg_per_km_100, discount_percent, round_to, block_size, block_multiplier, min_fare_floor_pyg, is_active'
+      'id, min_fare_100, pyg_per_km_100, discount_percent, round_to, block_size, block_multiplier, driver_fee_percent_of_collected, min_fare_floor_pyg, is_active'
     )
     .eq('is_active', true)
     .limit(1)
@@ -64,6 +66,7 @@ export function computeEffectivePricing(settings: PricingSettingsRow): Effective
     roundTo,
     blockSize: settings.block_size ?? 4,
     blockMultiplier: settings.block_multiplier ?? 1.5,
+    driverFeePercentOfCollected: Math.max(0, Math.min(100, Number(settings.driver_fee_percent_of_collected ?? 10))),
     pricingSettingsId: settings.id,
   };
 }

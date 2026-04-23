@@ -49,6 +49,7 @@ const FALLBACK_PRICING: EffectivePricing = {
   roundTo: 100,
   blockSize: 4,
   blockMultiplier: 1.5,
+  driverFeePercentOfCollected: 10,
   pricingSettingsId: null,
 };
 
@@ -445,7 +446,9 @@ export function SaveTripRequestScreen() {
           onPress={() => setPricingKind('internal')}
           accessibilityRole="button"
         >
-          <Text style={[styles.kindChipText, pricingKind === 'internal' && styles.kindChipTextActive]}>Interno</Text>
+          <Text style={[styles.kindChipText, pricingKind === 'internal' && styles.kindChipTextActive]}>
+            Viajes disponibles
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.kindChip, pricingKind === 'long_distance' && styles.kindChipActive]}
@@ -453,7 +456,7 @@ export function SaveTripRequestScreen() {
           accessibilityRole="button"
         >
           <Text style={[styles.kindChipText, pricingKind === 'long_distance' && styles.kindChipTextActive]}>
-            Larga distancia
+            Ofertas de viajes
           </Text>
         </TouchableOpacity>
       </View>
@@ -491,7 +494,7 @@ export function SaveTripRequestScreen() {
       ) : (
         <View style={styles.internalBox}>
           <Text style={styles.hint}>
-            Larga distancia: indicá cuánto querés pagar por asiento. El precio final lo podés acordar con el conductor
+            Ofertas de viajes: indicá cuánto querés pagar por asiento. El precio final lo podés acordar con el conductor
             (por ejemplo por chat).
           </Text>
           <Text style={styles.label}>Precio que querés pagar por asiento (Gs)</Text>

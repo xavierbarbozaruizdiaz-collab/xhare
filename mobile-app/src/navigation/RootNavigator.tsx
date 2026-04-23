@@ -146,7 +146,7 @@ function MainStackNavigator() {
       <MainStack.Screen
         name="TripRequestLongDistanceOffer"
         component={TripRequestLongDistanceOfferScreen}
-        options={{ title: 'Larga distancia — ofertas' }}
+        options={{ title: 'Ofertas de viajes' }}
       />
       <MainStack.Screen
         name="DriverRouteGroupDetail"

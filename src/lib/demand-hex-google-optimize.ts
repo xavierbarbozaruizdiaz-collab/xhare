@@ -9,7 +9,7 @@ export type HexGroupLeg = {
   visitOrder: number;
   stopType: 'PICKUP' | 'DROPOFF';
   tripRequestId: string;
-  passengerName: string | null;
+  passengerName: string;
   label: string;
   action: string;
 };
@@ -54,14 +54,15 @@ function meanPoint(rows: TripRow[]): { lat: number; lng: number } {
 async function loadProfileNames(
   service: SupabaseClient,
   userIds: string[]
-): Promise<Map<string, string | null>> {
+): Promise<Map<string, string>> {
   const uniq = Array.from(new Set(userIds)).filter(Boolean);
-  const map = new Map<string, string | null>();
+  const map = new Map<string, string>();
   if (uniq.length === 0) return map;
   const { data, error } = await service.from('profiles').select('id, full_name').in('id', uniq);
   if (error || !data) return map;
   for (const row of data as { id: string; full_name: string | null }[]) {
-    map.set(row.id, row.full_name ?? null);
+    const fallback = `Pasajero ${String(row.id ?? '').slice(0, 6)}`;
+    map.set(row.id, String(row.full_name ?? '').trim() || fallback);
   }
   return map;
 }
@@ -323,7 +324,9 @@ async function optimizeOneHexGroup(
         st === 'PICKUP'
           ? String(m.trip_requests?.origin_label ?? 'Origen')
           : String(m.trip_requests?.destination_label ?? 'Destino');
-      const nm = names.get(m.trip_requests.user_id) ?? null;
+      const nm =
+        names.get(m.trip_requests.user_id) ??
+        `Pasajero ${String(m.trip_requests.user_id ?? m.trip_request_id).slice(0, 6)}`;
       legs.push({
         visitOrder: m.visit_order ?? 0,
         stopType: st,

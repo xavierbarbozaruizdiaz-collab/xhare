@@ -316,23 +316,8 @@ export function SearchOriginDestinationMap({
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.sectionLabel}>Mapa (opcional)</Text>
-      <Text style={styles.hint}>
-        Tocá un botón de modo o el mapa para abrir pantalla completa. Ahí tocás el mapa para fijar origen o destino (en
-        esta búsqueda ~{proximityRadiusKm} km alrededor del pin, según si elegiste Interno / Todos / Larga distancia; se
-        priorizan viajes cuya ruta pasa cerca). Podés usar solo texto arriba si preferís.
-      </Text>
-
-      <ModeChipRow
-        mode={mode}
-        variant="compact"
-        onSelectOrigin={() => openFull('origin')}
-        onSelectDestination={() => openFull('destination')}
-      />
-      <Text style={styles.modeHint}>
-        {mode === 'origin' && 'Modo: origen — se abre el mapa grande para marcar.'}
-        {mode === 'destination' && 'Modo: destino — se abre el mapa grande para marcar.'}
-      </Text>
+      <Text style={styles.sectionLabel}>Mapa</Text>
+      <Text style={styles.hint}>Tocá el mapa para marcar origen y destino.</Text>
 
       <View style={[styles.previewShell, { height }]}>
         <MapView
@@ -488,7 +473,6 @@ const styles = StyleSheet.create({
   modeBtnActive: { backgroundColor: GREEN },
   modeBtnText: { fontSize: 13, fontWeight: '600', color: '#374151' },
   modeBtnTextActive: { color: '#fff' },
-  modeHint: { fontSize: 13, color: '#6b7280', marginBottom: 8 },
   previewShell: {
     width: '100%',
     borderRadius: 12,

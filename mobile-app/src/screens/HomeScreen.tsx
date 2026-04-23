@@ -55,6 +55,17 @@ import {
   parseLocalYmdHm,
 } from '../lib/bookingLead';
 import { fetchRoute } from '../backend/routeApi';
+import { distanceMeters } from '../lib/geo';
+import {
+  loadActivePricingSettings,
+  computeEffectivePricing,
+  type EffectivePricing,
+} from '../lib/pricing/runtime-pricing';
+import {
+  baseFareFromDistanceKmWithPricing,
+  totalFareFromBaseAndSeatsWithPricing,
+} from '../lib/pricing/segment-fare';
+import { saveTripRequest } from '../rides/api';
 
 type IonName = ComponentProps<typeof Ionicons>['name'];
 
@@ -190,6 +201,24 @@ function subtractMinutesFromHmLocal(dateYmd: string, hm: string, subMin: number)
   return formatHmFromDate(new Date(t.getTime() - subMin * 60_000));
 }
 
+function normalizeHmForTripRequest(hm: string): string {
+  const m = hm.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return '08:00';
+  const hh = Math.min(23, Math.max(0, parseInt(m[1], 10)));
+  const mm = Math.min(59, Math.max(0, parseInt(m[2], 10)));
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+const HOME_FALLBACK_PRICING: EffectivePricing = {
+  minFarePyg: 7140,
+  pygPerKm: 2780,
+  roundTo: 100,
+  blockSize: 4,
+  blockMultiplier: 1.5,
+  driverFeePercentOfCollected: 10,
+  pricingSettingsId: null,
+};
+
 export function HomeScreen() {
   const navigation = useNavigation<HomeTabNav>();
   const { session } = useAuth();
@@ -215,11 +244,15 @@ export function HomeScreen() {
   const [activateModalHm, setActivateModalHm] = useState('');
   const [activateModalShowDate, setActivateModalShowDate] = useState(false);
   const [activateModalShowTime, setActivateModalShowTime] = useState(false);
+  const [activateRegisterTripRequest, setActivateRegisterTripRequest] = useState(true);
   /** Duración origen→destino (min) vía `/api/route/polyline`; null = sin ruta o aún cargando. */
   const [activateRouteMinutes, setActivateRouteMinutes] = useState<number | null>(null);
   /** `fetchRoute` en segundo plano: el modal abre al toque y no espera la red. */
   const [activateRouteLoading, setActivateRouteLoading] = useState(false);
   const activateRouteRequestIdRef = useRef(0);
+  const [favoriteCostBySlot, setFavoriteCostBySlot] = useState<
+    Partial<Record<PassengerFavoriteSlot, { perSeatGs: number; distanceKm: number } | null>>
+  >({});
 
   const homeFavoriteSlots = useMemo(() => listHomeFavoriteSlotsToShow(favorites), [favorites]);
   const selectedFromIcon = (MODAL_ORIGIN_ICONS[fromIconIndex] ?? MODAL_ORIGIN_ICONS[0]) as string;
@@ -250,6 +283,71 @@ export function HomeScreen() {
       refreshFavorites();
     }, [refreshFavorites])
   );
+
+  useEffect(() => {
+    if (!session || !isPassengerFlavor) {
+      setFavoriteCostBySlot({});
+      return;
+    }
+    let cancelled = false;
+
+    void (async () => {
+      const pricingSettings = await loadActivePricingSettings();
+      const pricing = pricingSettings ? computeEffectivePricing(pricingSettings) : HOME_FALLBACK_PRICING;
+      const slots = homeFavoriteSlots;
+      const nextCosts: Partial<
+        Record<PassengerFavoriteSlot, { perSeatGs: number; distanceKm: number } | null>
+      > = {};
+
+      for (const slot of slots) {
+        if (cancelled) return;
+        const snap = favorites[slot];
+        if (
+          !snap ||
+          snap.rideKind === 'long_distance' ||
+          snap.originLat == null ||
+          snap.originLng == null ||
+          snap.destinationLat == null ||
+          snap.destinationLng == null
+        ) {
+          nextCosts[slot] = null;
+          continue;
+        }
+
+        const straightKm =
+          distanceMeters(
+            { lat: snap.originLat, lng: snap.originLng },
+            { lat: snap.destinationLat, lng: snap.destinationLng }
+          ) / 1000;
+        const route = await fetchRoute(
+          { lat: snap.originLat, lng: snap.originLng },
+          { lat: snap.destinationLat, lng: snap.destinationLng },
+          []
+        );
+        if (cancelled) return;
+
+        const routeKm = Number(route.distanceKm ?? 0);
+        const fromRoute = Number.isFinite(routeKm) && routeKm > 0 && !route.error && !route.aborted;
+        const distanceKm = fromRoute ? routeKm : straightKm * 1.2;
+        if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
+          nextCosts[slot] = null;
+          continue;
+        }
+
+        const baseFare = baseFareFromDistanceKmWithPricing(distanceKm, pricing);
+        const totalFare = totalFareFromBaseAndSeatsWithPricing(baseFare, 1, pricing);
+        nextCosts[slot] = {
+          perSeatGs: Math.max(0, Math.round(totalFare)),
+          distanceKm,
+        };
+      }
+      if (!cancelled) setFavoriteCostBySlot(nextCosts);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session, isPassengerFlavor, homeFavoriteSlots, favorites]);
 
   useFocusEffect(
     useCallback(() => {
@@ -384,9 +482,11 @@ export function HomeScreen() {
         snap.originLng != null &&
         snap.destinationLat != null &&
         snap.destinationLng != null;
+      const canCreateTrip = hasCoords && snap.rideKind !== 'long_distance';
 
       setActivateSnap(snap);
       setActivateSlot(slot);
+      setActivateRegisterTripRequest(canCreateTrip);
       setActivateModalDate(d);
       /** Con ruta: modal en hora de llegada si el favorito se guardó en modo llegada. Sin coords no podemos restar duración → mostrar recogida. */
       setActivateModalHm(hasCoords && storedArrivalHm ? storedArrivalHm : pickupHm);
@@ -448,6 +548,7 @@ export function HomeScreen() {
     setActivateRouteLoading(false);
     setActivateModalShowDate(false);
     setActivateModalShowTime(false);
+    setActivateRegisterTripRequest(true);
   }, []);
 
   const confirmActivateFavorite = useCallback(async () => {
@@ -511,6 +612,68 @@ export function HomeScreen() {
     const all = await loadPassengerFavorites(userId);
     setFavorites(all);
     void pushPassengerHomeMapShortcuts(all);
+    if (activateRegisterTripRequest && snap.rideKind !== 'long_distance') {
+      const token = session?.access_token?.trim();
+      const hasCoords =
+        snap.originLat != null &&
+        snap.originLng != null &&
+        snap.destinationLat != null &&
+        snap.destinationLng != null;
+      if (!token) {
+        Alert.alert('Solicitud de viaje', 'No se pudo registrar la solicitud: sesión inválida.');
+      } else if (!hasCoords) {
+        Alert.alert(
+          'Solicitud de viaje',
+          'No se pudo registrar la solicitud pendiente porque faltan origen/destino en el mapa.'
+        );
+      } else {
+        const route = await fetchRoute(
+          { lat: snap.originLat!, lng: snap.originLng! },
+          { lat: snap.destinationLat!, lng: snap.destinationLng! },
+          []
+        );
+        const poly = route.polyline && route.polyline.length >= 2 ? route.polyline : null;
+        const baseTripArgs = {
+          accessToken: token,
+          userId,
+          originLat: snap.originLat!,
+          originLng: snap.originLng!,
+          originLabel: (snap.origin.trim() || 'Origen').slice(0, 500),
+          destinationLat: snap.destinationLat!,
+          destinationLng: snap.destinationLng!,
+          destinationLabel: (snap.destination.trim() || 'Destino').slice(0, 500),
+          requestedDate: d,
+          requestedTime: normalizeHmForTripRequest(pickupHm),
+          seats: 1,
+          routePolyline: poly,
+          routeLengthKm: route.distanceKm ?? null,
+          pricingKind: 'internal' as const,
+          internalQuoteAcknowledged: true,
+          passengerFavoriteSlot: activateSlot,
+        };
+        let tripRes = await saveTripRequest(baseTripArgs);
+        if (!tripRes.ok && tripRes.code === 'GROUPED_FAVORITE_EXISTS') {
+          const leaveGroup = await new Promise<boolean>((resolve) => {
+            Alert.alert(
+              'Ya está en un grupo',
+              tripRes.error ??
+                'Esta solicitud ya figuraba en un grupo de demanda. Si continuás, salís de ese grupo y se registra una solicitud nueva.',
+              [
+                { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+                { text: 'Salir del grupo y registrar', onPress: () => resolve(true) },
+              ],
+              { cancelable: true, onDismiss: () => resolve(false) }
+            );
+          });
+          if (leaveGroup) {
+            tripRes = await saveTripRequest({ ...baseTripArgs, confirmLeaveGroupedFavorite: true });
+          }
+        }
+        if (!tripRes.ok) {
+          Alert.alert('Solicitud de viaje', tripRes.error || 'No se pudo registrar la solicitud pendiente.');
+        }
+      }
+    }
     cancelActivateFavorite();
   }, [
     session,
@@ -519,6 +682,7 @@ export function HomeScreen() {
     activateSnap,
     activateModalDate,
     activateModalHm,
+    activateRegisterTripRequest,
     activateRouteMinutes,
     cancelActivateFavorite,
   ]);
@@ -621,6 +785,15 @@ export function HomeScreen() {
                         </View>
                         <Text style={styles.favoriteRowLabel}>{favoritePairLabel(slot)}</Text>
                         <Text style={styles.favoriteRowTime}>{scheduleLabel(snap)}</Text>
+                        {snap?.rideKind === 'long_distance' ? (
+                          <Text style={styles.favoriteRowCostMuted}>Costo: se negocia con conductor</Text>
+                        ) : favoriteCostBySlot[slot] != null ? (
+                          <Text style={styles.favoriteRowCost}>
+                            Costo estimado: {Number(favoriteCostBySlot[slot]?.perSeatGs ?? 0).toLocaleString('es-PY')} Gs
+                          </Text>
+                        ) : (
+                          <Text style={styles.favoriteRowCostMuted}>Costo estimado: no disponible</Text>
+                        )}
                       </View>
                       <View
                         style={styles.favoriteRowRight}
@@ -847,6 +1020,21 @@ export function HomeScreen() {
                       Podés cambiar fecha y hora acá antes de confirmar.
                     </Text>
                   )}
+                  <View style={styles.activateModalToggleRow}>
+                    <View style={styles.activateModalToggleTextWrap}>
+                      <Text style={styles.activateModalToggleTitle}>Registrar solicitud pendiente</Text>
+                      <Text style={styles.activateModalToggleHint}>
+                        Crea una `solicitud de viaje` para demanda agrupada con este favorito.
+                      </Text>
+                    </View>
+                    <Switch
+                      value={activateRegisterTripRequest && activateSnap?.rideKind !== 'long_distance'}
+                      onValueChange={setActivateRegisterTripRequest}
+                      disabled={activateSnap?.rideKind === 'long_distance'}
+                      trackColor={{ false: '#d1d5db', true: '#86efac' }}
+                      thumbColor={activateRegisterTripRequest ? '#166534' : '#f3f4f6'}
+                    />
+                  </View>
                   <View style={styles.activateModalActions}>
                     <TouchableOpacity
                       style={[styles.activateModalBtn, styles.activateModalBtnGhost]}
@@ -904,6 +1092,73 @@ export function HomeScreen() {
                 </View>
               </>
             ) : null}
+          </>
+        ) : null}
+
+        {!isPassengerFlavor && session ? (
+          <>
+            <Text style={styles.welcomePassenger}>Inicio de conductor</Text>
+            <Text style={styles.subLead}>
+              Gestiona tus viajes publicados y responde solicitudes desde este panel rapido.
+            </Text>
+
+            <View style={styles.driverQuickBox}>
+              <TouchableOpacity
+                style={styles.driverPrimaryBtn}
+                onPress={() => parentNav?.navigate('PublishRide')}
+                accessibilityRole="button"
+                accessibilityLabel="Publicar viaje"
+              >
+                <Ionicons name="car-sport-outline" size={20} color="#fff" style={styles.driverPrimaryIcon} />
+                <Text style={styles.driverPrimaryBtnText}>PUBLICAR VIAJE</Text>
+              </TouchableOpacity>
+
+              <View style={styles.rowTwo}>
+                <TouchableOpacity
+                  style={styles.btnMint}
+                  onPress={() => parentNav?.navigate('DriverTripRequests')}
+                  accessibilityRole="button"
+                >
+                  <View style={styles.btnMintInner}>
+                    <Ionicons name="document-text-outline" size={20} color="#14532d" />
+                    <Text style={styles.btnMintText}>Solicitudes</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.btnMint}
+                  onPress={() => parentNav?.navigate('MyPublishedRides')}
+                  accessibilityRole="button"
+                >
+                  <View style={styles.btnMintInner}>
+                    <Ionicons name="list-outline" size={20} color="#14532d" />
+                    <Text style={styles.btnMintText}>Mis viajes</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.rowTwo}>
+                <TouchableOpacity
+                  style={styles.btnMint}
+                  onPress={() => parentNav?.navigate('Messages')}
+                  accessibilityRole="button"
+                >
+                  <View style={styles.btnMintInner}>
+                    <Ionicons name="chatbubble-ellipses-outline" size={20} color="#14532d" />
+                    <Text style={styles.btnMintText}>Mensajes</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.btnMint}
+                  onPress={() => navigation.navigate('Driver')}
+                  accessibilityRole="button"
+                >
+                  <View style={styles.btnMintInner}>
+                    <Ionicons name="speedometer-outline" size={20} color="#14532d" />
+                    <Text style={styles.btnMintText}>Panel conductor</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </View>
           </>
         ) : null}
       </View>
@@ -993,6 +1248,8 @@ const styles = StyleSheet.create({
   },
   favoriteRowLabel: { fontSize: 13, fontWeight: '700', color: '#14532d', marginTop: 4 },
   favoriteRowTime: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  favoriteRowCost: { fontSize: 12, color: '#166534', marginTop: 2, fontWeight: '700' },
+  favoriteRowCostMuted: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   modalRoot: { flex: 1, justifyContent: 'flex-end' },
   modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
   modalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '60%', paddingBottom: 8 },
@@ -1092,6 +1349,25 @@ const styles = StyleSheet.create({
   },
   btnMintInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   btnMintText: { fontSize: 14, fontWeight: '700', color: '#14532d' },
+  driverQuickBox: {
+    borderWidth: 1,
+    borderColor: '#86efac',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+    backgroundColor: '#f0fdf4',
+  },
+  driverPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#14532d',
+    paddingVertical: 14,
+    borderRadius: 10,
+    marginBottom: 12,
+  },
+  driverPrimaryIcon: { marginRight: 8 },
+  driverPrimaryBtnText: { color: '#fff', fontWeight: '800', fontSize: 13, letterSpacing: 0.3 },
   activateModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
@@ -1142,6 +1418,16 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 4,
   },
+  activateModalToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 8,
+  },
+  activateModalToggleTextWrap: { flex: 1, minWidth: 0 },
+  activateModalToggleTitle: { fontSize: 13, fontWeight: '700', color: '#14532d' },
+  activateModalToggleHint: { fontSize: 12, color: '#6b7280', marginTop: 2, lineHeight: 16 },
   activateModalActions: { flexDirection: 'row', gap: 10, marginTop: 16, justifyContent: 'flex-end' },
   activateModalBtn: {
     paddingVertical: 12,

@@ -16,8 +16,11 @@ import { androidMapProvider } from '../lib/androidMapProvider';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { fetchDemandRouteDetail, type DemandRouteDetail } from '../backend/demandRoutesApi';
-import { fetchRoute } from '../backend/routeApi';
-import { dedupeDemandRouteLegsForUi } from '../lib/demandRouteMembersDedupe';
+import { fetchRoute, fetchSegmentStats } from '../backend/routeApi';
+import {
+  compareDemandRouteLegsStable,
+  dedupeDemandRouteLegsForUi,
+} from '../lib/demandRouteMembersDedupe';
 import type { MainStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'DriverRouteGroupDetail'>;
@@ -36,6 +39,59 @@ function formatTime(t: string | null): string {
   if (!t) return '—';
   const m = String(t).trim().match(/^(\d{1,2}):(\d{2})/);
   return m ? `${m[1].padStart(2, '0')}:${m[2]}` : '—';
+}
+
+function parseDateTime(dateStr: string | null | undefined, timeStr: string | null | undefined): Date | null {
+  if (!dateStr || !timeStr) return null;
+  const m = String(timeStr).trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  const dt = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(dt.getTime())) return null;
+  dt.setHours(hh, mm, 0, 0);
+  return dt;
+}
+
+function addMinutes(date: Date, minutes: number): Date {
+  return new Date(date.getTime() + Math.round(minutes) * 60_000);
+}
+
+function formatClock(date: Date | null): string {
+  if (!date) return '—';
+  return date.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function legTimeKey(leg: { trip_request_id: string; stop_type: string; visit_order: number }): string {
+  return `${String(leg.trip_request_id)}|${String(leg.stop_type)}|${Number(leg.visit_order)}`;
+}
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const aa =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((aLat * Math.PI) / 180) * Math.cos((bLat * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+}
+
+/**
+ * Margen operativo para hacer más exigente el horario:
+ * el primer recojo se sugiere unos minutos antes del mínimo teórico.
+ */
+const FIRST_PICKUP_STRICT_BUFFER_MIN = 10;
+const PASSENGER_ETA_TOLERANCE_MIN = 15;
+
+/**
+ * Varios Marker en la misma coordenada hacen que el mapa alterne cuál recibe el toque al abrir el globo
+ * (parece que “cambia el número” sin cambiar el lugar). Agrupamos por punto + tipo de parada.
+ */
+function legCoordClusterKey(lat: number, lng: number, stopType: string): string {
+  return `${String(stopType).toUpperCase()}|${lat.toFixed(5)}|${lng.toFixed(5)}`;
 }
 
 function getRegion(points: Array<{ lat: number; lng: number }>) {
@@ -62,6 +118,10 @@ export function DriverRouteGroupDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [completedVisitOrder, setCompletedVisitOrder] = useState(0);
   const [streetPolyline, setStreetPolyline] = useState<Array<{ lat: number; lng: number }> | null>(null);
+  const [routeDurationMinutes, setRouteDurationMinutes] = useState<number | null>(null);
+  const [cumulativeMinutesByLeg, setCumulativeMinutesByLeg] = useState<Record<string, number>>({});
+  const [scheduleExpanded, setScheduleExpanded] = useState(false);
+  const [passengerScheduleExpanded, setPassengerScheduleExpanded] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -100,39 +160,70 @@ export function DriverRouteGroupDetailScreen() {
       })),
     [streetPolyline, detail?.route_polyline, detail?.base_polyline]
   );
-  const displayLegs = useMemo(
-    () =>
-      (detail?.legs?.length ?? 0) > 0
-        ? (detail?.legs ?? [])
-        : (detail?.passengers ?? []).flatMap((p, i) => [
-            {
-              visit_order: i * 2 + 1,
-              stop_type: 'PICKUP' as const,
-              trip_request_id: p.trip_request_id,
-              passenger_name: `Pasajero ${i + 1}`,
-              label: p.origin_label ?? 'Origen',
-              action: `Sube pasajero ${i + 1}`,
-              lat: p.origin_lat,
-              lng: p.origin_lng,
-            },
-            {
-              visit_order: i * 2 + 2,
-              stop_type: 'DROPOFF' as const,
-              trip_request_id: p.trip_request_id,
-              passenger_name: `Pasajero ${i + 1}`,
-              label: p.destination_label ?? 'Destino',
-              action: `Baja pasajero ${i + 1}`,
-              lat: p.destination_lat,
-              lng: p.destination_lng,
-            },
-          ]),
-    [detail]
-  );
+  const displayLegs = useMemo(() => {
+    if ((detail?.legs?.length ?? 0) > 0) {
+      const raw = [...(detail?.legs ?? [])];
+      return raw.sort((a, b) =>
+        compareDemandRouteLegsStable(
+          {
+            visit_order: Number(a.visit_order),
+            trip_request_id: String(a.trip_request_id),
+            stop_type: String(a.stop_type),
+          },
+          {
+            visit_order: Number(b.visit_order),
+            trip_request_id: String(b.trip_request_id),
+            stop_type: String(b.stop_type),
+          }
+        )
+      );
+    }
+    const ps = [...(detail?.passengers ?? [])].sort((a, b) =>
+      String(a.trip_request_id).localeCompare(String(b.trip_request_id))
+    );
+    return ps.flatMap((p, i) => [
+      {
+        visit_order: i * 2 + 1,
+        stop_type: 'PICKUP' as const,
+        trip_request_id: p.trip_request_id,
+        passenger_name: `Pasajero ${i + 1}`,
+        label: p.origin_label ?? 'Origen',
+        action: `Sube pasajero ${i + 1}`,
+        fare_amount: null as number | null,
+        lat: p.origin_lat,
+        lng: p.origin_lng,
+      },
+      {
+        visit_order: i * 2 + 2,
+        stop_type: 'DROPOFF' as const,
+        trip_request_id: p.trip_request_id,
+        passenger_name: `Pasajero ${i + 1}`,
+        label: p.destination_label ?? 'Destino',
+        action: `Baja pasajero ${i + 1}`,
+        fare_amount: null as number | null,
+        lat: p.destination_lat,
+        lng: p.destination_lng,
+      },
+    ]);
+  }, [detail]);
   const sortedLegs = useMemo(
     () =>
       displayLegs
         .slice()
-        .sort((a, b) => a.visit_order - b.visit_order),
+        .sort((a, b) =>
+          compareDemandRouteLegsStable(
+            {
+              visit_order: Number(a.visit_order),
+              trip_request_id: String(a.trip_request_id),
+              stop_type: String(a.stop_type),
+            },
+            {
+              visit_order: Number(b.visit_order),
+              trip_request_id: String(b.trip_request_id),
+              stop_type: String(b.stop_type),
+            }
+          )
+        ),
     [displayLegs]
   );
 
@@ -151,16 +242,112 @@ export function DriverRouteGroupDetailScreen() {
   );
 
   const uiLegs = useMemo(() => {
-    const ordered = [...canonicalLegs].sort((a, b) => a.visit_order - b.visit_order);
+    const ordered = [...canonicalLegs].sort((a, b) =>
+      compareDemandRouteLegsStable(
+        {
+          visit_order: Number(a.visit_order),
+          trip_request_id: String(a.trip_request_id),
+          stop_type: String(a.stop_type),
+        },
+        {
+          visit_order: Number(b.visit_order),
+          trip_request_id: String(b.trip_request_id),
+          stop_type: String(b.stop_type),
+        }
+      )
+    );
     return ordered.map((l, i) => ({ ...l, uiStopNumber: i + 1 }));
   }, [canonicalLegs]);
+  const timingLegs = useMemo(
+    () =>
+      canonicalLegs
+        .filter(
+          (l): l is (typeof canonicalLegs)[number] & { lat: number; lng: number } =>
+            typeof l.lat === 'number' && typeof l.lng === 'number'
+        )
+        .sort((a, b) =>
+          compareDemandRouteLegsStable(
+            {
+              visit_order: Number(a.visit_order),
+              trip_request_id: String(a.trip_request_id),
+              stop_type: String(a.stop_type),
+            },
+            {
+              visit_order: Number(b.visit_order),
+              trip_request_id: String(b.trip_request_id),
+              stop_type: String(b.stop_type),
+            }
+          )
+        ),
+    [canonicalLegs]
+  );
+
+  /** Un pin por cluster (misma coordenada + tipo); evita el ciclo de callouts al tocar el mismo punto. */
+  const mapMarkerSpecs = useMemo(() => {
+    type Ui = (typeof uiLegs)[number];
+    const withCoords = uiLegs.filter(
+      (l): l is Ui & { lat: number; lng: number } =>
+        typeof l.lat === 'number' && typeof l.lng === 'number'
+    );
+    const byKey = new Map<string, (Ui & { lat: number; lng: number })[]>();
+    for (const l of withCoords) {
+      const k = legCoordClusterKey(l.lat, l.lng, String(l.stop_type));
+      const arr = byKey.get(k) ?? [];
+      arr.push(l);
+      byKey.set(k, arr);
+    }
+    const specs: Array<{
+      clusterKey: string;
+      coordinate: { latitude: number; longitude: number };
+      title: string;
+      description: string;
+      pinColor: string;
+      zIndex: number;
+    }> = [];
+    for (const [clusterKey, group] of byKey) {
+      const sorted = [...group].sort((a, b) =>
+        compareDemandRouteLegsStable(
+          {
+            visit_order: Number(a.visit_order),
+            trip_request_id: String(a.trip_request_id),
+            stop_type: String(a.stop_type),
+          },
+          {
+            visit_order: Number(b.visit_order),
+            trip_request_id: String(b.trip_request_id),
+            stop_type: String(b.stop_type),
+          }
+        )
+      );
+      const first = sorted[0]!;
+      const subida = first.stop_type !== 'DROPOFF';
+      const nums = sorted.map((l) => l.uiStopNumber).join(', ');
+      const title =
+        sorted.length === 1
+          ? `${first.uiStopNumber}. ${subida ? 'Subida' : 'Bajada'}`
+          : `${sorted.length} ${subida ? 'subidas' : 'bajadas'} en el mismo punto (paradas ${nums})`;
+      const description = sorted
+        .map((l) => `${l.uiStopNumber}: ${l.passenger_name} · ${l.label}`)
+        .join('\n');
+      specs.push({
+        clusterKey,
+        coordinate: { latitude: first.lat, longitude: first.lng },
+        title,
+        description,
+        pinColor: first.stop_type === 'DROPOFF' ? 'red' : 'green',
+        zIndex: Math.max(...sorted.map((l) => Number(l.visit_order))),
+      });
+    }
+    specs.sort((a, b) => a.zIndex - b.zIndex);
+    return specs;
+  }, [uiLegs]);
 
   useEffect(() => {
     let cancelled = false;
     setStreetPolyline(null);
-    const routeLegs = canonicalLegs.filter(
-      (l) => typeof l.lat === 'number' && typeof l.lng === 'number'
-    );
+    setRouteDurationMinutes(null);
+    setCumulativeMinutesByLeg({});
+    const routeLegs = timingLegs;
     if (routeLegs.length < 2) return;
 
     const origin = { lat: Number(routeLegs[0].lat), lng: Number(routeLegs[0].lng) };
@@ -175,21 +362,193 @@ export function DriverRouteGroupDetailScreen() {
     void (async () => {
       const r = await fetchRoute(origin, destination, waypoints);
       if (cancelled) return;
+      if (Number.isFinite(Number(r.durationMinutes)) && Number(r.durationMinutes) > 0) {
+        setRouteDurationMinutes(Number(r.durationMinutes));
+      }
       if (!r.error && !r.aborted && Array.isArray(r.polyline) && r.polyline.length >= 2) {
         setStreetPolyline(r.polyline);
       }
+
+      const first = routeLegs[0]!;
+      const cumulativeDurations = await Promise.all(
+        routeLegs.map(async (leg, idx) => {
+          if (idx === 0) return 0;
+          const seg = await fetchSegmentStats(
+            { lat: Number(first.lat), lng: Number(first.lng) },
+            { lat: Number(leg.lat), lng: Number(leg.lng) },
+            routeLegs
+              .slice(1, idx)
+              .map((wp) => ({ lat: Number(wp.lat), lng: Number(wp.lng) }))
+          );
+          const mins = Number(seg.durationMinutes);
+          return Number.isFinite(mins) && mins >= 0 ? mins : null;
+        })
+      );
+      if (cancelled) return;
+      const allDurationsKnown = cumulativeDurations.every((m) => m != null);
+      const totalDurationForFallback =
+        Number.isFinite(Number(r.durationMinutes)) && Number(r.durationMinutes) > 0
+          ? Number(r.durationMinutes)
+          : routeDurationMinutes;
+      const cumulativeGeoKm: number[] = [0];
+      for (let i = 1; i < routeLegs.length; i++) {
+        const prev = routeLegs[i - 1]!;
+        const cur = routeLegs[i]!;
+        cumulativeGeoKm.push(
+          cumulativeGeoKm[i - 1]! +
+            haversineKm(Number(prev.lat), Number(prev.lng), Number(cur.lat), Number(cur.lng))
+        );
+      }
+      const totalGeoKm = cumulativeGeoKm[cumulativeGeoKm.length - 1] ?? 0;
+      const byLeg: Record<string, number> = {};
+      for (let i = 0; i < routeLegs.length; i++) {
+        const exact = cumulativeDurations[i];
+        if (exact != null) {
+          byLeg[legTimeKey(routeLegs[i]!)] = exact;
+          continue;
+        }
+        if (totalDurationForFallback != null && totalGeoKm > 0) {
+          const ratio = (cumulativeGeoKm[i] ?? 0) / totalGeoKm;
+          byLeg[legTimeKey(routeLegs[i]!)] = totalDurationForFallback * ratio;
+        } else {
+          byLeg[legTimeKey(routeLegs[i]!)] = 0;
+        }
+      }
+      setCumulativeMinutesByLeg(byLeg);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [canonicalLegs]);
+  }, [timingLegs, routeDurationMinutes]);
   const currentLeg = useMemo(
     () => canonicalLegs.find((l) => l.visit_order > completedVisitOrder) ?? null,
     [canonicalLegs, completedVisitOrder]
   );
+  /** Número de parada en la lista (1…N), no el visit_order crudo de la BD (puede tener huecos). */
+  const currentLegSequenceNumber = useMemo(() => {
+    if (!currentLeg) return null;
+    const i = canonicalLegs.findIndex(
+      (l) =>
+        l.trip_request_id === currentLeg.trip_request_id &&
+        l.stop_type === currentLeg.stop_type &&
+        Number(l.visit_order) === Number(currentLeg.visit_order)
+    );
+    return i >= 0 ? i + 1 : null;
+  }, [currentLeg, canonicalLegs]);
   const isRouteCompleted = currentLeg == null && canonicalLegs.length > 0;
   const financial = detail?.financial_summary;
+  const desiredArrivalAt = useMemo(
+    () => parseDateTime(detail?.requested_date ?? null, detail?.requested_time ?? null),
+    [detail?.requested_date, detail?.requested_time]
+  );
+  const totalRouteMinutes = useMemo(() => {
+    const lastLeg = timingLegs[timingLegs.length - 1];
+    if (!lastLeg) return routeDurationMinutes ?? null;
+    const v = cumulativeMinutesByLeg[legTimeKey(lastLeg)];
+    if (Number.isFinite(v)) return Number(v);
+    return routeDurationMinutes ?? null;
+  }, [timingLegs, cumulativeMinutesByLeg, routeDurationMinutes]);
+  const suggestedFirstPickupAt = useMemo(() => {
+    if (!detail?.passengers || detail.passengers.length === 0) return null;
+    const dropoffByTrip = new Map(
+      timingLegs
+        .filter((l) => String(l.stop_type).toUpperCase() === 'DROPOFF')
+        .map((l) => [String(l.trip_request_id), l] as const)
+    );
+    const baseDate = detail.requested_date ?? null;
+    const constraints: Array<{ minT0: number; maxT0: number; idealT0: number }> = [];
+    for (const p of detail.passengers) {
+      const tripId = String(p.trip_request_id);
+      const dropoffLeg = dropoffByTrip.get(tripId);
+      if (!dropoffLeg) continue;
+      const offsetMin = cumulativeMinutesByLeg[legTimeKey(dropoffLeg)];
+      if (!Number.isFinite(Number(offsetMin))) continue;
+      const desired = parseDateTime(
+        baseDate,
+        (p as { requested_time?: string | null }).requested_time ?? detail.requested_time
+      );
+      if (!desired) continue;
+      const desiredMs = desired.getTime();
+      const idealT0 = desiredMs - Number(offsetMin) * 60_000;
+      const minT0 = desiredMs - (Number(offsetMin) + PASSENGER_ETA_TOLERANCE_MIN) * 60_000;
+      const maxT0 = desiredMs - (Number(offsetMin) - PASSENGER_ETA_TOLERANCE_MIN) * 60_000;
+      constraints.push({ minT0, maxT0, idealT0 });
+    }
+    if (constraints.length === 0) {
+      if (!desiredArrivalAt || !totalRouteMinutes) return null;
+      return addMinutes(desiredArrivalAt, -(totalRouteMinutes + FIRST_PICKUP_STRICT_BUFFER_MIN));
+    }
+    const feasibleMin = Math.max(...constraints.map((c) => c.minT0));
+    const feasibleMax = Math.min(...constraints.map((c) => c.maxT0));
+    // Punto "justo": minimizar error global entre pasajeros (promedio de ideales).
+    const meanIdeal =
+      constraints.reduce((sum, c) => sum + c.idealT0, 0) / Math.max(1, constraints.length);
+    // Objetivo operativo estricto (margen extra), usado solo como desempate suave.
+    const strictTarget =
+      desiredArrivalAt && totalRouteMinutes
+        ? addMinutes(desiredArrivalAt, -(totalRouteMinutes + FIRST_PICKUP_STRICT_BUFFER_MIN)).getTime()
+        : null;
+    if (feasibleMin <= feasibleMax) {
+      const fairTarget = clamp(meanIdeal, feasibleMin, feasibleMax);
+      const center = (feasibleMin + feasibleMax) / 2;
+      const strictClamped = strictTarget != null ? clamp(strictTarget, feasibleMin, feasibleMax) : null;
+      const chosen =
+        strictClamped != null && Math.abs(strictClamped - fairTarget) <= 2 * 60_000
+          ? strictClamped
+          : Math.abs(center - fairTarget) <= 2 * 60_000
+            ? center
+            : fairTarget;
+      return new Date(chosen);
+    }
+    // Si no hay intersección global, usamos mejor compromiso (centro de la ventana "apretada").
+    return new Date(Math.round((feasibleMin + feasibleMax) / 2));
+  }, [
+    detail?.passengers,
+    detail?.requested_date,
+    detail?.requested_time,
+    timingLegs,
+    cumulativeMinutesByLeg,
+    desiredArrivalAt,
+    totalRouteMinutes,
+  ]);
+  const estimatedArrivalAt = useMemo(() => {
+    if (!suggestedFirstPickupAt || !totalRouteMinutes) return null;
+    return addMinutes(suggestedFirstPickupAt, totalRouteMinutes);
+  }, [suggestedFirstPickupAt, totalRouteMinutes]);
+  const passengerSchedule = useMemo(() => {
+    if (!detail?.passengers || detail.passengers.length === 0) return [];
+    const dropoffByTrip = new Map(
+      timingLegs
+        .filter((l) => String(l.stop_type).toUpperCase() === 'DROPOFF')
+        .map((l) => [String(l.trip_request_id), l] as const)
+    );
+    const nameByTrip = new Map(
+      uiLegs.map((l) => [String(l.trip_request_id), String(l.passenger_name ?? '').trim()] as const)
+    );
+    return detail.passengers.map((p) => {
+      const tripId = String(p.trip_request_id);
+      const leg = dropoffByTrip.get(tripId);
+      const cumulative = leg ? cumulativeMinutesByLeg[legTimeKey(leg)] : undefined;
+      const desiredAt = parseDateTime(
+        detail.requested_date,
+        (p as { requested_time?: string | null }).requested_time ?? detail.requested_time
+      );
+      const estimatedAt =
+        suggestedFirstPickupAt && Number.isFinite(Number(cumulative))
+          ? addMinutes(suggestedFirstPickupAt, Number(cumulative))
+          : null;
+      const diffMinutes =
+        desiredAt && estimatedAt ? Math.round((estimatedAt.getTime() - desiredAt.getTime()) / 60_000) : null;
+      return {
+        tripId,
+        passengerName: nameByTrip.get(tripId) || `Pasajero ${tripId.slice(0, 6)}`,
+        desiredAt,
+        estimatedAt,
+        diffMinutes,
+      };
+    });
+  }, [detail, timingLegs, uiLegs, cumulativeMinutesByLeg, suggestedFirstPickupAt]);
   /** Solo tiene sentido tras materializar un viaje (ride_id en el grupo); no en vista previa de demanda. */
   const showLegProgress = Boolean(detail?.ride_id);
 
@@ -221,7 +580,8 @@ export function DriverRouteGroupDetailScreen() {
           {(detail.origin_city || 'Origen')} → {detail.destination_city || 'Destino'}
         </Text>
         <Text style={styles.sub}>
-          {formatDate(detail.requested_date)} · {formatTime(detail.requested_time)} · {detail.passenger_count} pasajero(s)
+          {formatDate(detail.requested_date)} · {formatTime(detail.requested_time)} ·{' '}
+          {Number(financial?.total_passengers ?? detail.passenger_count ?? 0)} pasajero(s)
         </Text>
       </View>
 
@@ -240,18 +600,108 @@ export function DriverRouteGroupDetailScreen() {
               strokeWidth={4}
             />
           )}
-          {uiLegs
-            .filter((l) => typeof l.lat === 'number' && typeof l.lng === 'number')
-            .map((l) => (
-              <Marker
-                key={`${l.trip_request_id}-${l.stop_type}`}
-                coordinate={{ latitude: l.lat as number, longitude: l.lng as number }}
-                title={`${l.uiStopNumber}. ${l.stop_type === 'DROPOFF' ? 'Bajada' : 'Subida'}`}
-                description={`${l.passenger_name} · ${l.label}`}
-                pinColor={l.stop_type === 'DROPOFF' ? 'red' : 'green'}
-              />
-            ))}
+          {mapMarkerSpecs.map((spec) => (
+            <Marker
+              key={spec.clusterKey}
+              coordinate={spec.coordinate}
+              title={spec.title}
+              description={spec.description}
+              pinColor={spec.pinColor}
+              zIndex={spec.zIndex}
+              tracksViewChanges={false}
+            />
+          ))}
         </MapView>
+      </View>
+      <View style={styles.stopsCard}>
+        <TouchableOpacity
+          style={styles.sectionHeader}
+          onPress={() => setScheduleExpanded((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel="Mostrar u ocultar horario objetivo"
+        >
+          <Text style={styles.stopsTitle}>Horario objetivo</Text>
+          <Text style={styles.sectionChevron}>{scheduleExpanded ? '▲' : '▼'}</Text>
+        </TouchableOpacity>
+        {scheduleExpanded ? (
+          <>
+            <View style={styles.scheduleRow}>
+              <Text style={styles.scheduleKey}>Hora deseada (pasajeros)</Text>
+              <Text style={styles.scheduleValue}>{formatTime(detail.requested_time)}</Text>
+            </View>
+            <View style={styles.scheduleRow}>
+              <Text style={styles.scheduleKey}>Duración estimada de ruta</Text>
+              <Text style={styles.scheduleValue}>
+                {totalRouteMinutes != null ? `${Math.round(totalRouteMinutes)} min` : 'Calculando...'}
+              </Text>
+            </View>
+            <View style={styles.scheduleRow}>
+              <Text style={styles.scheduleKey}>Recoger primer punto aprox.</Text>
+              <Text style={styles.scheduleValue}>{formatClock(suggestedFirstPickupAt)}</Text>
+            </View>
+            <View style={styles.scheduleRow}>
+              <Text style={styles.scheduleKey}>Llegada estimada</Text>
+              <Text style={styles.scheduleValue}>{formatClock(estimatedArrivalAt)}</Text>
+            </View>
+          </>
+        ) : null}
+      </View>
+
+      <View style={styles.stopsCard}>
+        <TouchableOpacity
+          style={styles.sectionHeader}
+          onPress={() => setPassengerScheduleExpanded((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel="Mostrar u ocultar cumplimiento por pasajero"
+        >
+          <Text style={styles.stopsTitle}>Cumplimiento por pasajero (meta ±15 min)</Text>
+          <Text style={styles.sectionChevron}>{passengerScheduleExpanded ? '▲' : '▼'}</Text>
+        </TouchableOpacity>
+        {passengerScheduleExpanded ? (
+          passengerSchedule.length === 0 ? (
+            <Text style={styles.stopsEmpty}>Sin datos por pasajero aún.</Text>
+          ) : (
+            passengerSchedule.map((row) => {
+      const status =
+                row.diffMinutes == null
+                  ? 'Calculando...'
+                : Math.abs(row.diffMinutes) <= PASSENGER_ETA_TOLERANCE_MIN
+                    ? 'OK'
+                    : row.diffMinutes > 0
+                      ? 'Tarde'
+                      : 'Muy temprano';
+              return (
+                <View key={row.tripId} style={styles.passengerScheduleRow}>
+                  <Text style={styles.passengerScheduleName}>{row.passengerName}</Text>
+                  <View style={styles.scheduleRow}>
+                    <Text style={styles.scheduleKey}>Hora deseada</Text>
+                    <Text style={styles.scheduleValue}>{formatClock(row.desiredAt)}</Text>
+                  </View>
+                  <View style={styles.scheduleRow}>
+                    <Text style={styles.scheduleKey}>Hora estimada llegada</Text>
+                    <Text style={styles.scheduleValue}>{formatClock(row.estimatedAt)}</Text>
+                  </View>
+                  <View style={styles.scheduleRow}>
+                    <Text style={styles.scheduleKey}>Diferencia</Text>
+                    <Text
+                      style={[
+                        styles.scheduleValue,
+                        row.diffMinutes != null &&
+                        Math.abs(row.diffMinutes) <= PASSENGER_ETA_TOLERANCE_MIN
+                          ? styles.scheduleOk
+                          : styles.scheduleWarn,
+                      ]}
+                    >
+                      {row.diffMinutes == null
+                        ? '—'
+                        : `${row.diffMinutes > 0 ? '+' : ''}${row.diffMinutes} min (${status})`}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })
+          )
+        ) : null}
       </View>
 
       <View style={styles.stopsCard}>
@@ -271,7 +721,7 @@ export function DriverRouteGroupDetailScreen() {
                       Number.isFinite(Number(l.fare_amount)) &&
                       Number(l.fare_amount) > 0
                         ? `Cobrar: ${Math.round(Number(l.fare_amount)).toLocaleString('es-PY')} Gs`
-                        : 'Sin precio cargado en el pedido (acordar con el pasajero).'}
+                        : 'No se pudo calcular la tarifa de esta parada; avisá a soporte.'}
                     </Text>
                   ) : null}
                 </View>
@@ -326,8 +776,8 @@ export function DriverRouteGroupDetailScreen() {
             {isRouteCompleted
               ? 'Ruta completada'
               : currentLeg?.stop_type === 'PICKUP'
-                ? `Llegué a parada ${currentLeg?.visit_order}`
-                : `Completar parada ${currentLeg?.visit_order}`}
+                ? `Llegué a parada ${currentLegSequenceNumber ?? currentLeg?.visit_order}`
+                : `Completar parada ${currentLegSequenceNumber ?? currentLeg?.visit_order}`}
           </Text>
         </TouchableOpacity>
       ) : null}
@@ -338,6 +788,7 @@ export function DriverRouteGroupDetailScreen() {
           navigation.navigate('PublishRide', {
             tripRequestId: baseRequestId ?? undefined,
             groupId: detail.id,
+              groupSuggestedPickupTime: suggestedFirstPickupAt ? formatClock(suggestedFirstPickupAt) : undefined,
           })
         }
         accessibilityLabel="Publicar viaje para esta ruta"
@@ -377,6 +828,15 @@ const styles = StyleSheet.create({
   stopAction: { fontSize: 14, fontWeight: '600', color: '#111' },
   stopLabel: { fontSize: 13, color: '#6b7280', marginTop: 2 },
   stopFare: { fontSize: 13, color: '#065f46', marginTop: 2, fontWeight: '600' },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sectionChevron: { fontSize: 12, color: '#6b7280', fontWeight: '700' },
+  scheduleRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  scheduleKey: { fontSize: 13, color: '#374151' },
+  scheduleValue: { fontSize: 13, color: '#111827', fontWeight: '700' },
+  passengerScheduleRow: { borderTopWidth: 1, borderTopColor: '#e5e7eb', paddingTop: 8, marginTop: 8 },
+  passengerScheduleName: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  scheduleOk: { color: '#166534' },
+  scheduleWarn: { color: '#b45309' },
   financialCard: {
     backgroundColor: '#fff',
     borderRadius: 12,

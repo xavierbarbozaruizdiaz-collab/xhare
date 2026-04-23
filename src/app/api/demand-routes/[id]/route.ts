@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
 import {
+  compareDemandRouteLegsStable,
   dedupeDemandRouteLegsForUi,
   dedupeDemandRouteMemberRows,
 } from '@/lib/demand-route-members-dedupe';
-import { baseFareFromDistanceKmWithPricing } from '@/lib/pricing/segment-fare';
+import {
+  computeEffectivePricing,
+  type EffectivePricing,
+  type PricingSettingsRow,
+} from '@/lib/pricing/runtime-pricing';
+import {
+  baseFareFromDistanceKmWithPricing,
+  totalFareFromBaseAndSeatsWithPricing,
+  MIN_FARE_PYG,
+  PYG_PER_KM,
+} from '@/lib/pricing/segment-fare';
 import { computeGoogleDrivingRoute } from '@/lib/google-routes-polyline';
 
 type Point = { lat: number; lng: number };
@@ -22,6 +33,33 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos((aLat * Math.PI) / 180) * Math.cos((bLat * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
   return R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+}
+
+function tripCollectTotalGs(
+  r: {
+    passenger_desired_price_per_seat_gs?: number | null;
+    seats?: number | null;
+    origin_lat: number;
+    origin_lng: number;
+    destination_lat: number;
+    destination_lng: number;
+  },
+  eff: EffectivePricing
+): number {
+  const seats = Number.isFinite(Number(r.seats)) ? Math.max(1, Number(r.seats)) : 1;
+  const per = Number(r.passenger_desired_price_per_seat_gs ?? 0);
+  if (Number.isFinite(per) && per > 0) return Math.round(per * seats);
+  const dKm = Math.max(
+    0.5,
+    haversineKm(
+      Number(r.origin_lat),
+      Number(r.origin_lng),
+      Number(r.destination_lat),
+      Number(r.destination_lng)
+    ) * 1.2
+  );
+  const base = baseFareFromDistanceKmWithPricing(dKm, eff);
+  return totalFareFromBaseAndSeatsWithPricing(base, seats, eff);
 }
 
 async function fetchGoogleRoute(origin: Point, destination: Point, waypoints: Point[]): Promise<Point[] | null> {
@@ -82,6 +120,7 @@ export async function GET(
       trip_request_id: string;
       user_id: string;
       seats: number;
+      requested_time: string | null;
       origin_lat: number;
       origin_lng: number;
       origin_label: string | null;
@@ -107,7 +146,7 @@ export async function GET(
       const { data: linkedByGroup } = await service
         .from('trip_requests')
         .select(
-          'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, passenger_desired_price_per_seat_gs, seats, status, demand_group_id, ride_id'
+          'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_time, passenger_desired_price_per_seat_gs, seats, status, demand_group_id, ride_id'
         )
         .eq('demand_group_id', id);
 
@@ -121,6 +160,7 @@ export async function GET(
             destination_lat: number;
             destination_lng: number;
             destination_label: string | null;
+            requested_time: string | null;
             passenger_desired_price_per_seat_gs: number | null;
             seats: number;
             status: string;
@@ -132,7 +172,7 @@ export async function GET(
         const { data } = await service
           .from('trip_requests')
           .select(
-            'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, passenger_desired_price_per_seat_gs, seats, status, demand_group_id, ride_id'
+            'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_time, passenger_desired_price_per_seat_gs, seats, status, demand_group_id, ride_id'
           )
           .in('id', requestIds);
         linkedByMembers = data;
@@ -146,6 +186,16 @@ export async function GET(
         const memberTripIds = new Set(requestIds.map((rid) => String(rid)));
         requests = requests.filter((r) => memberTripIds.has(String(r.id)));
       }
+      const groupRideId = group.ride_id != null ? String(group.ride_id) : '';
+      requests = requests.filter((r) => {
+        const st = String((r as { status?: string }).status ?? '');
+        if (st === 'grouped' || st === 'group_linked_pending') return true;
+        if (st === 'accepted' && groupRideId) {
+          const rid = (r as { ride_id?: string | null }).ride_id;
+          return rid != null && String(rid) === groupRideId;
+        }
+        return false;
+      });
       const reqError = null;
 
       if (!reqError && requests) {
@@ -153,6 +203,7 @@ export async function GET(
           trip_request_id: r.id,
           user_id: r.user_id,
           seats: Number.isFinite(Number(r.seats)) ? Number(r.seats) : 1,
+          requested_time: r.requested_time ?? null,
           origin_lat: r.origin_lat,
           origin_lng: r.origin_lng,
           origin_label: r.origin_label ?? null,
@@ -181,6 +232,26 @@ export async function GET(
           }
         }
 
+        const { data: activePricing } = await service
+          .from('pricing_settings')
+          .select(
+            'id, min_fare_100, pyg_per_km_100, discount_percent, round_to, block_size, block_multiplier, min_fare_floor_pyg'
+          )
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+
+        const eff: EffectivePricing = activePricing
+          ? computeEffectivePricing(activePricing as PricingSettingsRow)
+          : {
+              minFarePyg: MIN_FARE_PYG,
+              pygPerKm: PYG_PER_KM,
+              roundTo: 100,
+              blockSize: 4,
+              blockMultiplier: 1.5,
+              pricingSettingsId: null,
+            };
+
         const byReq: Record<
           string,
           {
@@ -191,12 +262,24 @@ export async function GET(
             origin_lng: number;
             destination_lat: number;
             destination_lng: number;
-            fare_amount: number | null;
+            collect_total_gs: number;
             seats: number;
           }
         > = {};
         for (const r of requests) {
-          byReq[String(r.id)] = {
+          const rid = String(r.id);
+          const collect = tripCollectTotalGs(
+            {
+              passenger_desired_price_per_seat_gs: r.passenger_desired_price_per_seat_gs,
+              seats: r.seats,
+              origin_lat: Number(r.origin_lat),
+              origin_lng: Number(r.origin_lng),
+              destination_lat: Number(r.destination_lat),
+              destination_lng: Number(r.destination_lng),
+            },
+            eff
+          );
+          byReq[rid] = {
             user_id: String(r.user_id ?? ''),
             origin_label: r.origin_label ?? null,
             destination_label: r.destination_label ?? null,
@@ -204,34 +287,11 @@ export async function GET(
             origin_lng: Number(r.origin_lng),
             destination_lat: Number(r.destination_lat),
             destination_lng: Number(r.destination_lng),
-            fare_amount:
-              r.passenger_desired_price_per_seat_gs != null &&
-              Number.isFinite(Number(r.passenger_desired_price_per_seat_gs))
-                ? Number(r.passenger_desired_price_per_seat_gs)
-                : null,
+            collect_total_gs: collect,
             seats: Number.isFinite(Number(r.seats)) ? Number(r.seats) : 1,
           };
         }
-        totalToCollectFromRequests = requests.reduce((sum, r) => {
-          const perSeat = Number(r.passenger_desired_price_per_seat_gs ?? 0);
-          const seats = Number.isFinite(Number(r.seats)) ? Math.max(1, Number(r.seats)) : 1;
-          return sum + (Number.isFinite(perSeat) ? Math.max(0, perSeat) * seats : 0);
-        }, 0);
-
-        const { data: activePricing } = await service
-          .from('pricing_settings')
-          .select('min_fare_100, pyg_per_km_100, discount_percent, round_to, block_size, block_multiplier, min_fare_floor_pyg')
-          .eq('is_active', true)
-          .limit(1)
-          .maybeSingle();
-        const discount = 1 - Number(activePricing?.discount_percent ?? 0) / 100;
-        const roundTo = Math.max(1, Number(activePricing?.round_to ?? 100));
-        const minFareComputed = Math.round((Number(activePricing?.min_fare_100 ?? 10000) * discount) / roundTo) * roundTo;
-        const minFarePyg = Math.max(
-          Math.max(0, Number(activePricing?.min_fare_floor_pyg ?? 10000)),
-          minFareComputed
-        );
-        const pygPerKm = Math.round((Number(activePricing?.pyg_per_km_100 ?? 2780) * discount) / roundTo) * roundTo;
+        totalToCollectFromRequests = requests.reduce((sum, r) => sum + byReq[String(r.id)].collect_total_gs, 0);
 
         const memberRowsRaw = (members ?? []).filter((m) => requests.some((r) => r.id === m.trip_request_id));
         const memberRows = dedupeDemandRouteMemberRows(memberRowsRaw);
@@ -265,42 +325,7 @@ export async function GET(
             const lat = st === 'DROPOFF' ? req.destination_lat : req.origin_lat;
             const lng = st === 'DROPOFF' ? req.destination_lng : req.origin_lng;
             const action = st === 'DROPOFF' ? `Baja ${passengerName}` : `Sube ${passengerName}`;
-            const fallbackFare =
-              req.origin_lat != null &&
-              req.origin_lng != null &&
-              req.destination_lat != null &&
-              req.destination_lng != null
-                ? baseFareFromDistanceKmWithPricing(
-                    Math.max(
-                      0.5,
-                      haversineKm(
-                        Number(req.origin_lat),
-                        Number(req.origin_lng),
-                        Number(req.destination_lat),
-                        Number(req.destination_lng)
-                      ) * 1.2
-                    ),
-                    {
-                      minFarePyg,
-                      pygPerKm,
-                      roundTo,
-                      blockSize: Number(activePricing?.block_size ?? 4),
-                      blockMultiplier: Number(activePricing?.block_multiplier ?? 1.5),
-                      pricingSettingsId: null,
-                    }
-                  )
-                : null;
-            const seatsCount = Number.isFinite(Number(req.seats)) ? Math.max(1, Number(req.seats)) : 1;
-            const explicitPerSeat =
-              req.fare_amount != null && Number.isFinite(Number(req.fare_amount)) ? Number(req.fare_amount) : null;
-            const pickupTotalGs =
-              st === 'PICKUP'
-                ? explicitPerSeat != null
-                  ? Math.round(Math.max(0, explicitPerSeat) * seatsCount)
-                  : fallbackFare != null && Number.isFinite(Number(fallbackFare))
-                    ? Math.round(Math.max(0, Number(fallbackFare)))
-                    : null
-                : null;
+            const pickupTotalGs = st === 'PICKUP' ? Math.max(0, Number(req.collect_total_gs ?? 0)) : null;
             return {
               visit_order: Number(m.visit_order ?? 0),
               stop_type: st,
@@ -308,13 +333,13 @@ export async function GET(
               passenger_name: passengerName,
               label,
               action,
-              fare_amount: st === 'PICKUP' ? pickupTotalGs : null,
+              fare_amount: pickupTotalGs,
               lat: Number.isFinite(lat) ? lat : null,
               lng: Number.isFinite(lng) ? lng : null,
             };
           })
           .filter((x): x is NonNullable<typeof x> => x != null)
-          .sort((a, b) => a.visit_order - b.visit_order);
+          .sort(compareDemandRouteLegsStable);
 
         legs = dedupeDemandRouteLegsForUi(legs);
       }

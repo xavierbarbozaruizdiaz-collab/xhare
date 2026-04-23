@@ -43,9 +43,19 @@ export type DemandRouteLegDedupe = {
   visit_order: number;
 };
 
+/** Orden canónico de paradas (visit_order + desempates); alineado con `src/lib/demand-route-members-dedupe.ts`. */
+export function compareDemandRouteLegsStable<T extends DemandRouteLegDedupe>(a: T, b: T): number {
+  const vo = Number(a.visit_order) - Number(b.visit_order);
+  if (vo !== 0) return vo;
+  const id = String(a.trip_request_id).localeCompare(String(b.trip_request_id));
+  if (id !== 0) return id;
+  return String(a.stop_type).localeCompare(String(b.stop_type));
+}
+
 export function dedupeDemandRouteLegsForUi<T extends DemandRouteLegDedupe>(legs: T[]): T[] {
+  const sortedInput = [...legs].sort(compareDemandRouteLegsStable);
   const map = new Map<string, T>();
-  for (const leg of legs) {
+  for (const leg of sortedInput) {
     const tid = String(leg.trip_request_id ?? '');
     const raw = String(leg.stop_type ?? 'LEGACY').trim().toUpperCase();
     const st = raw === 'PICKUP' || raw === 'DROPOFF' ? raw : 'LEGACY';
@@ -68,5 +78,5 @@ export function dedupeDemandRouteLegsForUi<T extends DemandRouteLegDedupe>(legs:
       map.set(key, prev);
     }
   }
-  return Array.from(map.values()).sort((a, b) => a.visit_order - b.visit_order);
+  return Array.from(map.values()).sort(compareDemandRouteLegsStable);
 }

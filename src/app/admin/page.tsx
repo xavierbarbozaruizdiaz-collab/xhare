@@ -48,6 +48,12 @@ export default function AdminDashboardPage() {
             — Pedidos en mapa, filtros y generar viaje desde grupo
           </li>
           <li>
+            <Link href="/admin/demand-groups" className="text-green-600 hover:underline font-medium">
+              Grupos de demanda
+            </Link>
+            — Listado, detalle (ruta y montos) y disolver agrupamiento de forma segura
+          </li>
+          <li>
             <Link href="/admin/corridors" className="text-green-600 hover:underline font-medium">
               Corredores de demanda
             </Link>

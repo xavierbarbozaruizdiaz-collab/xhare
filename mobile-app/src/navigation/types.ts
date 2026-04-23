@@ -22,6 +22,8 @@ export type MainStackParamList = {
         fromRideId?: string;
         tripRequestId?: string;
         groupId?: string;
+          /** Hora objetivo de salida al primer punto para cumplir ventana del grupo. */
+          groupSuggestedPickupTime?: string;
         publishKind?: 'internal' | 'long_distance';
         /** Prellenar precio manual (larga distancia). */
         suggestedSeatPriceGs?: number;

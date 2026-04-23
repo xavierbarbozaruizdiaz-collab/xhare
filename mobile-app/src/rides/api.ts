@@ -144,8 +144,9 @@ export async function fetchAwaitingDriverRides() {
     .from('rides')
     .select('*')
     .eq('status', 'awaiting_driver')
+    .order('created_at', { ascending: false })
     .order('departure_time', { ascending: true })
-    .limit(50);
+    .limit(200);
   const { data, error } = await raceWithTimeout(
     q,
     SUPABASE_QUERY_TIMEOUT_MS,

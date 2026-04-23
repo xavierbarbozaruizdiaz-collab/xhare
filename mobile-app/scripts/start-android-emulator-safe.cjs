@@ -1,7 +1,6 @@
 /**
- * Arranca el Android Emulator con render por software (SwiftShader).
- * Evita crashes por driver OpenGL del host en Windows (ver mensaje del emulador
- * "graphics driver crashed").
+ * Arranca el Android Emulator en modo estable para Windows.
+ * Evita crashes por snapshots/GPU del host.
  *
  * Uso:
  *   npm run android:emulator
@@ -43,7 +42,11 @@ if (!fs.existsSync(exe)) {
   process.exit(1);
 }
 
-const args = ['-avd', avd, '-gpu', 'swiftshader_indirect'];
+const gpuMode = process.env.ANDROID_EMULATOR_GPU_MODE?.trim() || 'angle_indirect';
+const args = ['-avd', avd, '-gpu', gpuMode, '-no-snapshot-load', '-no-snapshot-save'];
+if (process.env.ANDROID_EMULATOR_WIPE_DATA === '1') {
+  args.push('-wipe-data');
+}
 console.log('[android-emulator-safe]', exe, args.join(' '));
 
 const child = spawn(exe, args, {

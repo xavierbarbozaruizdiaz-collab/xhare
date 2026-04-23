@@ -703,17 +703,20 @@ export function RideDetailScreen() {
   }, [ride, rideId, session?.id]);
 
   const runStatusUpdate = useCallback(
-    (next: 'en_route' | 'completed') => {
-      const title = next === 'en_route' ? 'Iniciar viaje' : 'Finalizar viaje';
+    (next: 'en_route' | 'completed' | 'cancelled') => {
+      const title =
+        next === 'en_route' ? 'Iniciar viaje' : next === 'completed' ? 'Finalizar viaje' : 'Cancelar viaje';
       const message =
         next === 'en_route'
           ? 'Los pasajeros verán el viaje como en camino. ¿Confirmás?'
-          : '¿Marcar el viaje como completado?';
+          : next === 'completed'
+            ? '¿Marcar el viaje como completado?'
+            : '¿Cancelar este viaje? Se notificará a los pasajeros y, si viene de sistema, volverá a despacho.';
       Alert.alert(title, message, [
         { text: 'Cancelar', style: 'cancel' },
         {
-          text: next === 'en_route' ? 'Iniciar' : 'Finalizar',
-          style: next === 'completed' ? 'destructive' : 'default',
+          text: next === 'en_route' ? 'Iniciar' : next === 'completed' ? 'Finalizar' : 'Sí, cancelar',
+          style: next === 'completed' || next === 'cancelled' ? 'destructive' : 'default',
           onPress: () => {
             void (async () => {
               const { data: auth } = await supabase.auth.getSession();
@@ -732,8 +735,14 @@ export function RideDetailScreen() {
                 await load({ quiet: true });
                 if (next === 'en_route') {
                   Alert.alert('Listo', 'El viaje quedó en curso.');
-                } else {
+                } else if (next === 'completed') {
                   Alert.alert('Listo', 'Viaje finalizado.');
+                } else {
+                  Alert.alert(
+                    'Listo',
+                    'Viaje cancelado. Si venía de sistema/demanda, quedó disponible para reasignación.'
+                  );
+                  navigation.goBack();
                 }
               } finally {
                 setStatusUpdating(false);
@@ -743,7 +752,7 @@ export function RideDetailScreen() {
         },
       ]);
     },
-    [rideId, load]
+    [rideId, load, navigation]
   );
 
   /**
@@ -935,6 +944,7 @@ export function RideDetailScreen() {
 
   const canStart = isOwn && (status === 'published' || status === 'booked');
   const canComplete = isOwn && status === 'en_route';
+  const canCancel = isOwn && (status === 'published' || status === 'booked' || status === 'draft');
   const canEdit =
     isOwn && status !== 'en_route' && status !== 'completed' && status !== 'cancelled';
 
@@ -1517,6 +1527,15 @@ export function RideDetailScreen() {
               <Text style={styles.primaryBtnText}>{statusUpdating ? 'Procesando…' : 'Finalizar viaje'}</Text>
             </TouchableOpacity>
           ) : null}
+          {canCancel ? (
+            <TouchableOpacity
+              style={[styles.cancelDriverRideBtn, statusUpdating && styles.btnDisabled]}
+              disabled={statusUpdating}
+              onPress={() => runStatusUpdate('cancelled')}
+            >
+              <Text style={styles.primaryBtnText}>{statusUpdating ? 'Procesando…' : 'Cancelar viaje'}</Text>
+            </TouchableOpacity>
+          ) : null}
           {status === 'en_route' ? (
             <Text style={styles.hint}>
               Usá “Llegué” para confirmar subidas, bajadas y cobro en cada parada.
@@ -1961,6 +1980,13 @@ const styles = StyleSheet.create({
   },
   completeBtn: {
     backgroundColor: '#15803d',
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  cancelDriverRideBtn: {
+    backgroundColor: '#b91c1c',
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',

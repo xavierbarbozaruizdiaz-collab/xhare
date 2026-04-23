@@ -24,7 +24,7 @@ import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
 import { searchAddresses, reverseGeocodeStructured, type GeocodeSuggestion } from '../backend/geocodeApi';
 import { fetchRoute } from '../backend/routeApi';
-import { fetchDemandRouteDetail } from '../backend/demandRoutesApi';
+import { buildRideIdToDemandGroupMap, fetchDemandRouteDetail } from '../backend/demandRoutesApi';
 import { env } from '../core/env';
 import { getPositionAlongPolyline, snapToPolyline, type Point as GeoPoint } from '../lib/geo';
 import { PublishRouteMapModal, type PublishMapMode } from '../components/PublishRouteMapModal';
@@ -39,6 +39,12 @@ type ScreenRoute = RouteProp<MainStackParamList, 'PublishRide'>;
 type PublishKind = 'internal' | 'long_distance';
 
 type Point = { lat: number; lng: number; label?: string };
+type PassengerFixedPoint = {
+  lat: number;
+  lng: number;
+  label: string;
+  role?: 'first_pickup' | 'last_dropoff' | 'normal';
+};
 
 type UserProfile = {
   role: string;
@@ -73,11 +79,17 @@ function regionForPoints(points: Point[]) {
 }
 
 /** Región del modal: solo origen, destino y paradas (no todos los vértices OSRM → evita zoom a “planeta”). */
-function regionForPublishFocus(origin: Point | null, destination: Point | null, waypoints: Point[]) {
+function regionForPublishFocus(
+  origin: Point | null,
+  destination: Point | null,
+  waypoints: Point[],
+  passengerFixedPoints: PassengerFixedPoint[]
+) {
   const pts: Point[] = [];
   if (origin) pts.push(origin);
   if (destination) pts.push(destination);
   waypoints.forEach((w) => pts.push(w));
+  passengerFixedPoints.forEach((p) => pts.push({ lat: p.lat, lng: p.lng, label: p.label }));
   if (pts.length === 0) {
     return { latitude: -25.3, longitude: -57.6, latitudeDelta: 0.35, longitudeDelta: 0.35 };
   }
@@ -113,6 +125,13 @@ export function PublishRideScreen() {
   const tripRequestIdParam = params.tripRequestId;
   const fromRideIdParam = params.fromRideId;
   const groupIdParam = params.groupId;
+  const groupSuggestedPickupTimeParam =
+    typeof params.groupSuggestedPickupTime === 'string' ? params.groupSuggestedPickupTime : undefined;
+  /**
+   * Si entrás solo con `fromRideId` (viaje awaiting_driver) pero ese ride está ligado a un grupo en
+   * `demand_route_groups`, el flujo real es el mismo que con `groupId` en ruta.
+   */
+  const [prefillResolvedGroupId, setPrefillResolvedGroupId] = useState<string | null>(null);
   /** Si venís de solicitud / ruta con demanda / copiar viaje, el tipo lo fija ese flujo. */
   const contextualPublish = Boolean(tripRequestIdParam || groupIdParam || fromRideIdParam);
   const paramPublishKind: PublishKind =
@@ -155,8 +174,13 @@ export function PublishRideScreen() {
   const [formError, setFormError] = useState<string | null>(null);
   /** Paradas intermedias en el mapa; `label` se muestra en el formulario y en ride_stops. */
   const [waypoints, setWaypoints] = useState<Point[]>([]);
+  const [passengerFixedPoints, setPassengerFixedPoints] = useState<PassengerFixedPoint[]>([]);
   const [publishMapMode, setPublishMapMode] = useState<PublishMapMode>('origin');
   const [mapModalVisible, setMapModalVisible] = useState(false);
+  const isGroupedPublishFlow = Boolean(groupIdParam || prefillResolvedGroupId);
+  const [groupFirstPickupPoint, setGroupFirstPickupPoint] = useState<{ lat: number; lng: number } | null>(null);
+  /** Ride de despacho ya existente para el grupo (p. ej. tras cancelación → awaiting_driver). */
+  const [existingGroupRideId, setExistingGroupRideId] = useState<string | null>(null);
 
   /** Origen de tiempos para logs [perf][PublishRide] (solo __DEV__). */
   const publishPerfT0 = useRef(0);
@@ -167,8 +191,8 @@ export function PublishRideScreen() {
   }, []);
 
   const mapRegion = useMemo(
-    () => regionForPublishFocus(origin, destination, waypoints),
-    [origin, destination, waypoints]
+    () => regionForPublishFocus(origin, destination, waypoints, passengerFixedPoints),
+    [origin, destination, waypoints, passengerFixedPoints]
   );
   const polylineCoords = useMemo(
     () => routePolyline.map((p) => ({ latitude: p.lat, longitude: p.lng })),
@@ -179,6 +203,23 @@ export function PublishRideScreen() {
     () => waypoints.map((w) => `${w.lat},${w.lng}`).join(';'),
     [waypoints]
   );
+  const passengerFixedRouteKey = useMemo(
+    () => passengerFixedPoints.map((p) => `${p.lat},${p.lng}`).join(';'),
+    [passengerFixedPoints]
+  );
+  const [linkedPassengerSeatSum, setLinkedPassengerSeatSum] = useState(0);
+  const linkedPassengerSeats = useMemo(
+    () => (isGroupedPublishFlow ? linkedPassengerSeatSum : 0),
+    [isGroupedPublishFlow, linkedPassengerSeatSum]
+  );
+
+  const groupTargetPickupDateTime = useMemo(() => {
+    if (!isGroupedPublishFlow) return null;
+    if (!departureDate || !groupSuggestedPickupTimeParam) return null;
+    const d = new Date(`${departureDate}T${formatTimeHhMm(groupSuggestedPickupTimeParam)}:00`);
+    if (Number.isNaN(d.getTime())) return null;
+    return d;
+  }, [isGroupedPublishFlow, departureDate, groupSuggestedPickupTimeParam]);
 
   const loadGate = useCallback(async () => {
     if (!session?.id) {
@@ -281,103 +322,223 @@ export function PublishRideScreen() {
     setPrefillLoading(true);
     setFormError(null);
     try {
-      if (fromRideIdParam) {
-        const { data: ride, error } = await supabase
-          .from('rides')
-          .select(
-            'origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, departure_time, route_name'
-          )
-          .eq('id', fromRideIdParam)
-          .eq('driver_id', session.id)
-          .maybeSingle();
-        if (!error && ride) {
-          if (ride.origin_lat != null && ride.origin_lng != null) {
-            setOrigin({
-              lat: Number(ride.origin_lat),
-              lng: Number(ride.origin_lng),
-              label: ride.origin_label ?? undefined,
-            });
-            setOriginInput(String(ride.origin_label ?? ''));
-          }
-          if (ride.destination_lat != null && ride.destination_lng != null) {
-            setDestination({
-              lat: Number(ride.destination_lat),
-              lng: Number(ride.destination_lng),
-              label: ride.destination_label ?? undefined,
-            });
-            setDestinationInput(String(ride.destination_label ?? ''));
-          }
-          if (ride.departure_time) {
-            const d = new Date(ride.departure_time as string);
-            setDepartureDate(toLocalYyyyMmDd(d));
-            setDepartureTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
-          }
-          setRouteName(String((ride as { route_name?: string | null }).route_name ?? '').slice(0, 100));
+      setPrefillResolvedGroupId(null);
+
+      let activeGroupId: string | undefined =
+        groupIdParam != null && String(groupIdParam).trim() !== '' ? String(groupIdParam).trim() : undefined;
+      if (!activeGroupId && fromRideIdParam) {
+        const rid = String(fromRideIdParam).trim();
+        if (rid) {
+          const byRide = await buildRideIdToDemandGroupMap([rid]);
+          const gid = byRide[rid];
+          if (gid) activeGroupId = gid;
         }
-        setTripRequestIdsToLink([]);
+      }
+
+      if (activeGroupId) {
+        if (!groupIdParam) {
+          setPrefillResolvedGroupId(activeGroupId);
+        }
+        setExistingGroupRideId(null);
+        setLinkedPassengerSeatSum(0);
+        const { detail, error: dErr } = await fetchDemandRouteDetail(activeGroupId);
+        if (dErr) setFormError(dErr);
+        if (detail) {
+          // En publicación desde grupo: origen/destino los define el conductor en el mapa.
+          // No prellenar con puntos de pasajeros para evitar confusión visual/operativa.
+          setOrigin(null);
+          setDestination(null);
+          setOriginInput('');
+          setDestinationInput('');
+          setWaypoints([]);
+          const ids = (detail.passengers ?? []).map((p) => p.trip_request_id).filter(Boolean);
+          setTripRequestIdsToLink(ids);
+          const seatsFromSummary = Number(detail.financial_summary?.grouped_seats_taken ?? 0);
+          if (Number.isFinite(seatsFromSummary) && seatsFromSummary > 0) {
+            setLinkedPassengerSeatSum(Math.round(seatsFromSummary));
+          } else if (ids.length > 0) {
+            const { data: seatRows } = await supabase.from('trip_requests').select('seats').in('id', ids);
+            let sum = 0;
+            for (const row of seatRows ?? []) {
+              const s = Number((row as { seats?: number }).seats ?? 1);
+              sum += Number.isFinite(s) && s > 0 ? s : 1;
+            }
+            setLinkedPassengerSeatSum(sum > 0 ? sum : ids.length);
+          } else {
+            setLinkedPassengerSeatSum(0);
+          }
+
+          const { data: groupRow } = await supabase
+            .from('demand_route_groups')
+            .select('ride_id')
+            .eq('id', activeGroupId)
+            .maybeSingle();
+          const gidRide = groupRow?.ride_id != null ? String(groupRow.ride_id) : '';
+          if (gidRide) {
+            const { data: sysRide } = await supabase
+              .from('rides')
+              .select('id, status, driver_id')
+              .eq('id', gidRide)
+              .maybeSingle();
+            const st = String((sysRide as { status?: string } | null)?.status ?? '');
+            const drv = (sysRide as { driver_id?: string | null } | null)?.driver_id;
+            if (st === 'awaiting_driver' && (drv == null || String(drv).trim() === '')) {
+              setExistingGroupRideId(gidRide);
+            } else {
+              setExistingGroupRideId(null);
+            }
+          } else {
+            setExistingGroupRideId(null);
+          }
+
+          const orderedLegs = [...(detail.legs ?? [])].sort(
+            (a, b) => Number(a.visit_order ?? 0) - Number(b.visit_order ?? 0)
+          );
+          const firstPickup = orderedLegs.find((l) => String(l.stop_type).toUpperCase() === 'PICKUP');
+          const lastDropoff = [...orderedLegs]
+            .reverse()
+            .find((l) => String(l.stop_type).toUpperCase() === 'DROPOFF');
+          const firstPickupKey =
+            firstPickup && Number.isFinite(Number(firstPickup.lat)) && Number.isFinite(Number(firstPickup.lng))
+              ? `${Number(firstPickup.lat).toFixed(6)}|${Number(firstPickup.lng).toFixed(6)}|PICKUP`
+              : null;
+          const lastDropoffKey =
+            lastDropoff && Number.isFinite(Number(lastDropoff.lat)) && Number.isFinite(Number(lastDropoff.lng))
+              ? `${Number(lastDropoff.lat).toFixed(6)}|${Number(lastDropoff.lng).toFixed(6)}|DROPOFF`
+              : null;
+          const fixed = new Map<string, PassengerFixedPoint>();
+          const firstPickupLeg = [...(detail.legs ?? [])]
+            .filter((l) => String(l.stop_type).toUpperCase() === 'PICKUP')
+            .sort((a, b) => Number(a.visit_order ?? 0) - Number(b.visit_order ?? 0))[0];
+          if (
+            firstPickupLeg &&
+            Number.isFinite(Number(firstPickupLeg.lat)) &&
+            Number.isFinite(Number(firstPickupLeg.lng))
+          ) {
+            setGroupFirstPickupPoint({
+              lat: Number(firstPickupLeg.lat),
+              lng: Number(firstPickupLeg.lng),
+            });
+          } else {
+            setGroupFirstPickupPoint(null);
+          }
+          for (const leg of detail.legs ?? []) {
+            if (typeof leg.lat !== 'number' || typeof leg.lng !== 'number') continue;
+            const stopType = String(leg.stop_type ?? '').toUpperCase();
+            const key = `${leg.lat.toFixed(6)}|${leg.lng.toFixed(6)}|${stopType}`;
+            if (!fixed.has(key)) {
+              const stopLabel = stopType === 'DROPOFF' ? 'Bajada' : 'Subida';
+              const role: PassengerFixedPoint['role'] =
+                key === firstPickupKey
+                  ? 'first_pickup'
+                  : key === lastDropoffKey
+                    ? 'last_dropoff'
+                    : 'normal';
+              fixed.set(key, {
+                lat: Number(leg.lat),
+                lng: Number(leg.lng),
+                label: `${stopLabel}: ${String(leg.label ?? 'Punto de pasajero')}`,
+                role,
+              });
+            }
+          }
+          if (fixed.size === 0 && (detail.passengers ?? []).length > 0) {
+            const shortId = (id: string) => String(id).slice(0, 6);
+            const pickups: Array<{ lat: number; lng: number; label: string; tripId: string }> = [];
+            const dropoffs: Array<{ lat: number; lng: number; label: string; tripId: string }> = [];
+            for (const p of detail.passengers ?? []) {
+              const tid = String(p.trip_request_id ?? '').trim();
+              if (!tid) continue;
+              if (Number.isFinite(p.origin_lat) && Number.isFinite(p.origin_lng)) {
+                pickups.push({
+                  lat: Number(p.origin_lat),
+                  lng: Number(p.origin_lng),
+                  label: String(p.origin_label ?? 'Origen pasajero'),
+                  tripId: tid,
+                });
+              }
+              if (Number.isFinite(p.destination_lat) && Number.isFinite(p.destination_lng)) {
+                dropoffs.push({
+                  lat: Number(p.destination_lat),
+                  lng: Number(p.destination_lng),
+                  label: String(p.destination_label ?? 'Destino pasajero'),
+                  tripId: tid,
+                });
+              }
+            }
+            const firstPk =
+              firstPickupLeg &&
+              Number.isFinite(Number(firstPickupLeg.lat)) &&
+              Number.isFinite(Number(firstPickupLeg.lng))
+                ? { lat: Number(firstPickupLeg.lat), lng: Number(firstPickupLeg.lng) }
+                : pickups[0] != null
+                  ? { lat: pickups[0].lat, lng: pickups[0].lng }
+                  : null;
+            const lastDf =
+              lastDropoff &&
+              Number.isFinite(Number(lastDropoff.lat)) &&
+              Number.isFinite(Number(lastDropoff.lng))
+                ? { lat: Number(lastDropoff.lat), lng: Number(lastDropoff.lng) }
+                : dropoffs.length > 0
+                  ? { lat: dropoffs[dropoffs.length - 1].lat, lng: dropoffs[dropoffs.length - 1].lng }
+                  : null;
+            for (const pk of pickups) {
+              const key = `${pk.lat.toFixed(6)}|${pk.lng.toFixed(6)}|PICKUP`;
+              if (fixed.has(key)) continue;
+              const isFirst =
+                firstPk != null && Math.abs(pk.lat - firstPk.lat) < 1e-5 && Math.abs(pk.lng - firstPk.lng) < 1e-5;
+              fixed.set(key, {
+                lat: pk.lat,
+                lng: pk.lng,
+                label: `Subida (${shortId(pk.tripId)}): ${pk.label}`,
+                role: isFirst ? 'first_pickup' : 'normal',
+              });
+            }
+            for (const df of dropoffs) {
+              const key = `${df.lat.toFixed(6)}|${df.lng.toFixed(6)}|DROPOFF`;
+              if (fixed.has(key)) continue;
+              const isLast =
+                lastDf != null && Math.abs(df.lat - lastDf.lat) < 1e-5 && Math.abs(df.lng - lastDf.lng) < 1e-5;
+              fixed.set(key, {
+                lat: df.lat,
+                lng: df.lng,
+                label: `Bajada (${shortId(df.tripId)}): ${df.label}`,
+                role: isLast ? 'last_dropoff' : 'normal',
+              });
+            }
+          }
+          setPassengerFixedPoints(Array.from(fixed.values()));
+          if (detail.requested_date) setDepartureDate(detail.requested_date);
+          if (groupSuggestedPickupTimeParam) {
+            setDepartureTime(formatTimeHhMm(groupSuggestedPickupTimeParam));
+          } else if (detail.requested_time) {
+            setDepartureTime(formatTimeHhMm(detail.requested_time));
+          }
+        }
         return;
       }
 
-      if (groupIdParam) {
-        const { detail, error: dErr } = await fetchDemandRouteDetail(groupIdParam);
-        if (dErr) setFormError(dErr);
-        if (detail) {
-          const ids = (detail.passengers ?? []).map((p) => p.trip_request_id).filter(Boolean);
-          setTripRequestIdsToLink(ids);
-          const reqId = tripRequestIdParam ?? detail.base_trip_request_id ?? undefined;
-          if (reqId) {
-            const { data: rows } = await supabase
-              .from('trip_requests')
-              .select(
-                'id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_date, requested_time'
-              )
-              .in('id', [reqId])
-              .in('status', ['pending', 'grouped', 'grouping']);
-            const first = rows?.[0];
-            if (first) {
-              setOrigin({
-                lat: first.origin_lat,
-                lng: first.origin_lng,
-                label: first.origin_label ?? undefined,
-              });
-              setOriginInput(String(first.origin_label ?? ''));
-              setDestination({
-                lat: first.destination_lat,
-                lng: first.destination_lng,
-                label: first.destination_label ?? undefined,
-              });
-              setDestinationInput(String(first.destination_label ?? ''));
-              if (first.requested_date) setDepartureDate(first.requested_date);
-              setDepartureTime(formatTimeHhMm(first.requested_time as string | null));
-            } else if (detail.passengers?.[0]) {
-              const p = detail.passengers[0];
-              setOrigin({ lat: p.origin_lat, lng: p.origin_lng, label: p.origin_label ?? undefined });
-              setOriginInput(String(p.origin_label ?? ''));
-              setDestination({
-                lat: p.destination_lat,
-                lng: p.destination_lng,
-                label: p.destination_label ?? undefined,
-              });
-              setDestinationInput(String(p.destination_label ?? ''));
-            }
-          } else if (detail.passengers?.[0]) {
-            const p = detail.passengers[0];
-            setOrigin({ lat: p.origin_lat, lng: p.origin_lng, label: p.origin_label ?? undefined });
-            setOriginInput(String(p.origin_label ?? ''));
-            setDestination({
-              lat: p.destination_lat,
-              lng: p.destination_lng,
-              label: p.destination_label ?? undefined,
-            });
-            setDestinationInput(String(p.destination_label ?? ''));
-          }
-          if (detail.requested_date) setDepartureDate(detail.requested_date);
-          if (detail.requested_time) setDepartureTime(formatTimeHhMm(detail.requested_time));
-        }
+      if (fromRideIdParam) {
+        // Viaje de sistema sin fila en demand_route_groups: publicación libre, sin pasajeros agrupados.
+        setPrefillResolvedGroupId(null);
+        setOrigin(null);
+        setDestination(null);
+        setOriginInput('');
+        setDestinationInput('');
+        setWaypoints([]);
+        setRouteName('');
+        setTripRequestIdsToLink([]);
+        setPassengerFixedPoints([]);
+        setGroupFirstPickupPoint(null);
+        setExistingGroupRideId(null);
+        setLinkedPassengerSeatSum(0);
         return;
       }
 
       if (tripRequestIdParam) {
+        setPrefillResolvedGroupId(null);
+        setExistingGroupRideId(null);
+        setLinkedPassengerSeatSum(0);
         const { data: rows } = await supabase
           .from('trip_requests')
           .select(
@@ -427,10 +588,16 @@ export function PublishRideScreen() {
         } else {
           setTripRequestIdsToLink([]);
         }
+        setPassengerFixedPoints([]);
         return;
       }
 
+      setPrefillResolvedGroupId(null);
       setTripRequestIdsToLink([]);
+      setPassengerFixedPoints([]);
+      setGroupFirstPickupPoint(null);
+      setExistingGroupRideId(null);
+      setLinkedPassengerSeatSum(0);
     } finally {
       setPrefillLoading(false);
     }
@@ -442,11 +609,55 @@ export function PublishRideScreen() {
     tripRequestIdParam,
     isLongDistance,
     suggestedSeatPriceGsParam,
+    groupSuggestedPickupTimeParam,
   ]);
 
   useEffect(() => {
-    if (userProfile) applyPrefill();
-  }, [userProfile, applyPrefill]);
+    if (!isGroupedPublishFlow) return;
+    if (!origin || !groupFirstPickupPoint || !groupTargetPickupDateTime) return;
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      void (async () => {
+        const r = await fetchRoute(
+          { lat: origin.lat, lng: origin.lng },
+          { lat: groupFirstPickupPoint.lat, lng: groupFirstPickupPoint.lng },
+          [],
+          { signal: abort.signal }
+        );
+        if (r.aborted) return;
+        const travelMin =
+          Number.isFinite(Number(r.durationMinutes)) && Number(r.durationMinutes) > 0
+            ? Math.round(Number(r.durationMinutes))
+            : null;
+        if (travelMin == null) return;
+        const departAt = new Date(groupTargetPickupDateTime.getTime() - travelMin * 60_000);
+        const hh = String(departAt.getHours()).padStart(2, '0');
+        const mm = String(departAt.getMinutes()).padStart(2, '0');
+        setDepartureTime(`${hh}:${mm}`);
+      })();
+    }, 180);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+    };
+  }, [isGroupedPublishFlow, origin?.lat, origin?.lng, groupFirstPickupPoint, groupTargetPickupDateTime]);
+
+  useEffect(() => {
+    if (!isGroupedPublishFlow) return;
+    if (waypoints.length > 0) setWaypoints([]);
+  }, [isGroupedPublishFlow, waypoints.length]);
+
+  useEffect(() => {
+    if (!userProfile) return;
+    void applyPrefill();
+  }, [
+    userProfile,
+    tripRequestIdParam,
+    groupIdParam,
+    fromRideIdParam,
+    groupSuggestedPickupTimeParam,
+    applyPrefill,
+  ]);
 
   useEffect(() => {
     if (
@@ -476,7 +687,8 @@ export function PublishRideScreen() {
       { lat: origin.lat, lng: origin.lng },
       { lat: destination.lat, lng: destination.lng },
     ];
-    const orderedWps = [...waypoints].sort(
+    const fixedPassengerWps = passengerFixedPoints.map((p) => ({ lat: p.lat, lng: p.lng, label: p.label }));
+    const orderedWps = [...waypoints, ...fixedPassengerWps].sort(
       (a, b) => getPositionAlongPolyline(a, chord) - getPositionAlongPolyline(b, chord)
     );
     const abort = new AbortController();
@@ -525,7 +737,7 @@ export function PublishRideScreen() {
       clearTimeout(timer);
       abort.abort();
     };
-  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng, waypointsRouteKey]);
+  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng, waypointsRouteKey, passengerFixedRouteKey]);
 
   const selectSuggestion = (s: GeocodeSuggestion, kind: 'origin' | 'destination') => {
     const point: Point = {
@@ -546,6 +758,10 @@ export function PublishRideScreen() {
   };
 
   const openMapPicker = (mode: PublishMapMode) => {
+    if (isGroupedPublishFlow && mode === 'waypoint') {
+      Alert.alert('Paradas', 'En publicación desde ruta con demanda no se pueden agregar paradas manuales.');
+      return;
+    }
     if (mode === 'waypoint' && (!origin || !destination)) {
       Alert.alert('Ruta', 'Definí primero origen y destino (mapa o búsqueda).');
       return;
@@ -596,6 +812,7 @@ export function PublishRideScreen() {
       return;
     }
     if (publishMapMode === 'waypoint' && origin && destination) {
+      if (isGroupedPublishFlow) return;
       if (waypoints.length >= MAX_DRIVER_PUBLISH_WAYPOINTS) return;
       const chord: GeoPoint[] = [
         { lat: origin.lat, lng: origin.lng },
@@ -637,6 +854,7 @@ export function PublishRideScreen() {
   }, []);
 
   const seats = userProfile?.vehicle_seat_count ?? 6;
+  const availableSeatsForPublish = Math.max(0, seats - linkedPassengerSeats);
 
   const handlePublish = async () => {
     if (!session?.id || !userProfile) return;
@@ -685,6 +903,7 @@ export function PublishRideScreen() {
         .eq('driver_id', session.id)
         .in('status', ['published', 'booked', 'en_route', 'draft']);
       for (const r of existingRides ?? []) {
+        if (existingGroupRideId && String((r as { id?: string }).id) === existingGroupRideId) continue;
         const start = new Date(r.departure_time as string).getTime();
         const d = (r.estimated_duration_minutes ?? 60) * 60 * 1000;
         const end = start + d;
@@ -709,7 +928,7 @@ export function PublishRideScreen() {
         estimated_duration_minutes: dur,
         price_per_seat: manualSeatPrice,
         total_seats: userProfile.vehicle_seat_count,
-        available_seats: userProfile.vehicle_seat_count,
+        available_seats: availableSeatsForPublish,
         capacity: userProfile.vehicle_seat_count,
         route_name: routeName.trim().slice(0, 100) || null,
         description: description.trim() || null,
@@ -727,25 +946,47 @@ export function PublishRideScreen() {
         mode: 'free',
       };
 
-      let { data, error } = await supabase.from('rides').insert(ridePayload).select().single();
-
-      if (error) {
-        const msg = String((error as { message?: string }).message ?? '');
-        if (msg.includes('driver_ride_overlap') || msg.includes('solapen')) {
-          Alert.alert('Horario', 'Ya tenés un viaje en ese horario.');
+      let rideId: string;
+      if (isGroupedPublishFlow && existingGroupRideId) {
+        const { data: upd, error: updErr } = await supabase
+          .from('rides')
+          .update(ridePayload)
+          .eq('id', existingGroupRideId)
+          .eq('status', 'awaiting_driver')
+          .select('id')
+          .maybeSingle();
+        if (updErr) throw updErr;
+        if (!upd?.id) {
+          Alert.alert(
+            'No disponible',
+            'Este viaje de sistema ya fue tomado por otro conductor o cambió de estado. Volvé atrás y actualizá la lista.'
+          );
           setSubmitting(false);
           return;
         }
-        const { departure_flexibility: _x, ...payloadSinFlex } = ridePayload;
-        const res2 = await supabase.from('rides').insert(payloadSinFlex).select().single();
-        data = res2.data;
-        error = res2.error;
+        rideId = String(upd.id);
+        const { error: delStopsErr } = await supabase.from('ride_stops').delete().eq('ride_id', rideId);
+        if (delStopsErr) throw delStopsErr;
+      } else {
+        let { data, error } = await supabase.from('rides').insert(ridePayload).select().single();
+
+        if (error) {
+          const msg = String((error as { message?: string }).message ?? '');
+          if (msg.includes('driver_ride_overlap') || msg.includes('solapen')) {
+            Alert.alert('Horario', 'Ya tenés un viaje en ese horario.');
+            setSubmitting(false);
+            return;
+          }
+          const { departure_flexibility: _x, ...payloadSinFlex } = ridePayload;
+          const res2 = await supabase.from('rides').insert(payloadSinFlex).select().single();
+          data = res2.data;
+          error = res2.error;
+        }
+
+        if (error) throw error;
+        if (!data?.id) throw new Error('No se obtuvo el id del viaje');
+        rideId = data.id as string;
       }
-
-      if (error) throw error;
-      if (!data?.id) throw new Error('No se obtuvo el id del viaje');
-
-      const rideId = data.id as string;
 
       if (tripRequestIdsToLink.length > 0) {
         const { error: tripErr } = await supabase
@@ -758,6 +999,17 @@ export function PublishRideScreen() {
             'Aviso',
             'El viaje se publicó pero no se pudieron vincular todas las solicitudes. Revisá desde la web o soporte.'
           );
+        }
+      }
+
+      const linkDemandGroupId = groupIdParam ?? prefillResolvedGroupId;
+      if (linkDemandGroupId && !existingGroupRideId) {
+        const { error: groupLinkErr } = await supabase
+          .from('demand_route_groups')
+          .update({ ride_id: rideId })
+          .eq('id', linkDemandGroupId);
+        if (groupLinkErr) {
+          console.warn('demand_route_groups link:', groupLinkErr);
         }
       }
 
@@ -807,10 +1059,19 @@ export function PublishRideScreen() {
       }
       if (stopsError) throw stopsError;
 
-      Alert.alert('Listo', 'Tu viaje quedó publicado. También lo encontrás en Conductor → Mis viajes publicados o Inicio.', [
-        { text: 'Ver viaje', onPress: () => navigation.navigate('RideDetail', { rideId }) },
-        { text: 'Cerrar', style: 'cancel', onPress: () => navigation.goBack() },
-      ]);
+      if (isGroupedPublishFlow) {
+        Alert.alert('Listo', 'Tu viaje quedó publicado.', [
+          {
+            text: 'Ver viaje',
+            onPress: () => navigation.replace('RideDetail', { rideId }),
+          },
+        ]);
+      } else {
+        Alert.alert('Listo', 'Tu viaje quedó publicado. También lo encontrás en Conductor → Mis viajes publicados o Inicio.', [
+          { text: 'Ver viaje', onPress: () => navigation.navigate('RideDetail', { rideId }) },
+          { text: 'Cerrar', style: 'cancel', onPress: () => navigation.goBack() },
+        ]);
+      }
     } catch (e) {
       Alert.alert('Error', formatSupabaseError(e));
     } finally {
@@ -853,64 +1114,78 @@ export function PublishRideScreen() {
                 setManualSeatPriceInput('');
               }}
               accessibilityRole="button"
-              accessibilityLabel="Viaje interno"
+              accessibilityLabel="Viajes disponibles"
             >
               <Text style={[styles.kindChipText, publishKind === 'internal' && styles.kindChipTextActive]}>
-                Interno
+                Viajes disponibles
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.kindChip, publishKind === 'long_distance' && styles.kindChipActive]}
               onPress={() => setPublishKindFree('long_distance')}
               accessibilityRole="button"
-              accessibilityLabel="Larga distancia"
+              accessibilityLabel="Ofertas de viajes"
             >
               <Text style={[styles.kindChipText, publishKind === 'long_distance' && styles.kindChipTextActive]}>
-                Larga distancia
+                Ofertas de viajes
               </Text>
             </TouchableOpacity>
           </View>
         </>
       )}
-      <View style={[styles.kindBanner, isLongDistance ? styles.kindBannerLong : styles.kindBannerInternal]}>
-        <Text style={styles.kindBannerTitle}>
-          {isLongDistance ? 'Publicando: viaje larga distancia' : 'Publicando: viaje interno'}
-        </Text>
-        <Text style={styles.kindBannerText}>
-          {isLongDistance
-            ? 'Solo en esta modalidad el conductor define el precio por asiento.'
-            : 'El precio final lo define el tramo elegido por el pasajero al reservar.'}
-        </Text>
-      </View>
+      {!isGroupedPublishFlow ? (
+        <View style={[styles.kindBanner, isLongDistance ? styles.kindBannerLong : styles.kindBannerInternal]}>
+          <Text style={styles.kindBannerTitle}>
+            {isLongDistance ? 'Publicando: oferta de viaje' : 'Publicando: viaje disponible'}
+          </Text>
+          <Text style={styles.kindBannerText}>
+            {isLongDistance
+              ? 'Solo en esta modalidad el conductor define el precio por asiento.'
+              : 'El precio final lo define el tramo elegido por el pasajero al reservar.'}
+          </Text>
+        </View>
+      ) : (
+        <View style={[styles.kindBanner, styles.kindBannerInternal]}>
+          <Text style={styles.kindBannerTitle}>Publicando: ruta con demanda</Text>
+          <Text style={styles.kindBannerText}>
+            Los pasajeros y el orden de subidas/bajadas ya están definidos por el grupo. Acá solo marcás tu origen y
+            destino operativos para calcular tiempos y publicar el viaje.
+          </Text>
+        </View>
+      )}
 
-      {distanceKm != null && (
+      {!isGroupedPublishFlow && distanceKm != null ? (
         <Text style={styles.metaLine}>
           ~{distanceKm.toFixed(1)} km · ~{Math.round(durationMin)} min
         </Text>
-      )}
+      ) : null}
 
-      <Text style={styles.mapHelp}>
-        Vista previa de la ruta (OSRM cuando hay origen y destino). Tocá el mapa o un botón para abrir el editor a
-        pantalla completa y marcar puntos.
-      </Text>
-      <View style={styles.mapModeRow}>
+      {!isGroupedPublishFlow ? (
+        <Text style={styles.mapHelp}>
+          Vista previa de la ruta (OSRM cuando hay origen y destino). Tocá el mapa o un botón para abrir el editor a
+          pantalla completa y marcar puntos.
+        </Text>
+      ) : null}
+      {!isGroupedPublishFlow ? (
+        <View style={styles.mapModeRow}>
         <TouchableOpacity style={styles.mapModeBtn} onPress={() => openMapPicker('origin')}>
           <Text style={styles.mapModeText}>Origen</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.mapModeBtn, (!origin || !destination) && styles.mapModeBtnDisabled]}
+          style={[styles.mapModeBtn, (!origin || !destination || isGroupedPublishFlow) && styles.mapModeBtnDisabled]}
           onPress={() => openMapPicker('waypoint')}
-          disabled={!origin || !destination}
+          disabled={!origin || !destination || isGroupedPublishFlow}
         >
-          <Text style={[styles.mapModeText, (!origin || !destination) && styles.mapModeTextDisabled]}>
+          <Text style={[styles.mapModeText, (!origin || !destination || isGroupedPublishFlow) && styles.mapModeTextDisabled]}>
             + Parada ({waypoints.length}/{MAX_DRIVER_PUBLISH_WAYPOINTS})
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.mapModeBtn} onPress={() => openMapPicker('destination')}>
           <Text style={styles.mapModeText}>Destino</Text>
         </TouchableOpacity>
-      </View>
-      {waypoints.length > 0 ? (
+        </View>
+      ) : null}
+      {waypoints.length > 0 && !isGroupedPublishFlow ? (
         <TouchableOpacity onPress={() => setWaypoints([])}>
           <Text style={styles.clearWp}>Quitar paradas intermedias</Text>
         </TouchableOpacity>
@@ -950,6 +1225,14 @@ export function PublishRideScreen() {
               pinColor="#2563eb"
             />
           ))}
+          {passengerFixedPoints.map((p, i) => (
+            <Marker
+              key={`pax-fixed-${p.lat}-${p.lng}-${i}`}
+              coordinate={{ latitude: p.lat, longitude: p.lng }}
+              title={p.label}
+              pinColor="#6b7280"
+            />
+          ))}
           {origin && (
             <Marker coordinate={{ latitude: origin.lat, longitude: origin.lng }} title="Origen" pinColor="red" />
           )}
@@ -979,8 +1262,10 @@ export function PublishRideScreen() {
         onMapPress={onPublishMapPress}
         originDestinationReady={Boolean(origin && destination)}
         waypointCount={waypoints.length}
-        maxWaypoints={MAX_DRIVER_PUBLISH_WAYPOINTS}
+        maxWaypoints={isGroupedPublishFlow ? 0 : MAX_DRIVER_PUBLISH_WAYPOINTS}
         onRemoveWaypoint={removeWaypointAt}
+        passengerFixedPoints={passengerFixedPoints}
+        showWaypointMode={!isGroupedPublishFlow}
       />
 
       <Text style={styles.label}>Origen</Text>
@@ -1005,7 +1290,7 @@ export function PublishRideScreen() {
         </View>
       )}
 
-      {waypoints.length > 0 ? (
+      {waypoints.length > 0 && !isGroupedPublishFlow ? (
         <View style={styles.wpFormSection}>
           <Text style={styles.label}>Paradas intermedias</Text>
           {waypoints.map((w, i) => (
@@ -1049,19 +1334,27 @@ export function PublishRideScreen() {
         </View>
       )}
 
-      <Text style={styles.label}>Fecha</Text>
-      <TouchableOpacity
-        style={styles.input}
-        onPress={() => setShowDatePicker(true)}
-        activeOpacity={0.7}
-        accessibilityRole="button"
-        accessibilityLabel="Elegir fecha de salida"
-      >
-        <Text style={departureDate ? styles.dateFieldText : styles.dateFieldPlaceholder}>
-          {departureDate || 'Tocá para elegir fecha'}
-        </Text>
-      </TouchableOpacity>
-      {showDatePicker ? (
+      <Text style={styles.label}>Fecha del viaje</Text>
+      {isGroupedPublishFlow ? (
+        <View style={[styles.input, styles.inputReadonly]}>
+          <Text style={departureDate ? styles.dateFieldText : styles.dateFieldPlaceholder}>
+            {departureDate || '—'}
+          </Text>
+        </View>
+      ) : (
+        <TouchableOpacity
+          style={styles.input}
+          onPress={() => setShowDatePicker(true)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Elegir fecha de salida"
+        >
+          <Text style={departureDate ? styles.dateFieldText : styles.dateFieldPlaceholder}>
+            {departureDate || 'Tocá para elegir fecha'}
+          </Text>
+        </TouchableOpacity>
+      )}
+      {showDatePicker && !isGroupedPublishFlow ? (
         <>
           <DateTimePicker
             value={
@@ -1094,17 +1387,23 @@ export function PublishRideScreen() {
         </>
       ) : null}
 
-      <Text style={styles.label}>Hora</Text>
-      <TouchableOpacity
-        style={styles.input}
-        onPress={() => setShowTimePicker(true)}
-        activeOpacity={0.7}
-        accessibilityRole="button"
-        accessibilityLabel="Elegir hora de salida"
-      >
-        <Text style={styles.dateFieldText}>{departureTime}</Text>
-      </TouchableOpacity>
-      {showTimePicker ? (
+      <Text style={styles.label}>Hora que debes llegar al punto de origen marcado</Text>
+      {isGroupedPublishFlow ? (
+        <View style={[styles.input, styles.inputReadonly]}>
+          <Text style={styles.dateFieldText}>{departureTime || '—'}</Text>
+        </View>
+      ) : (
+        <TouchableOpacity
+          style={styles.input}
+          onPress={() => setShowTimePicker(true)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Elegir hora de salida"
+        >
+          <Text style={styles.dateFieldText}>{departureTime}</Text>
+        </TouchableOpacity>
+      )}
+      {showTimePicker && !isGroupedPublishFlow ? (
         <>
           <DateTimePicker
             value={(() => {
@@ -1168,8 +1467,7 @@ export function PublishRideScreen() {
 
       <Text style={styles.label}>Asientos</Text>
       <Text style={styles.seatsReadonly}>
-        {seats}{' '}
-        <Text style={styles.seatsHint}>(según tu vehículo, no editable)</Text>
+        {availableSeatsForPublish}/{seats} asientos
       </Text>
 
       {isLongDistance ? (
@@ -1187,11 +1485,11 @@ export function PublishRideScreen() {
             Este valor lo define el conductor y se usa como precio por asiento para la reserva.
           </Text>
         </>
-      ) : (
+      ) : !isGroupedPublishFlow ? (
         <Text style={styles.priceNote}>
           Viaje interno: el precio lo define el tramo del pasajero (origen–destino o paradas).
         </Text>
-      )}
+      ) : null}
 
       <Text style={styles.label}>Nombre del viaje (opcional)</Text>
       <TextInput
@@ -1204,15 +1502,19 @@ export function PublishRideScreen() {
       />
       <Text style={styles.priceNote}>Lo ven los pasajeros al buscar y en el listado de viajes disponibles.</Text>
 
-      <Text style={styles.label}>Descripción (opcional)</Text>
-      <TextInput
-        style={[styles.input, styles.textArea]}
-        value={description}
-        onChangeText={setDescription}
-        placeholder="Detalles del viaje"
-        placeholderTextColor="#9ca3af"
-        multiline
-      />
+      {!isGroupedPublishFlow ? (
+        <>
+          <Text style={styles.label}>Descripción (opcional)</Text>
+          <TextInput
+            style={[styles.input, styles.textArea]}
+            value={description}
+            onChangeText={setDescription}
+            placeholder="Detalles del viaje"
+            placeholderTextColor="#9ca3af"
+            multiline
+          />
+        </>
+      ) : null}
 
       {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
 
@@ -1225,7 +1527,11 @@ export function PublishRideScreen() {
           <ActivityIndicator color="#fff" />
         ) : (
           <Text style={styles.primaryBtnText}>
-            {isLongDistance ? 'Publicar viaje larga distancia' : 'Publicar viaje interno'}
+            {isLongDistance
+              ? 'Publicar viaje larga distancia'
+              : isGroupedPublishFlow
+                ? 'Publicar viaje para esta ruta'
+                : 'Publicar viaje interno'}
           </Text>
         )}
       </TouchableOpacity>
@@ -1318,6 +1624,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     color: '#111',
   },
+  inputReadonly: {
+    backgroundColor: '#f3f4f6',
+  },
   textArea: { minHeight: 88, textAlignVertical: 'top' },
   suggestions: {
     borderWidth: 1,
@@ -1359,6 +1668,7 @@ const styles = StyleSheet.create({
   cancelBtn: { marginTop: 14, alignItems: 'center', paddingVertical: 8 },
   cancelBtnText: { color: '#6b7280', fontSize: 15 },
   mapHelp: { fontSize: 13, color: '#6b7280', marginBottom: 10, lineHeight: 18 },
+  groupFlowHint: { fontSize: 14, color: '#166534', fontWeight: '700', marginBottom: 10 },
   mapModeRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 },
   mapModeBtn: {
     paddingVertical: 8,

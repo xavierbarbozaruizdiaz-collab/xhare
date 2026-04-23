@@ -328,7 +328,7 @@ export function TripRequestLongDistanceOfferScreen() {
   return (
     <>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.badge}>Larga distancia</Text>
+        <Text style={styles.badge}>Oferta de viaje</Text>
         <Text style={styles.route} numberOfLines={2}>
           {trip.origin_label ?? 'Origen'} → {trip.destination_label ?? 'Destino'}
         </Text>

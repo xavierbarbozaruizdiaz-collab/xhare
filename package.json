@@ -6,7 +6,8 @@
     "dev": "next dev --hostname 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "reset:demand:2026-04-30": "node ./supabase/scripts/reset_demand_groups_2026_04_30.cjs"
   },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.19.3",

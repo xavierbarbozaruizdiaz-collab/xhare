@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 
     let q = service
       .from('demand_route_groups')
-      .select('id, base_trip_request_id, base_polyline, base_length_km, requested_date, requested_time, origin_city, origin_barrio, destination_city, destination_barrio, passenger_count, created_at')
+      .select('id, ride_id, base_trip_request_id, base_polyline, base_length_km, requested_date, requested_time, origin_city, origin_barrio, destination_city, destination_barrio, passenger_count, created_at')
       .order('requested_date', { ascending: true })
       .order('requested_time', { ascending: true });
 
@@ -48,17 +48,28 @@ export async function GET(request: NextRequest) {
 
     const rows = groups ?? [];
     const groupIds = rows.map((g) => g.id);
+    const rideIdByGroupId = new Map<string, string>();
+    for (const g of rows) {
+      const gid = String((g as { id?: string | null }).id ?? '').trim();
+      const rid = (g as { ride_id?: string | null }).ride_id;
+      if (gid && rid) rideIdByGroupId.set(gid, String(rid));
+    }
     let seatsByGroup: Record<string, number> = {};
     let passengersByGroup: Record<string, number> = {};
     if (groupIds.length > 0) {
       const { data: linked } = await service
         .from('trip_requests')
-        .select('demand_group_id, seats, status')
+        .select('demand_group_id, seats, status, ride_id')
         .in('demand_group_id', groupIds)
-        .in('status', ['grouped', 'pending']);
+        .in('status', ['grouped', 'group_linked_pending', 'accepted']);
       for (const tr of linked ?? []) {
         const gid = String(tr.demand_group_id ?? '');
         if (!gid) continue;
+        const st = String((tr as { status?: string }).status ?? '');
+        const expectedRide = rideIdByGroupId.get(gid);
+        if (st === 'accepted' && (!expectedRide || String((tr as { ride_id?: string | null }).ride_id ?? '') !== expectedRide)) {
+          continue;
+        }
         passengersByGroup[gid] = (passengersByGroup[gid] ?? 0) + 1;
         seatsByGroup[gid] = (seatsByGroup[gid] ?? 0) + (Number.isFinite(Number(tr.seats)) ? Number(tr.seats) : 1);
       }

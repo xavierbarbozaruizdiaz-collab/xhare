@@ -10,7 +10,14 @@ import { supabase, isEnvConfigured } from './supabase';
 import { env } from '../core/env';
 import { dedupeDemandRouteLegsForUi, dedupeDemandRouteMemberRows } from '../lib/demandRouteMembersDedupe';
 import { raceWithTimeout } from './withTimeout';
+import type { EffectivePricing, PricingSettingsRow } from '../lib/pricing/runtime-pricing';
 import { computeEffectivePricing, loadActivePricingSettings } from '../lib/pricing/runtime-pricing';
+import {
+  baseFareFromDistanceKmWithPricing,
+  totalFareFromBaseAndSeatsWithPricing,
+  MIN_FARE_PYG,
+  PYG_PER_KM,
+} from '../lib/pricing/segment-fare';
 
 const SUPABASE_QUERY_TIMEOUT_MS = 28_000;
 
@@ -21,6 +28,7 @@ function getBase(): string {
 
 export type DemandRouteGroup = {
   id: string;
+  ride_id?: string | null;
   base_trip_request_id: string | null;
   base_polyline: Array<{ lat: number; lng: number }>;
   base_length_km: number;
@@ -31,6 +39,7 @@ export type DemandRouteGroup = {
   destination_city: string | null;
   destination_barrio: string | null;
   passenger_count: number;
+  grouping_source?: string | null;
   created_at?: string;
 };
 
@@ -51,6 +60,9 @@ export type DemandRouteDetail = DemandRouteGroup & {
   }>;
   financial_summary?: {
     total_passengers: number;
+    grouped_seats_taken?: number;
+    grouped_seats_capacity?: number;
+    grouped_seats_available?: number;
     total_to_collect_gs: number;
     driver_fee_percent: number;
     driver_fee_gs: number;
@@ -59,6 +71,7 @@ export type DemandRouteDetail = DemandRouteGroup & {
   };
   passengers: Array<{
     trip_request_id: string;
+    requested_time?: string | null;
     origin_lat: number;
     origin_lng: number;
     origin_label: string | null;
@@ -67,6 +80,43 @@ export type DemandRouteDetail = DemandRouteGroup & {
     destination_label: string | null;
   }>;
 };
+
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const aa =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((aLat * Math.PI) / 180) * Math.cos((bLat * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+}
+
+function tripCollectTotalGs(
+  r: {
+    passenger_desired_price_per_seat_gs?: number | null;
+    seats?: number | null;
+    origin_lat: number;
+    origin_lng: number;
+    destination_lat: number;
+    destination_lng: number;
+  },
+  eff: EffectivePricing
+): number {
+  const seats = Number.isFinite(Number(r.seats)) ? Math.max(1, Number(r.seats)) : 1;
+  const per = Number(r.passenger_desired_price_per_seat_gs ?? 0);
+  if (Number.isFinite(per) && per > 0) return Math.round(per * seats);
+  const dKm = Math.max(
+    0.5,
+    haversineKm(
+      Number(r.origin_lat),
+      Number(r.origin_lng),
+      Number(r.destination_lat),
+      Number(r.destination_lng)
+    ) * 1.2
+  );
+  const base = baseFareFromDistanceKmWithPricing(dKm, eff);
+  return totalFareFromBaseAndSeatsWithPricing(base, seats, eff);
+}
 
 function parsePolyline(raw: unknown): Array<{ lat: number; lng: number }> {
   if (!Array.isArray(raw)) return [];
@@ -84,6 +134,7 @@ function parsePolyline(raw: unknown): Array<{ lat: number; lng: number }> {
 function mapGroupRow(row: Record<string, unknown>): DemandRouteGroup {
   return {
     id: String(row.id),
+    ride_id: row.ride_id != null ? String(row.ride_id) : null,
     base_trip_request_id: row.base_trip_request_id != null ? String(row.base_trip_request_id) : null,
     base_polyline: parsePolyline(row.base_polyline),
     base_length_km: Number(row.base_length_km ?? 0),
@@ -94,6 +145,7 @@ function mapGroupRow(row: Record<string, unknown>): DemandRouteGroup {
     destination_city: row.destination_city != null ? String(row.destination_city) : null,
     destination_barrio: row.destination_barrio != null ? String(row.destination_barrio) : null,
     passenger_count: Number(row.passenger_count ?? 0),
+    grouping_source: row.grouping_source != null ? String(row.grouping_source) : null,
     created_at: row.created_at != null ? String(row.created_at) : undefined,
   };
 }
@@ -111,7 +163,7 @@ export async function fetchDemandRoutes(params?: {
   let q = supabase
     .from('demand_route_groups')
     .select(
-      'id, base_trip_request_id, base_polyline, base_length_km, requested_date, requested_time, origin_city, origin_barrio, destination_city, destination_barrio, passenger_count, created_at'
+      'id, ride_id, base_trip_request_id, base_polyline, base_length_km, requested_date, requested_time, origin_city, origin_barrio, destination_city, destination_barrio, passenger_count, grouping_source, created_at'
     )
     .order('requested_date', { ascending: true })
     .order('requested_time', { ascending: true });
@@ -150,7 +202,7 @@ async function fetchDemandRouteDetailFromSupabase(
   const { data: row, error: gErr } = await supabase
     .from('demand_route_groups')
     .select(
-      'id, base_trip_request_id, base_polyline, base_length_km, requested_date, requested_time, origin_city, origin_barrio, destination_city, destination_barrio, passenger_count, created_at'
+      'id, ride_id, base_trip_request_id, base_polyline, base_length_km, requested_date, requested_time, origin_city, origin_barrio, destination_city, destination_barrio, passenger_count, grouping_source, created_at'
     )
     .eq('id', groupId)
     .maybeSingle();
@@ -170,11 +222,13 @@ async function fetchDemandRouteDetailFromSupabase(
   let passengers: DemandRouteDetail['passengers'] = [];
   let legs: NonNullable<DemandRouteDetail['legs']> = [];
   let totalToCollectFromRequests = 0;
+  let groupedSeatsTaken = 0;
+  let pricingRowForFees: PricingSettingsRow | null = null;
   {
     const { data: reqsByGroup, error: byGroupErr } = await supabase
       .from('trip_requests')
       .select(
-        'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, passenger_desired_price_per_seat_gs, seats'
+        'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_time, passenger_desired_price_per_seat_gs, seats, status, ride_id'
       )
       .eq('demand_group_id', groupId);
     if (byGroupErr) return { detail: null, error: byGroupErr.message };
@@ -184,7 +238,7 @@ async function fetchDemandRouteDetailFromSupabase(
       const { data: reqsMembers, error: rErr } = await supabase
       .from('trip_requests')
       .select(
-        'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, passenger_desired_price_per_seat_gs, seats'
+        'id, user_id, origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label, requested_time, passenger_desired_price_per_seat_gs, seats, status, ride_id'
       )
       .in('id', requestIds);
       if (rErr) return { detail: null, error: rErr.message };
@@ -208,16 +262,59 @@ async function fetchDemandRouteDetailFromSupabase(
       };
     }
 
-    totalToCollectFromRequests = reqs.reduce((sum, r) => {
-      const perSeat = Number((r as { passenger_desired_price_per_seat_gs?: number | null }).passenger_desired_price_per_seat_gs ?? 0);
-      const seats = Number.isFinite(Number((r as { seats?: number }).seats))
-        ? Math.max(1, Number((r as { seats?: number }).seats))
-        : 1;
-      return sum + (Number.isFinite(perSeat) ? Math.max(0, perSeat) * seats : 0);
+    const groupRideId =
+      (row as { ride_id?: string | null }).ride_id != null
+        ? String((row as { ride_id?: string | null }).ride_id).trim()
+        : '';
+    reqs = reqs.filter((r) => {
+      const st = String((r as { status?: string }).status ?? '');
+      if (st === 'grouped' || st === 'group_linked_pending') return true;
+      if (st === 'accepted' && groupRideId) {
+        const rid = (r as { ride_id?: string | null }).ride_id;
+        return rid != null && String(rid).trim() === groupRideId;
+      }
+      return false;
+    });
+
+    groupedSeatsTaken = (reqs ?? []).reduce((sum, r) => {
+      const s = Number((r as { seats?: number }).seats ?? 1);
+      return sum + (Number.isFinite(s) && s > 0 ? s : 1);
     }, 0);
+
+    pricingRowForFees = await loadActivePricingSettings();
+    const eff: EffectivePricing = pricingRowForFees
+      ? computeEffectivePricing(pricingRowForFees)
+      : {
+          minFarePyg: MIN_FARE_PYG,
+          pygPerKm: PYG_PER_KM,
+          roundTo: 100,
+          blockSize: 4,
+          blockMultiplier: 1.5,
+          driverFeePercentOfCollected: 10,
+          pricingSettingsId: null,
+        };
+
+    totalToCollectFromRequests = (reqs ?? []).reduce(
+      (sum, r) =>
+        sum +
+        tripCollectTotalGs(
+          {
+            passenger_desired_price_per_seat_gs: (r as { passenger_desired_price_per_seat_gs?: number | null })
+              .passenger_desired_price_per_seat_gs,
+            seats: (r as { seats?: number }).seats,
+            origin_lat: Number(r.origin_lat),
+            origin_lng: Number(r.origin_lng),
+            destination_lat: Number(r.destination_lat),
+            destination_lng: Number(r.destination_lng),
+          },
+          eff
+        ),
+      0
+    );
 
     passengers = (reqs ?? []).map((r) => ({
       trip_request_id: r.id,
+      requested_time: (r as { requested_time?: string | null }).requested_time ?? null,
       origin_lat: Number(r.origin_lat),
       origin_lng: Number(r.origin_lng),
       origin_label: r.origin_label ?? null,
@@ -236,7 +333,7 @@ async function fetchDemandRouteDetailFromSupabase(
         origin_lng: number;
         destination_lat: number;
         destination_lng: number;
-        fare_amount: number | null;
+        collect_total_gs: number;
         seats: number;
       }
     > = {};
@@ -244,7 +341,8 @@ async function fetchDemandRouteDetailFromSupabase(
       const seats = Number.isFinite(Number((r as { seats?: number }).seats))
         ? Math.max(1, Number((r as { seats?: number }).seats))
         : 1;
-      byReq[String(r.id)] = {
+      const rid = String(r.id);
+      byReq[rid] = {
         user_id: r.user_id ?? null,
         origin_label: r.origin_label ?? null,
         destination_label: r.destination_label ?? null,
@@ -252,11 +350,18 @@ async function fetchDemandRouteDetailFromSupabase(
         origin_lng: Number(r.origin_lng),
         destination_lat: Number(r.destination_lat),
         destination_lng: Number(r.destination_lng),
-        fare_amount:
-          r.passenger_desired_price_per_seat_gs != null &&
-          Number.isFinite(Number(r.passenger_desired_price_per_seat_gs))
-            ? Number(r.passenger_desired_price_per_seat_gs)
-            : null,
+        collect_total_gs: tripCollectTotalGs(
+          {
+            passenger_desired_price_per_seat_gs: (r as { passenger_desired_price_per_seat_gs?: number | null })
+              .passenger_desired_price_per_seat_gs,
+            seats: (r as { seats?: number }).seats,
+            origin_lat: Number(r.origin_lat),
+            origin_lng: Number(r.origin_lng),
+            destination_lat: Number(r.destination_lat),
+            destination_lng: Number(r.destination_lng),
+          },
+          eff
+        ),
         seats,
       };
     }
@@ -307,10 +412,7 @@ async function fetchDemandRouteDetailFromSupabase(
         const label = st === 'DROPOFF' ? req.destination_label ?? 'Destino' : req.origin_label ?? 'Origen';
         const lat = st === 'DROPOFF' ? req.destination_lat : req.origin_lat;
         const lng = st === 'DROPOFF' ? req.destination_lng : req.origin_lng;
-        const pickupTotalGs =
-          st === 'PICKUP' && req.fare_amount != null && Number.isFinite(req.fare_amount)
-            ? Math.round(Math.max(0, req.fare_amount) * req.seats)
-            : null;
+        const pickupTotalGs = st === 'PICKUP' ? Math.max(0, Number(req.collect_total_gs ?? 0)) : null;
         return {
           visit_order: Number(m.visit_order ?? 0),
           stop_type: st,
@@ -331,24 +433,29 @@ async function fetchDemandRouteDetailFromSupabase(
     ) as typeof legs;
   }
 
-  const pricingSettings = await loadActivePricingSettings();
-  const driverFeePercent = pricingSettings
-    ? computeEffectivePricing(pricingSettings).driverFeePercentOfCollected
+  const driverFeePercent = pricingRowForFees
+    ? computeEffectivePricing(pricingRowForFees).driverFeePercentOfCollected
     : 10;
   const totalToCollectGs = totalToCollectFromRequests;
   const driverFeeGs = Math.round((totalToCollectGs * driverFeePercent) / 100);
   const driverNetEarningsGs = Math.max(0, totalToCollectGs - driverFeeGs);
+  const groupedSeatsCapacity = 15;
+  const groupedSeatsAvailable = Math.max(0, groupedSeatsCapacity - groupedSeatsTaken);
 
   const base = mapGroupRow(row as Record<string, unknown>);
   return {
     detail: {
       ...base,
+      ride_id: (row as { ride_id?: string | null }).ride_id != null ? String((row as { ride_id?: string | null }).ride_id) : null,
       passenger_count: passengers.length,
       route_polyline: parsePolyline((row as Record<string, unknown>).route_polyline ?? (row as Record<string, unknown>).base_polyline),
       passengers,
       legs,
       financial_summary: {
         total_passengers: passengers.length,
+        grouped_seats_taken: groupedSeatsTaken,
+        grouped_seats_capacity: groupedSeatsCapacity,
+        grouped_seats_available: groupedSeatsAvailable,
         total_to_collect_gs: totalToCollectGs,
         driver_fee_percent: driverFeePercent,
         driver_fee_gs: driverFeeGs,
@@ -365,6 +472,74 @@ async function fetchDemandRouteDetailFromSupabase(
         'Tiempo de espera al cargar el detalle de la ruta. Revisá conexión o intentá de nuevo.',
     })
   );
+}
+
+/**
+ * Para viajes `awaiting_driver` materializados: el grupo suele estar en `demand_route_groups.ride_id`.
+ * Tras reparaciones SQL a veces queda desalineado pero los `trip_requests` siguen con `ride_id` + `demand_group_id`.
+ */
+export async function buildRideIdToDemandGroupMap(rideIds: string[]): Promise<Record<string, string>> {
+  const ids = Array.from(
+    new Set(rideIds.map((x) => String(x ?? '').trim()).filter((x) => x.length > 0))
+  );
+  const out: Record<string, string> = {};
+  if (ids.length === 0 || !isEnvConfigured()) return out;
+
+  const { data: dgRows, error: dgErr } = await supabase
+    .from('demand_route_groups')
+    .select('id, ride_id')
+    .in('ride_id', ids);
+  if (!dgErr) {
+    for (const row of dgRows ?? []) {
+      const rid = String((row as { ride_id?: string | null }).ride_id ?? '').trim();
+      const gid = String((row as { id?: string | null }).id ?? '').trim();
+      if (rid && gid) out[rid] = gid;
+    }
+  }
+
+  const missing = ids.filter((id) => !out[id]);
+  if (missing.length === 0) return out;
+
+  const { data: trRows, error: trErr } = await supabase
+    .from('trip_requests')
+    .select('ride_id, demand_group_id')
+    .in('ride_id', missing)
+    .not('demand_group_id', 'is', null);
+  if (!trErr && trRows && trRows.length > 0) {
+    const ridToGids = new Map<string, Set<string>>();
+    for (const row of trRows) {
+      const rid = String((row as { ride_id?: string | null }).ride_id ?? '').trim();
+      const gid = String((row as { demand_group_id?: string | null }).demand_group_id ?? '').trim();
+      if (!rid || !gid || out[rid]) continue;
+      if (!ridToGids.has(rid)) ridToGids.set(rid, new Set());
+      ridToGids.get(rid)!.add(gid);
+    }
+    const allGids = [...new Set([...ridToGids.values()].flatMap((s) => [...s]))];
+    if (allGids.length > 0) {
+      const { data: grpRows, error: grpErr } = await supabase
+        .from('demand_route_groups')
+        .select('id, ride_id')
+        .in('id', allGids);
+      const groupLinkedRide = new Map<string, string | null>();
+      if (!grpErr) {
+        for (const g of grpRows ?? []) {
+          const id = String((g as { id?: string | null }).id ?? '').trim();
+          const rv = (g as { ride_id?: string | null }).ride_id;
+          groupLinkedRide.set(id, rv != null && String(rv).trim() !== '' ? String(rv).trim() : null);
+        }
+      }
+      for (const [rid, gids] of ridToGids) {
+        if (out[rid]) continue;
+        const gidList = [...gids];
+        const preferred = gidList.find((gid) => groupLinkedRide.get(gid) === rid);
+        const fallbackUnassigned = gidList.find((gid) => groupLinkedRide.get(gid) == null);
+        const chosen = preferred ?? fallbackUnassigned;
+        if (chosen) out[rid] = chosen;
+      }
+    }
+  }
+
+  return out;
 }
 
 export async function fetchDemandRouteDetail(

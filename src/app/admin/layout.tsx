@@ -23,6 +23,7 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
   const nav = [
     { href: '/admin', label: 'Inicio' },
     { href: '/admin/dispatch-map', label: 'Mapa despacho' },
+    { href: '/admin/demand-groups', label: 'Grupos demanda' },
     { href: '/admin/demand-grouping', label: 'Agrupación' },
     { href: '/admin/corridors', label: 'Corredores' },
     { href: '/admin/pricing', label: 'Pricing' },
@@ -59,7 +60,11 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
               <Link
                 key={href}
                 href={href}
-                className={`tab-segment flex-shrink-0 ${pathname === href ? 'tab-segment-active' : ''}`}
+                className={`tab-segment flex-shrink-0 ${
+                  pathname === href || (href !== '/admin' && pathname.startsWith(href + '/'))
+                    ? 'tab-segment-active'
+                    : ''
+                }`}
               >
                 {label}
               </Link>

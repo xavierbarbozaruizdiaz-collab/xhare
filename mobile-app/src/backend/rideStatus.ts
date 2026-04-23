@@ -10,7 +10,7 @@
 import { env } from '../core/env';
 import { supabase } from './supabase';
 
-export type RideStatusUpdate = 'en_route' | 'completed';
+export type RideStatusUpdate = 'en_route' | 'completed' | 'cancelled';
 
 const RIDE_STATUS_TIMEOUT_MS = 60_000;
 
@@ -71,6 +71,33 @@ async function updateRideStatusDirectSupabase(
     updatePayload.driver_lng = null;
     updatePayload.driver_location_updated_at = null;
   }
+  if (status === 'cancelled') {
+    const { data: groupRow } = await supabase
+      .from('demand_route_groups')
+      .select('id')
+      .eq('ride_id', rideId)
+      .maybeSingle();
+    let isGroupedRide = Boolean(groupRow?.id);
+    if (!isGroupedRide) {
+      const { data: groupedTrips } = await supabase
+        .from('trip_requests')
+        .select('id')
+        .eq('ride_id', rideId)
+        .not('demand_group_id', 'is', null)
+        .limit(1);
+      isGroupedRide = Boolean(groupedTrips && groupedTrips.length > 0);
+    }
+    if (isGroupedRide) {
+      updatePayload.status = 'awaiting_driver';
+      updatePayload.driver_id = null;
+      updatePayload.started_at = null;
+      updatePayload.current_stop_index = 0;
+      updatePayload.awaiting_stop_confirmation = false;
+      updatePayload.driver_lat = null;
+      updatePayload.driver_lng = null;
+      updatePayload.driver_location_updated_at = null;
+    }
+  }
 
   const { error: upErr } = await supabase
     .from('rides')
@@ -81,6 +108,34 @@ async function updateRideStatusDirectSupabase(
   if (upErr) {
     return { ok: false, error: 'update_failed', details: upErr.message };
   }
+
+  if (status === 'cancelled' && updatePayload.status === 'awaiting_driver') {
+    try {
+      const { data: trOne } = await supabase
+        .from('trip_requests')
+        .select('demand_group_id')
+        .eq('ride_id', rideId)
+        .not('demand_group_id', 'is', null)
+        .limit(1)
+        .maybeSingle();
+      const dg =
+        trOne?.demand_group_id != null && String(trOne.demand_group_id).trim() !== ''
+          ? String(trOne.demand_group_id).trim()
+          : '';
+      if (dg) {
+        const { error: relErr } = await supabase
+          .from('demand_route_groups')
+          .update({ ride_id: rideId })
+          .eq('id', dg);
+        if (relErr && __DEV__) {
+          console.warn('[rideStatus] demand_route_groups ride_id relink (RLS puede bloquear)', relErr.message);
+        }
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('[rideStatus] demand_route_groups ride_id relink', e);
+    }
+  }
+
   return { ok: true };
 }
 
@@ -201,6 +256,15 @@ export async function updateRideStatus(
         token = t2;
         res = await run(token);
       }
+    }
+
+    if (res.status === 401 && status === 'cancelled') {
+      return {
+        ok: false,
+        error: 'unauthorized',
+        details:
+          'No pudimos confirmar la cancelación con el servidor. Reintentá con conexión estable para evitar inconsistencias.',
+      };
     }
 
     if (res.status === 401) {

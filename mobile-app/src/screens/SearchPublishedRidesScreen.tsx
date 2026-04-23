@@ -19,7 +19,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { searchRides, saveTripRequest } from '../rides/api';
+import { searchRides } from '../rides/api';
 import type { MainStackParamList } from '../navigation/types';
 import {
   SearchOriginDestinationMap,
@@ -42,14 +42,6 @@ import { isPickupAtLeastLeadAhead, MIN_BOOKING_LEAD_MS } from '../lib/bookingLea
 type Nav = NativeStackNavigationProp<MainStackParamList, 'SearchPublishedRides'>;
 
 const WEEKDAY_TOGGLE_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'] as const;
-
-function normalizeHmForTripRequest(hm: string): string {
-  const m = hm.trim().match(/^(\d{1,2}):(\d{2})$/);
-  if (!m) return '08:00';
-  const hh = Math.min(23, Math.max(0, parseInt(m[1], 10)));
-  const mm = Math.min(59, Math.max(0, parseInt(m[2], 10)));
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-}
 
 function toYmdLocal(d: Date): string {
   const y = d.getFullYear();
@@ -260,8 +252,9 @@ export function SearchPublishedRidesScreen() {
   const [scheduleDaily, setScheduleDaily] = useState(false);
   /** Bits 0=domingo … 6=sábado (`Date.getDay`). Solo con `scheduleDaily`. */
   const [scheduleWeekdayMask, setScheduleWeekdayMask] = useState(SCHEDULE_WEEKDAY_MASK_ALL);
-  /** Además del favorito: crear `trip_requests` pending (demanda / ruta en sistema). Solo interno/`todos`. */
-  const [registerTripRequest, setRegisterTripRequest] = useState(true);
+  /** Evita doble toque mientras corre el guardado (favorito + solicitud pending tardan en red). */
+  const [savingFavorite, setSavingFavorite] = useState(false);
+  const saveFavoriteInFlightRef = useRef(false);
   const [loading, setLoading] = useState(!isFavoriteMode);
   /** Búsqueda: fecha/hora “desde” demasiado pronto (< 4 h). */
   const [searchLeadError, setSearchLeadError] = useState<string | null>(null);
@@ -273,8 +266,8 @@ export function SearchPublishedRidesScreen() {
   });
 
   /**
-   * Con ambos pins: llegada deseada → salida según polyline; guardado y efectos usan esta rama.
-   * Sin ambos pins: mismo texto en pantalla (“llegada deseada”, etc.) pero el reloj editá `fromTime` (salida guardada).
+   * Modo favorito: la hora que edita el usuario siempre representa llegada deseada.
+   * Con ambos pins se calcula salida (`fromTime`) usando duración de ruta.
    */
   const favoriteArrivalFirstUx = isFavoriteMode && originGeo != null && destGeo != null;
   /** Misma redacción en favorito desde que entra (no “Hora desde” / bloque distinto). */
@@ -314,7 +307,7 @@ export function SearchPublishedRidesScreen() {
           ? { lat: snap.destinationLat, lng: snap.destinationLng }
           : null
       );
-      setRideKind(snap.rideKind);
+      setRideKind('internal');
       setScheduleDaily(Boolean(snap.scheduleDaily));
       setScheduleWeekdayMask(coerceScheduleWeekdayMask(snap.scheduleWeekdayMask));
     })();
@@ -394,10 +387,6 @@ export function SearchPublishedRidesScreen() {
     void load();
   }, [load, isFavoriteMode]);
 
-  useEffect(() => {
-    if (rideKind === 'long_distance') setRegisterTripRequest(false);
-  }, [rideKind]);
-
   const saveFavorite = useCallback(async () => {
     if (!favoriteSlot) return;
     if (!userId) {
@@ -408,15 +397,15 @@ export function SearchPublishedRidesScreen() {
       Alert.alert('Datos incompletos', 'Elegí la fecha.');
       return;
     }
-    if (favoriteArrivalFirstUx) {
+    if (favoriteArrivalCopy) {
       if (!arrivalTimeHm.trim()) {
         Alert.alert(
           'Datos incompletos',
-          'Elegí la hora a la que necesitás llegar (o esperá a que el mapa calcule la ruta si acabás de marcar origen y destino).'
+          'Elegí la hora a la que necesitás llegar al destino.'
         );
         return;
       }
-      if (!routeEta.loading && routeEta.durationMinutes == null) {
+      if (favoriteArrivalFirstUx && !routeEta.loading && routeEta.durationMinutes == null) {
         Alert.alert(
           'Ruta en el mapa',
           'No se obtuvo duración por calles. Revisá los puntos o la conexión; sin eso no podemos calcular la salida desde la llegada.'
@@ -429,18 +418,17 @@ export function SearchPublishedRidesScreen() {
     }
 
     const pickupToSave =
-      favoriteArrivalFirstUx &&
-      arrivalTimeHm.trim() &&
-      date.trim() &&
-      routeEta.durationMinutes != null
-        ? subtractMinutesFromHm(date, arrivalTimeHm, routeEta.durationMinutes) ?? fromTime.trim()
+      favoriteArrivalCopy && arrivalTimeHm.trim()
+        ? date.trim() && routeEta.durationMinutes != null
+          ? subtractMinutesFromHm(date, arrivalTimeHm, routeEta.durationMinutes) ?? arrivalTimeHm.trim()
+          : arrivalTimeHm.trim()
         : fromTime.trim();
     const scheduledHm = (pickupToSave || '08:00').trim() || '08:00';
 
     if (!isPickupAtLeastLeadAhead(date.trim(), scheduledHm, MIN_BOOKING_LEAD_MS)) {
       Alert.alert(
         'Anticipación mínima',
-        favoriteArrivalFirstUx
+        favoriteArrivalCopy
           ? 'La salida estimada (recogida) tiene que ser al menos 4 horas desde ahora. Elegí una hora de llegada al destino más tarde u otra fecha.'
           : 'Elegí fecha y hora para que la salida o recogida sea al menos 4 horas desde ahora (hora de este dispositivo).'
       );
@@ -458,6 +446,10 @@ export function SearchPublishedRidesScreen() {
       Alert.alert('Días de la semana', 'Marcá al menos un día para el modo diario.');
       return;
     }
+
+    if (saveFavoriteInFlightRef.current) return;
+    saveFavoriteInFlightRef.current = true;
+    setSavingFavorite(true);
     try {
       await upsertPassengerFavorite(userId, favoriteSlot, {
         date: date.trim(),
@@ -475,54 +467,14 @@ export function SearchPublishedRidesScreen() {
         scheduleWeekdayMask: scheduleDaily ? maskToSave : SCHEDULE_WEEKDAY_MASK_ALL,
         scheduledDateYmd: date.trim(),
         scheduledTimeHm: scheduledHm,
-        scheduledArrivalTimeHm:
-          favoriteArrivalFirstUx && arrivalTimeHm.trim() ? arrivalTimeHm.trim() : undefined,
+        scheduledArrivalTimeHm: favoriteArrivalCopy && arrivalTimeHm.trim() ? arrivalTimeHm.trim() : undefined,
         nextTriggerAtIso:
           computeNextTriggerIso(new Date(), date.trim(), scheduledHm, scheduleDaily, maskToSave) ?? undefined,
       });
       const store = await loadPassengerFavorites(userId);
       void pushPassengerHomeMapShortcuts(store);
-
-      let tripErr: string | undefined;
-      const token = session?.access_token?.trim();
-      const canPostTrip =
-        registerTripRequest &&
-        rideKind !== 'long_distance' &&
-        originGeo != null &&
-        destGeo != null &&
-        Boolean(token);
-      if (canPostTrip && token && originGeo && destGeo) {
-        const poly =
-          routeEta.polyline != null && routeEta.polyline.length >= 2 ? routeEta.polyline : undefined;
-        const tripRes = await saveTripRequest({
-          accessToken: token,
-          userId,
-          originLat: originGeo.lat,
-          originLng: originGeo.lng,
-          originLabel: (origin.trim() || 'Origen').slice(0, 500),
-          destinationLat: destGeo.lat,
-          destinationLng: destGeo.lng,
-          destinationLabel: (destination.trim() || 'Destino').slice(0, 500),
-          requestedDate: date.trim(),
-          requestedTime: normalizeHmForTripRequest(scheduledHm),
-          seats: 1,
-          routePolyline: poly ?? null,
-          routeLengthKm: routeEta.distanceKm ?? null,
-          pricingKind: 'internal',
-          internalQuoteAcknowledged: true,
-          passengerFavoriteSlot: favoriteSlot,
-        });
-        if (!tripRes.ok) tripErr = tripRes.error;
-      } else if (registerTripRequest && rideKind !== 'long_distance' && (!originGeo || !destGeo)) {
-        tripErr =
-          'Para registrar la solicitud en el sistema marcá origen y destino en el mapa (con ruta por calles).';
-      }
-
       const lines = [`Se guardó tu favorito «${favoritePairLabel(favoriteSlot)}» en este dispositivo.`];
-      if (canPostTrip && !tripErr) {
-        lines.push('También quedó una solicitud de viaje pendiente (demanda / clasificación en el servidor).');
-      }
-      if (tripErr) lines.push(`Solicitud de viaje: ${tripErr}`);
+      lines.push('Si querés registrar solicitud pending, activá el favorito desde Inicio.');
 
       Alert.alert('Guardado', lines.join('\n\n'), [
         {
@@ -532,11 +484,13 @@ export function SearchPublishedRidesScreen() {
       ]);
     } catch {
       Alert.alert('Error', 'No se pudo guardar el favorito. Intentá de nuevo.');
+    } finally {
+      saveFavoriteInFlightRef.current = false;
+      setSavingFavorite(false);
     }
   }, [
     favoriteSlot,
     userId,
-    session,
     date,
     fromTime,
     routeNameQuery,
@@ -550,10 +504,7 @@ export function SearchPublishedRidesScreen() {
     arrivalTimeHm,
     routeEta.loading,
     routeEta.durationMinutes,
-    routeEta.polyline,
-    routeEta.distanceKm,
     favoriteArrivalFirstUx,
-    registerTripRequest,
     navigation,
   ]);
 
@@ -602,7 +553,19 @@ export function SearchPublishedRidesScreen() {
   const listHeader = useMemo(
     () => (
     <View>
-      <Text style={styles.label}>Fecha</Text>
+      <SearchOriginDestinationMap
+        origin={originGeo}
+        destination={destGeo}
+        onOriginChange={setOriginGeo}
+        onDestinationChange={setDestGeo}
+        onOriginLabelResolved={setOrigin}
+        onDestinationLabelResolved={setDestination}
+        onRouteEtaChange={setRouteEta}
+        proximityRadiusKm={mapSearchRadiusKmForRideKind(rideKind)}
+        height={240}
+      />
+
+      <Text style={styles.label}>Fecha del viaje</Text>
       <TouchableOpacity
         style={styles.pickerRow}
         onPress={() => setShowDatePicker(true)}
@@ -629,12 +592,6 @@ export function SearchPublishedRidesScreen() {
       <Text style={styles.label}>
         {favoriteArrivalCopy ? 'Hora de llegada deseada' : 'Hora desde'}
       </Text>
-      {favoriteArrivalCopy && !favoriteArrivalFirstUx ? (
-        <Text style={styles.favoriteTimeHint}>
-          Marcá origen y destino en el mapa para calcular la llegada con la ruta. Sin ambos puntos, esta hora es la de
-          salida/recogida guardada.
-        </Text>
-      ) : null}
       <TouchableOpacity
         style={styles.pickerRow}
         onPress={() => setShowTimePicker(true)}
@@ -643,26 +600,24 @@ export function SearchPublishedRidesScreen() {
           favoriteArrivalCopy
             ? favoriteArrivalFirstUx
               ? 'Elegir hora de llegada al destino'
-              : 'Elegir hora de salida o recogida hasta marcar mapa completo'
+              : 'Elegir hora de llegada al destino'
             : 'Elegir hora desde'
         }
       >
         <Text
           style={
-            favoriteArrivalFirstUx && !arrivalTimeHm.trim()
+            favoriteArrivalCopy && !arrivalTimeHm.trim()
               ? styles.pickerPlaceholder
               : styles.pickerValue
           }
         >
-          {favoriteArrivalFirstUx
-            ? arrivalTimeHm.trim() || '—'
-            : fromTime.trim() || '08:00'}
+          {favoriteArrivalCopy ? arrivalTimeHm.trim() || fromTime.trim() || '08:00' : fromTime.trim() || '08:00'}
         </Text>
       </TouchableOpacity>
       {showTimePicker ? (
         <DateTimePicker
           value={(() => {
-            const hm = favoriteArrivalFirstUx
+            const hm = favoriteArrivalCopy
               ? arrivalTimeHm.trim() || fromTime.trim() || '08:00'
               : fromTime.trim() || '08:00';
             const [h, m] = hm.split(':').map((x) => parseInt(x, 10));
@@ -680,7 +635,7 @@ export function SearchPublishedRidesScreen() {
             if (Platform.OS !== 'ios') setShowTimePicker(false);
             if (d) {
               const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-              if (favoriteArrivalFirstUx) {
+              if (favoriteArrivalCopy) {
                 setArrivalTimeHm(hm);
                 arrivalSyncedFromStoredPickupRef.current = true;
                 if (date.trim() && routeEta.durationMinutes != null) {
@@ -706,7 +661,7 @@ export function SearchPublishedRidesScreen() {
           </View>
           <Switch
             value={scheduleDaily}
-            onValueChange={(v) => {
+            onValueChange={(v: boolean) => {
               setScheduleDaily(v);
               if (v) {
                 setScheduleWeekdayMask((m) => {
@@ -752,7 +707,7 @@ export function SearchPublishedRidesScreen() {
         </View>
       ) : null}
       <Text style={styles.label}>
-        {favoriteArrivalCopy ? 'Salida estimada (recogida)' : 'Llegada estimada en destino'}
+        {favoriteArrivalCopy ? 'Tu transporte pasará aprox. a las:' : 'Llegada estimada en destino'}
       </Text>
       <View
         style={[styles.pickerRow, styles.pickerRowReadOnly]}
@@ -774,20 +729,19 @@ export function SearchPublishedRidesScreen() {
           {(favoriteArrivalCopy ? estimatedPickup : estimatedArrival).text}
         </Text>
       </View>
-      <Text style={styles.etaHint}>
-        {favoriteArrivalCopy
-          ? 'La salida se recalcula al cambiar la ruta en el mapa (duración por calles). Puede variar con el tráfico y el recorrido real.'
-          : 'El horario de llegada es estimado: puede variar según el tráfico, el recorrido real del viaje y otros pasajeros.'}
-      </Text>
-      <Text style={styles.label}>Nombre del viaje (opcional)</Text>
-      <TextInput
-        style={styles.input}
-        value={routeNameQuery}
-        onChangeText={setRouteNameQuery}
-        placeholder="Si el conductor lo definió al publicar"
-        placeholderTextColor="#9ca3af"
-      />
-      <Text style={styles.label}>Origen (texto)</Text>
+      {!isFavoriteMode ? (
+        <>
+          <Text style={styles.label}>Nombre del viaje (opcional)</Text>
+          <TextInput
+            style={styles.input}
+            value={routeNameQuery}
+            onChangeText={setRouteNameQuery}
+            placeholder="Si el conductor lo definió al publicar"
+            placeholderTextColor="#9ca3af"
+          />
+        </>
+      ) : null}
+      <Text style={styles.label}>Origen</Text>
       <TextInput
         style={styles.input}
         value={origin}
@@ -795,10 +749,10 @@ export function SearchPublishedRidesScreen() {
           setOrigin(t);
           setOriginGeo(null);
         }}
-        placeholder="Opcional — o marcá en el mapa abajo"
+        placeholder="Marcá en el mapa"
         placeholderTextColor="#9ca3af"
       />
-      <Text style={styles.label}>Destino (texto)</Text>
+      <Text style={styles.label}>Destino</Text>
       <TextInput
         style={styles.input}
         value={destination}
@@ -806,71 +760,64 @@ export function SearchPublishedRidesScreen() {
           setDestination(t);
           setDestGeo(null);
         }}
-        placeholder="Opcional — o marcá en el mapa abajo"
+        placeholder="Marcá en el mapa"
         placeholderTextColor="#9ca3af"
       />
 
-      <SearchOriginDestinationMap
-        origin={originGeo}
-        destination={destGeo}
-        onOriginChange={setOriginGeo}
-        onDestinationChange={setDestGeo}
-        onOriginLabelResolved={setOrigin}
-        onDestinationLabelResolved={setDestination}
-        onRouteEtaChange={setRouteEta}
-        proximityRadiusKm={mapSearchRadiusKmForRideKind(rideKind)}
-        height={240}
-      />
-
-      <Text style={styles.label}>Tipo de viaje</Text>
-      <View style={styles.kindRow}>
-        <TouchableOpacity
-          style={[styles.kindChip, rideKind === 'all' && styles.kindChipActive]}
-          onPress={() => setRideKind('all')}
-          accessibilityRole="button"
-        >
-          <Text style={[styles.kindChipText, rideKind === 'all' && styles.kindChipTextActive]}>Todos</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.kindChip, rideKind === 'internal' && styles.kindChipActive]}
-          onPress={() => setRideKind('internal')}
-          accessibilityRole="button"
-        >
-          <Text style={[styles.kindChipText, rideKind === 'internal' && styles.kindChipTextActive]}>Interno</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.kindChip, rideKind === 'long_distance' && styles.kindChipActive]}
-          onPress={() => setRideKind('long_distance')}
-          accessibilityRole="button"
-        >
-          <Text style={[styles.kindChipText, rideKind === 'long_distance' && styles.kindChipTextActive]}>
-            Larga distancia
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {favoriteSlot ? (
-        <View style={[styles.dailyRow, rideKind === 'long_distance' && styles.dailyRowMuted]}>
-          <View style={styles.dailyTextWrap}>
-            <Text style={styles.dailyTitle}>Registrar también solicitud de viaje</Text>
-            <Text style={styles.dailyHint}>
-              Pedido <Text style={{ fontWeight: '700' }}>pending</Text> con la misma fecha, hora de recogida y ruta del
-              mapa, para demanda y mapa admin. Larga distancia: usá el flujo con precio (no aplica acá).
-            </Text>
+      {!isFavoriteMode ? (
+        <>
+          <Text style={styles.label}>Tipo de viaje</Text>
+          <View style={styles.kindRow}>
+            <TouchableOpacity
+              style={[styles.kindChip, rideKind === 'all' && styles.kindChipActive]}
+              onPress={() => setRideKind('all')}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.kindChipText, rideKind === 'all' && styles.kindChipTextActive]}>Todos</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.kindChip, rideKind === 'internal' && styles.kindChipActive]}
+              onPress={() => setRideKind('internal')}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.kindChipText, rideKind === 'internal' && styles.kindChipTextActive]}>
+                Viajes disponibles
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.kindChip, rideKind === 'long_distance' && styles.kindChipActive]}
+              onPress={() => setRideKind('long_distance')}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.kindChipText, rideKind === 'long_distance' && styles.kindChipTextActive]}>
+                Ofertas de viajes
+              </Text>
+            </TouchableOpacity>
           </View>
-          <Switch
-            value={registerTripRequest && rideKind !== 'long_distance'}
-            onValueChange={setRegisterTripRequest}
-            disabled={rideKind === 'long_distance'}
-            trackColor={{ false: '#d1d5db', true: '#86efac' }}
-            thumbColor={registerTripRequest && rideKind !== 'long_distance' ? '#166534' : '#f3f4f6'}
-          />
-        </View>
+        </>
       ) : null}
 
       {favoriteSlot ? (
-        <TouchableOpacity style={styles.searchBtn} onPress={() => void saveFavorite()} accessibilityRole="button">
-          <Text style={styles.searchBtnText}>Guardar {favoritePairLabel(favoriteSlot)}</Text>
+        <TouchableOpacity
+          style={[styles.searchBtn, savingFavorite && styles.searchBtnDisabled]}
+          onPress={() => void saveFavorite()}
+          disabled={savingFavorite}
+          accessibilityRole="button"
+          accessibilityState={{ busy: savingFavorite }}
+          accessibilityLabel={
+            savingFavorite
+              ? 'Guardando favorito, esperá'
+              : `Guardar favorito ${favoritePairLabel(favoriteSlot)}`
+          }
+        >
+          <View style={styles.saveFavoriteBtnInner}>
+            {savingFavorite ? (
+              <ActivityIndicator color="#fff" style={styles.saveFavoriteSpinner} />
+            ) : null}
+            <Text style={styles.searchBtnText}>
+              {savingFavorite ? 'Guardando…' : `Guardar ${favoritePairLabel(favoriteSlot)}`}
+            </Text>
+          </View>
         </TouchableOpacity>
       ) : (
         <>
@@ -905,7 +852,6 @@ export function SearchPublishedRidesScreen() {
       showTimePicker,
       scheduleDaily,
       scheduleWeekdayMask,
-      registerTripRequest,
       rideKind,
       estimatedArrival,
       estimatedPickup,
@@ -913,6 +859,7 @@ export function SearchPublishedRidesScreen() {
       favoriteArrivalCopy,
       arrivalTimeHm,
       goCreateTripRequestFromSearch,
+      savingFavorite,
     ]
   );
 
@@ -1077,6 +1024,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  searchBtnDisabled: { opacity: 0.72 },
+  saveFavoriteBtnInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  saveFavoriteSpinner: { marginRight: 10 },
   createFromSearchBtn: {
     borderWidth: 2,
     borderColor: '#166534',
