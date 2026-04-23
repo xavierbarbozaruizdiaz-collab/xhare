@@ -26,7 +26,14 @@ export async function getAuth(req?: Request): Promise<AuthResult> {
     if (process.env.NODE_ENV === 'development') {
       console.log('[getAuth] AUTH_DEBUG', { authError: authError?.message ?? null, hasUser: !!user });
     }
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      {
+        error: 'Unauthorized',
+        code: 'INVALID_JWT',
+        detail: authError?.message?.trim() || undefined,
+      },
+      { status: 401 }
+    );
   }
   return { user, supabase };
 }

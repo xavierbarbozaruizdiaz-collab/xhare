@@ -1085,10 +1085,10 @@ export async function leaveDemandGroupForTripRequest(
       signal: controller.signal,
     });
     const text = await res.text();
-    let data: { error?: string; message?: string; code?: string } = {};
+    let data: { error?: string; message?: string; code?: string; detail?: string } = {};
     if (text.trim()) {
       try {
-        data = JSON.parse(text) as { error?: string; message?: string; code?: string };
+        data = JSON.parse(text) as { error?: string; message?: string; code?: string; detail?: string };
       } catch {
         data = {};
       }
@@ -1104,6 +1104,16 @@ export async function leaveDemandGroupForTripRequest(
             : 'Ya hay un viaje publicado o en curso desde este grupo.',
       };
     }
+    if (res.status === 401) {
+      const detail = typeof data.detail === 'string' && data.detail.trim() ? data.detail.trim() : '';
+      const base =
+        'No autorizado: Vercel/API y la app deben usar el mismo proyecto de Supabase. En Vercel, NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY deben coincidir con EXPO_PUBLIC_SUPABASE_URL y EXPO_PUBLIC_SUPABASE_ANON_KEY del build móvil.';
+      return {
+        ok: false,
+        code: data.code ?? 'UNAUTHORIZED',
+        error: detail ? `${base} Detalle: ${detail}` : base,
+      };
+    }
     const fromJson =
       (typeof data.error === 'string' && data.error.trim()) ||
       (typeof data.message === 'string' && data.message.trim()) ||
@@ -1112,11 +1122,9 @@ export async function leaveDemandGroupForTripRequest(
     const looksHtml = /^<!DOCTYPE/i.test(trimmed) || /^<html/i.test(trimmed);
     const brief = fromJson
       ? fromJson
-      : res.status === 401
-        ? 'No autorizado. Revisá que el backend use el mismo proyecto de Supabase que la app.'
-        : res.status === 404 || looksHtml
-          ? 'El servidor no expone POST /api/trip-requests/[id]/leave-demand-group (404 o respuesta HTML). Desplegá el backend actualizado o revisá EXPO_PUBLIC_API_BASE_URL.'
-          : `No se pudo salir del grupo (HTTP ${res.status}).`;
+      : res.status === 404 || looksHtml
+        ? 'El servidor no expone POST /api/trip-requests/[id]/leave-demand-group (404 o respuesta HTML). Desplegá el backend actualizado o revisá EXPO_PUBLIC_API_BASE_URL.'
+        : `No se pudo salir del grupo (HTTP ${res.status}).`;
     return { ok: false, error: brief.length > 220 ? `${brief.slice(0, 220)}…` : brief, code: data.code };
   } catch {
     return { ok: false, error: 'Sin respuesta. Revisá tu conexión o el servidor.' };
