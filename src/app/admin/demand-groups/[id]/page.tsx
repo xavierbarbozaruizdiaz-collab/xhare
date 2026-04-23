@@ -60,14 +60,14 @@ export default function AdminDemandGroupDetailPage() {
     setLoadErr(null);
     try {
       let token = accessToken;
-      let res = await fetch(`/api/demand-routes/${encodeURIComponent(id)}`, {
+      let res = await fetch(`/api/admin/demand-groups/${encodeURIComponent(id)}`, {
         credentials: 'include',
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 401) {
         token = (await refetch()) ?? '';
         if (token) {
-          res = await fetch(`/api/demand-routes/${encodeURIComponent(id)}`, {
+          res = await fetch(`/api/admin/demand-groups/${encodeURIComponent(id)}`, {
             credentials: 'include',
             headers: { Authorization: `Bearer ${token}` },
           });

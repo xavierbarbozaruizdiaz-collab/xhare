@@ -1,12 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { buildDemandRouteGroupDetailResult } from '@/lib/demand-route-group-detail-build';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-demand-groups-id';
 
 const ACTIVE_RIDE_STATUSES = ['published', 'booked', 'en_route'] as const;
+
+/**
+ * GET /api/admin/demand-groups/[id]
+ * Mismo payload que GET /api/demand-routes/[id] pero con `withAdminAuth` (evita 401 en panel cuando el JWT
+ * no llega bien a `createServerClient` + `auth.getUser` en algunos despliegues).
+ */
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return withAdminAuth(request, async () => {
+    try {
+      const { id } = await params;
+      if (!id || !String(id).trim()) {
+        return NextResponse.json({ error: 'id requerido' }, { status: 400 });
+      }
+      const service = createServiceClient();
+      const result = await buildDemandRouteGroupDetailResult(service, id);
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error }, { status: result.status });
+      }
+      logBlockOk(`${BLOCK}-get`);
+      return NextResponse.json(result.body);
+    } catch (e) {
+      logBlockError(`${BLOCK}-get`, e instanceof Error ? e.message : 'unknown', e);
+      return NextResponse.json({ error: 'Error interno' }, { status: 500 });
+    }
+  });
+}
 
 /**
  * DELETE /api/admin/demand-groups/[id]
