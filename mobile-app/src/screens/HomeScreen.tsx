@@ -742,10 +742,10 @@ export function HomeScreen() {
                 style={styles.favoritesPrimaryBtn}
                 onPress={openAddFavorite}
                 accessibilityRole="button"
-                accessibilityLabel="Elegir trayecto favorito para agregar o editar"
+                accessibilityLabel="Programa tu próximo viaje"
               >
                 <Ionicons name="add-circle-outline" size={22} color="#fff" style={styles.favoritesPrimaryIcon} />
-                <Text style={styles.favoritesPrimaryBtnText}>AGREGAR TRAYECTO FAVORITO</Text>
+                <Text style={styles.favoritesPrimaryBtnText}>Programa tu próximo viaje</Text>
               </TouchableOpacity>
 
               <ScrollView
