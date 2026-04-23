@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
+import { drainDriverDemandPassengerLeftPushQueue } from '@/lib/push/sendDriverDemandPassengerLeftPush';
 import {
   normalizeDemandGroupingParams,
   runDemandGroupingPipeline,
@@ -56,6 +57,11 @@ async function handle(request: NextRequest) {
   });
 
   const service = createServiceClient();
+  try {
+    await drainDriverDemandPassengerLeftPushQueue(service);
+  } catch (e) {
+    console.error('[cron/demand-grouping] drainDriverDemandPassengerLeftPushQueue', e);
+  }
   const { steps } = await runDemandGroupingPipeline(service, mode, params);
   const anyFail = steps.some((s) => s.status >= 400);
 

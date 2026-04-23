@@ -6,7 +6,10 @@ import { classificationLogFromRow } from '@/lib/trip-request-classification';
 import { insertOrUpdatePendingTripRequestFromFavorite } from '@/lib/trip-request-favorite-pending-upsert';
 import { detachPassengerFavoriteGroupedRequests } from '@/lib/trip-request-favorite-ungroup';
 import { createServiceClient } from '@/lib/supabase/server';
-import { sendDriverDemandPassengerLeftPush } from '@/lib/push/sendDriverDemandPassengerLeftPush';
+import {
+  drainDriverDemandPassengerLeftPushQueue,
+  sendDriverDemandPassengerLeftPush,
+} from '@/lib/push/sendDriverDemandPassengerLeftPush';
 
 const polyPoint = z.object({ lat: z.number(), lng: z.number() });
 
@@ -303,6 +306,10 @@ export async function POST(request: NextRequest) {
     if (logClassification && inserted?.id) {
       console.info('[classification]', classificationLogFromRow(inserted as Record<string, unknown>));
     }
+
+    void drainDriverDemandPassengerLeftPushQueue(createServiceClient()).catch((err) => {
+      console.error('[api/trip-requests] drain push queue', err);
+    });
 
     return NextResponse.json({ ok: true, id: inserted?.id });
   } catch (e) {

@@ -1047,90 +1047,30 @@ export async function cancelTripRequest(requestId: string, userId: string) {
   if (error) throw error;
 }
 
-const LEAVE_DEMAND_GROUP_TIMEOUT_MS = 28_000;
-
-/** Salir de demanda agrupada (vía Next + service RPC). Requiere `env.apiBaseUrl` y JWT. */
+/** Salir de demanda agrupada: RPC con la sesión de Supabase de la app (mismo proyecto que el resto del cliente). */
 export async function leaveDemandGroupForTripRequest(
-  accessToken: string,
   tripRequestId: string
 ): Promise<{ ok: true } | { ok: false; error: string; code?: string }> {
-  const base = env.apiBaseUrl?.replace(/\/$/, '') ?? '';
-  if (!base) {
-    return {
-      ok: false,
-      error:
-        'Falta EXPO_PUBLIC_API_BASE_URL: salir del grupo solo puede hacerlo el servidor. Configurá la URL del backend y reintentá.',
-    };
+  const { data, error } = await supabase.rpc('detach_trip_request_from_demand_group_for_passenger', {
+    p_trip_request_id: tripRequestId,
+  });
+  if (error) {
+    return { ok: false, error: error.message, code: error.code };
   }
-  let bearer = accessToken?.trim() ?? '';
-  if (!bearer) {
-    return { ok: false, error: 'Sesión inválida. Volvé a iniciar sesión.' };
+  const body = data as { ok?: unknown; message?: unknown; error?: unknown; code?: unknown } | null;
+  if (!body || typeof body !== 'object') {
+    return { ok: false, error: 'Respuesta inválida del servidor.' };
   }
-  try {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    const next = refreshed.session?.access_token?.trim();
-    if (next) bearer = next;
-  } catch {
-    // usar token del caller
-  }
-
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), LEAVE_DEMAND_GROUP_TIMEOUT_MS);
-  try {
-    const res = await fetch(`${base}/api/trip-requests/${encodeURIComponent(tripRequestId)}/leave-demand-group`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${bearer}`,
-      },
-      signal: controller.signal,
-    });
-    const text = await res.text();
-    let data: { error?: string; message?: string; code?: string; detail?: string } = {};
-    if (text.trim()) {
-      try {
-        data = JSON.parse(text) as { error?: string; message?: string; code?: string; detail?: string };
-      } catch {
-        data = {};
-      }
-    }
-    if (res.ok) return { ok: true };
-    if (res.status === 409 && data.code === 'GROUP_HAS_ACTIVE_RIDE') {
-      return {
-        ok: false,
-        code: 'GROUP_HAS_ACTIVE_RIDE',
-        error:
-          typeof data.error === 'string' && data.error.trim()
-            ? data.error
-            : 'Ya hay un viaje publicado o en curso desde este grupo.',
-      };
-    }
-    if (res.status === 401) {
-      const detail = typeof data.detail === 'string' && data.detail.trim() ? data.detail.trim() : '';
-      const base =
-        'No autorizado: Vercel/API y la app deben usar el mismo proyecto de Supabase. En Vercel, NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY deben coincidir con EXPO_PUBLIC_SUPABASE_URL y EXPO_PUBLIC_SUPABASE_ANON_KEY del build móvil.';
-      return {
-        ok: false,
-        code: data.code ?? 'UNAUTHORIZED',
-        error: detail ? `${base} Detalle: ${detail}` : base,
-      };
-    }
-    const fromJson =
-      (typeof data.error === 'string' && data.error.trim()) ||
-      (typeof data.message === 'string' && data.message.trim()) ||
-      '';
-    const trimmed = text.trim();
-    const looksHtml = /^<!DOCTYPE/i.test(trimmed) || /^<html/i.test(trimmed);
-    const brief = fromJson
-      ? fromJson
-      : res.status === 404 || looksHtml
-        ? 'El servidor no expone POST /api/trip-requests/[id]/leave-demand-group (404 o respuesta HTML). Desplegá el backend actualizado o revisá EXPO_PUBLIC_API_BASE_URL.'
-        : `No se pudo salir del grupo (HTTP ${res.status}).`;
-    return { ok: false, error: brief.length > 220 ? `${brief.slice(0, 220)}…` : brief, code: data.code };
-  } catch {
-    return { ok: false, error: 'Sin respuesta. Revisá tu conexión o el servidor.' };
-  } finally {
-    clearTimeout(t);
-  }
+  if (body.ok === true) return { ok: true };
+  const msg =
+    (typeof body.message === 'string' && body.message.trim()) ||
+    (typeof body.error === 'string' && body.error.trim()) ||
+    'No se pudo salir del grupo.';
+  return {
+    ok: false,
+    error: msg,
+    code: typeof body.code === 'string' ? body.code : undefined,
+  };
 }
 
 /** My bookings (passenger). */

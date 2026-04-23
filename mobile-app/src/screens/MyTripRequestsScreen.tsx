@@ -135,8 +135,7 @@ export function MyTripRequestsScreen() {
 
   const handleLeaveDemandGroup = useCallback(
     (id: string) => {
-      const token = session?.access_token?.trim();
-      if (!token) {
+      if (!session?.id) {
         Alert.alert('Sesión', 'Volvé a iniciar sesión para salir del grupo.');
         return;
       }
@@ -151,7 +150,7 @@ export function MyTripRequestsScreen() {
             onPress: async () => {
               setLeavingGroupId(id);
               try {
-                const res = await leaveDemandGroupForTripRequest(token, id);
+                const res = await leaveDemandGroupForTripRequest(id);
                 if (!res.ok) {
                   Alert.alert('No se pudo salir', res.error);
                   return;
@@ -165,7 +164,7 @@ export function MyTripRequestsScreen() {
         ]
       );
     },
-    [session?.access_token, load]
+    [session?.id, load]
   );
 
   const renderItem = useCallback(

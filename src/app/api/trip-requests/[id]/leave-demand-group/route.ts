@@ -6,7 +6,9 @@ import { sendDriverDemandPassengerLeftPush } from '@/lib/push/sendDriverDemandPa
 
 /**
  * POST /api/trip-requests/[id]/leave-demand-group
- * Pasajero sale de la demanda agrupada (misma semántica que confirm_leave_group al guardar favorito).
+ * Pasajero sale de la demanda agrupada (JWT Next + service RPC + push inmediato).
+ * La app móvil usa la RPC `detach_trip_request_from_demand_group_for_passenger` con la sesión de Supabase
+ * para no depender de que Vercel comparta el mismo JWT; el push se encola y lo drena el cron / POST trip-requests.
  */
 export async function POST(
   request: NextRequest,

@@ -96,3 +96,37 @@ export async function sendDriverDemandPassengerLeftPush(
     }
   }
 }
+
+/**
+ * Envía push por filas encoladas desde la RPC `detach_trip_request_from_demand_group_for_passenger`
+ * (cron demand-grouping y, de forma oportunista, POST /api/trip-requests).
+ */
+export async function drainDriverDemandPassengerLeftPushQueue(
+  service: SupabaseClient
+): Promise<{ drained: number }> {
+  const { data: rows, error } = await service
+    .from('driver_demand_passenger_left_push_queue')
+    .select('id, ride_id, group_id')
+    .is('processed_at', null)
+    .order('created_at', { ascending: true })
+    .limit(50);
+  if (error || !rows?.length) {
+    if (error) console.error('[drainDriverDemandPassengerLeftPushQueue] select', error);
+    return { drained: 0 };
+  }
+  type Row = { id: string; ride_id: string; group_id: string };
+  const list = rows as Row[];
+  const entries = list.map((r) => ({
+    ride_id: String(r.ride_id),
+    group_id: String(r.group_id ?? ''),
+  }));
+  await sendDriverDemandPassengerLeftPush(service, entries);
+  const ids = list.map((r) => r.id);
+  const now = new Date().toISOString();
+  const { error: upErr } = await service
+    .from('driver_demand_passenger_left_push_queue')
+    .update({ processed_at: now })
+    .in('id', ids);
+  if (upErr) console.error('[drainDriverDemandPassengerLeftPushQueue] mark processed', upErr);
+  return { drained: list.length };
+}
