@@ -244,7 +244,6 @@ export function HomeScreen() {
   const [activateModalHm, setActivateModalHm] = useState('');
   const [activateModalShowDate, setActivateModalShowDate] = useState(false);
   const [activateModalShowTime, setActivateModalShowTime] = useState(false);
-  const [activateRegisterTripRequest, setActivateRegisterTripRequest] = useState(true);
   /** Duración origen→destino (min) vía `/api/route/polyline`; null = sin ruta o aún cargando. */
   const [activateRouteMinutes, setActivateRouteMinutes] = useState<number | null>(null);
   /** `fetchRoute` en segundo plano: el modal abre al toque y no espera la red. */
@@ -435,7 +434,6 @@ export function HomeScreen() {
     setActivateRouteLoading(false);
     setActivateModalShowDate(false);
     setActivateModalShowTime(false);
-    setActivateRegisterTripRequest(true);
     setActivateSubmitting(false);
     confirmActivateBusyRef.current = false;
   }, []);
@@ -511,11 +509,8 @@ export function HomeScreen() {
         snap.originLng != null &&
         snap.destinationLat != null &&
         snap.destinationLng != null;
-      const canCreateTrip = hasCoords && snap.rideKind !== 'long_distance';
-
       setActivateSnap(snap);
       setActivateSlot(slot);
-      setActivateRegisterTripRequest(canCreateTrip);
       setActivateModalDate(d);
       /** Con ruta: modal en hora de llegada si el favorito se guardó en modo llegada. Sin coords no podemos restar duración → mostrar recogida. */
       setActivateModalHm(hasCoords && storedArrivalHm ? storedArrivalHm : pickupHm);
@@ -639,20 +634,16 @@ export function HomeScreen() {
       const all = await loadPassengerFavorites(userId);
       setFavorites(all);
       void pushPassengerHomeMapShortcuts(all);
-      if (activateRegisterTripRequest && snap.rideKind !== 'long_distance') {
+      const shouldRegisterGroupedRequest =
+        snap.rideKind !== 'long_distance' &&
+        snap.originLat != null &&
+        snap.originLng != null &&
+        snap.destinationLat != null &&
+        snap.destinationLng != null;
+      if (shouldRegisterGroupedRequest) {
         const token = session?.access_token?.trim();
-        const hasCoords =
-          snap.originLat != null &&
-          snap.originLng != null &&
-          snap.destinationLat != null &&
-          snap.destinationLng != null;
         if (!token) {
           Alert.alert('Solicitud de viaje', 'No se pudo registrar la solicitud: sesión inválida.');
-        } else if (!hasCoords) {
-          Alert.alert(
-            'Solicitud de viaje',
-            'No se pudo registrar la solicitud pendiente porque faltan origen/destino en el mapa.'
-          );
         } else {
           const route = await fetchRoute(
             { lat: snap.originLat!, lng: snap.originLng! },
@@ -713,7 +704,6 @@ export function HomeScreen() {
     activateSnap,
     activateModalDate,
     activateModalHm,
-    activateRegisterTripRequest,
     activateRouteMinutes,
     cancelActivateFavorite,
   ]);
@@ -1059,21 +1049,18 @@ export function HomeScreen() {
                   activateSnap.originLng != null &&
                   activateSnap.destinationLat != null &&
                   activateSnap.destinationLng != null ? (
-                    <View style={styles.activateModalToggleRow}>
-                      <View style={styles.activateModalToggleTextWrap}>
-                        <Text style={styles.activateModalToggleTitle}>Incluir en Mis solicitudes</Text>
-                        <Text style={styles.activateModalToggleHint}>
-                          Es aparte del switch de la lista: acá elegís si también querés una solicitud para demanda
-                          agrupada. Si lo apagás, solo se activa el favorito en Inicio.
-                        </Text>
-                      </View>
-                      <Switch
-                        value={activateRegisterTripRequest}
-                        onValueChange={setActivateRegisterTripRequest}
-                        trackColor={{ false: '#d1d5db', true: '#86efac' }}
-                        thumbColor={activateRegisterTripRequest ? '#166534' : '#f3f4f6'}
-                      />
-                    </View>
+                    <Text style={styles.activateModalGroupedHint}>
+                      Al tocar Activar también se crea o actualiza tu solicitud en Mis solicitudes (demanda agrupada).
+                    </Text>
+                  ) : activateSnap && activateSnap.rideKind === 'long_distance' ? (
+                    <Text style={styles.activateModalGroupedHint}>
+                      Este favorito es larga distancia: no se registra solicitud automática en demanda agrupada.
+                    </Text>
+                  ) : activateSnap ? (
+                    <Text style={styles.activateModalGroupedHint}>
+                      Marcá origen y destino en el mapa al editar el favorito para poder registrar la solicitud en Mis
+                      solicitudes.
+                    </Text>
                   ) : null}
                   <View style={styles.activateModalActions}>
                     <TouchableOpacity
@@ -1464,6 +1451,13 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     lineHeight: 17,
     marginTop: 8,
+    marginBottom: 4,
+  },
+  activateModalGroupedHint: {
+    fontSize: 12,
+    color: '#4b5563',
+    lineHeight: 17,
+    marginTop: 10,
     marginBottom: 4,
   },
   activateModalToggleRow: {
