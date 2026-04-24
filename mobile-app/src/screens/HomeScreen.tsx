@@ -157,9 +157,10 @@ function isScheduleDailySnap(snap: PassengerFavoriteSnapshot): boolean {
 
 function scheduleLabel(snap: PassengerFavoriteSnapshot | undefined): string {
   if (!snap) return 'Sin configurar';
-  const baseDate = (snap.scheduledDateYmd ?? snap.date ?? '').trim();
-  const pickupHm = (snap.scheduledTimeHm ?? snap.fromTime ?? '').trim() || '08:00';
-  const arrivalHm = snap.scheduledArrivalTimeHm?.trim();
+  const baseDate = String(snap.scheduledDateYmd ?? snap.date ?? '').trim();
+  const pickupHm = String(snap.scheduledTimeHm ?? snap.fromTime ?? '').trim() || '08:00';
+  const arrivalHm =
+    snap.scheduledArrivalTimeHm != null ? String(snap.scheduledArrivalTimeHm).trim() : '';
   if (isScheduleDailySnap(snap)) {
     const nextIso = snap.nextTriggerAtIso?.trim();
     const nextText = nextIso

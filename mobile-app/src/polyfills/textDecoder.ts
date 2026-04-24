@@ -1,3 +1,7 @@
+/**
+ * No se importa desde `index.ts`: reemplazar `globalThis.TextDecoder` en arranque rompía el runtime
+ * en algunos dispositivos/Hermes. Si hace falta utf-16le, importar este módulo solo donde aplique.
+ */
 type DecoderInput = ArrayBuffer | ArrayBufferView | null | undefined;
 
 function toUint8Array(input: DecoderInput): Uint8Array {
