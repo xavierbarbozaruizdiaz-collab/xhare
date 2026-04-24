@@ -37,12 +37,19 @@ App móvil nativa (React Native vía Expo) para conductores y pasajeros. Backend
 ## Scripts
 
 - `npm start` — inicia Expo (escanea QR con Expo Go)
+- `npm run start:clear` — inicia Metro limpio (recomendado si ves pantalla en blanco o cache rara)
 - `npm run android` — abre en emulador/dispositivo Android
 - `npm run android:run` — compila y corre en dispositivo/emulador (requiere `npx expo prebuild --platform android` antes)
 - `npm run ios` — abre en simulador iOS (solo macOS)
 - `npm run build:android:release` — **APK release local (flujo oficial)**: clean + `expo run:android --variant release`
 - `npm run build:android:cloud:apk:preview` — Cloud build (bajo pedido): EAS preview APK
 - `npm run build:android:cloud:apk:production` — Cloud build (bajo pedido): EAS production APK
+
+## Si vuelve pantalla en blanco (Android dev)
+
+1. `npm run start:clear` (reinicia Metro sin cache).
+2. Cerrar y abrir la app en el emulador.
+3. Si persiste, ejecutar `npm run android:recover` para recuperar entorno Android local.
 
 ## Estructura
 

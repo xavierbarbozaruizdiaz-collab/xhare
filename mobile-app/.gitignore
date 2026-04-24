@@ -21,6 +21,9 @@ expo-env.d.ts
 
 # Metro
 .metro-health-check*
+.tmp-index.bundle
+.tmp-export/
+.tmp-verify-bundle/
 
 # debug
 npm-debug.*
