@@ -65,7 +65,7 @@ import {
   baseFareFromDistanceKmWithPricing,
   totalFareFromBaseAndSeatsWithPricing,
 } from '../lib/pricing/segment-fare';
-import { saveTripRequest } from '../rides/api';
+import { saveTripRequest, cancelTripRequestsForPassengerFavoriteSlot } from '../rides/api';
 
 type IonName = ComponentProps<typeof Ionicons>['name'];
 
@@ -250,6 +250,11 @@ export function HomeScreen() {
   /** `fetchRoute` en segundo plano: el modal abre al toque y no espera la red. */
   const [activateRouteLoading, setActivateRouteLoading] = useState(false);
   const activateRouteRequestIdRef = useRef(0);
+  /** Evita doble apertura del modal al tocar rápido el switch de la fila. */
+  const activateModalSessionRef = useRef(false);
+  /** Evita doble envío de “Activar” mientras corre guardado + red. */
+  const confirmActivateBusyRef = useRef(false);
+  const [activateSubmitting, setActivateSubmitting] = useState(false);
   const [favoriteCostBySlot, setFavoriteCostBySlot] = useState<
     Partial<Record<PassengerFavoriteSlot, { perSeatGs: number; distanceKm: number } | null>>
   >({});
@@ -420,9 +425,27 @@ export function HomeScreen() {
     );
   }, [goFavorite, selectedFromIcon, selectedToIcon]);
 
+  const cancelActivateFavorite = useCallback(() => {
+    activateRouteRequestIdRef.current += 1;
+    activateModalSessionRef.current = false;
+    setActivateOpen(false);
+    setActivateSlot(null);
+    setActivateSnap(null);
+    setActivateRouteMinutes(null);
+    setActivateRouteLoading(false);
+    setActivateModalShowDate(false);
+    setActivateModalShowTime(false);
+    setActivateRegisterTripRequest(true);
+    setActivateSubmitting(false);
+    confirmActivateBusyRef.current = false;
+  }, []);
+
   const setFavoriteDisabled = useCallback(
     async (slot: PassengerFavoriteSlot) => {
       if (!session || !userId) return;
+      if (activateOpen && activateSlot === slot) {
+        cancelActivateFavorite();
+      }
       const snap = await getPassengerFavorite(userId, slot);
       if (!snap) return;
       await upsertPassengerFavorite(userId, slot, {
@@ -451,18 +474,24 @@ export function HomeScreen() {
             snap.scheduleWeekdayMask
           ) ?? undefined,
       });
+      await cancelTripRequestsForPassengerFavoriteSlot(userId, slot);
       const all = await loadPassengerFavorites(userId);
       setFavorites(all);
       void pushPassengerHomeMapShortcuts(all);
     },
-    [session, userId]
+    [session, userId, activateOpen, activateSlot, cancelActivateFavorite]
   );
 
   const openActivateFavoriteModal = useCallback(
     async (slot: PassengerFavoriteSlot) => {
       if (!session || !userId) return;
+      if (activateModalSessionRef.current) return;
+      activateModalSessionRef.current = true;
+      let opened = false;
+      try {
       const snap = await getPassengerFavorite(userId, slot);
       if (!snap || !favoriteHasConfig(snap)) {
+        activateModalSessionRef.current = false;
         Alert.alert('Primero configuralo', `Completa ${favoritePairLabel(slot)} y luego activa el switch.`);
         goFavorite(slot);
         return;
@@ -495,6 +524,7 @@ export function HomeScreen() {
       setActivateModalShowTime(false);
       setActivateRouteLoading(hasCoords);
       setActivateOpen(true);
+      opened = true;
 
       if (!hasCoords) {
         setActivateRouteLoading(false);
@@ -535,146 +565,147 @@ export function HomeScreen() {
         setActivateModalDate(dWork);
         setActivateModalHm(arrivalHm);
       })();
+      } catch {
+        activateModalSessionRef.current = false;
+      } finally {
+        if (!opened) activateModalSessionRef.current = false;
+      }
     },
     [session, userId, goFavorite]
   );
 
-  const cancelActivateFavorite = useCallback(() => {
-    activateRouteRequestIdRef.current += 1;
-    setActivateOpen(false);
-    setActivateSlot(null);
-    setActivateSnap(null);
-    setActivateRouteMinutes(null);
-    setActivateRouteLoading(false);
-    setActivateModalShowDate(false);
-    setActivateModalShowTime(false);
-    setActivateRegisterTripRequest(true);
-  }, []);
-
   const confirmActivateFavorite = useCallback(async () => {
     if (!session || !userId || !activateSlot || !activateSnap) return;
-    const d = activateModalDate.trim();
-    const hm = activateModalHm.trim();
-    if (!d || !hm) {
-      Alert.alert('Datos incompletos', 'Elegí fecha y hora.');
-      return;
-    }
+    if (confirmActivateBusyRef.current) return;
+    confirmActivateBusyRef.current = true;
+    setActivateSubmitting(true);
+    try {
+      const d = activateModalDate.trim();
+      const hm = activateModalHm.trim();
+      if (!d || !hm) {
+        Alert.alert('Datos incompletos', 'Elegí fecha y hora.');
+        return;
+      }
 
-    const dur = activateRouteMinutes;
-    let pickupHm: string;
-    if (dur != null) {
-      const pu = subtractMinutesFromHmLocal(d, hm, dur);
-      if (!pu) {
-        Alert.alert('Datos incompletos', 'La hora de llegada no es válida para esa fecha.');
-        return;
-      }
-      pickupHm = pu;
-      if (!isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) {
-        Alert.alert(
-          'Anticipación mínima',
-          'La salida estimada (recogida) tiene que quedar al menos 4 horas desde ahora. Elegí una llegada más tarde u otra fecha.'
-        );
-        return;
-      }
-    } else {
-      pickupHm = hm;
-      if (!isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) {
-        Alert.alert(
-          'Anticipación mínima',
-          'Elegí fecha y hora con al menos 4 horas desde ahora (hora de este dispositivo).'
-        );
-        return;
-      }
-    }
-
-    const snap = activateSnap;
-    await upsertPassengerFavorite(userId, activateSlot, {
-      date: d,
-      fromTime: pickupHm,
-      routeNameQuery: snap.routeNameQuery,
-      origin: snap.origin,
-      destination: snap.destination,
-      originLat: snap.originLat,
-      originLng: snap.originLng,
-      destinationLat: snap.destinationLat,
-      destinationLng: snap.destinationLng,
-      rideKind: snap.rideKind,
-      enabled: true,
-      scheduleDaily: Boolean(snap.scheduleDaily),
-      scheduleWeekdayMask: snap.scheduleWeekdayMask,
-      scheduledDateYmd: d,
-      scheduledTimeHm: pickupHm,
-      scheduledArrivalTimeHm: dur != null ? hm.trim() : undefined,
-      nextTriggerAtIso:
-        computeNextTriggerIso(new Date(), d, pickupHm, Boolean(snap.scheduleDaily), snap.scheduleWeekdayMask) ??
-        undefined,
-    });
-    const all = await loadPassengerFavorites(userId);
-    setFavorites(all);
-    void pushPassengerHomeMapShortcuts(all);
-    if (activateRegisterTripRequest && snap.rideKind !== 'long_distance') {
-      const token = session?.access_token?.trim();
-      const hasCoords =
-        snap.originLat != null &&
-        snap.originLng != null &&
-        snap.destinationLat != null &&
-        snap.destinationLng != null;
-      if (!token) {
-        Alert.alert('Solicitud de viaje', 'No se pudo registrar la solicitud: sesión inválida.');
-      } else if (!hasCoords) {
-        Alert.alert(
-          'Solicitud de viaje',
-          'No se pudo registrar la solicitud pendiente porque faltan origen/destino en el mapa.'
-        );
+      const dur = activateRouteMinutes;
+      let pickupHm: string;
+      if (dur != null) {
+        const pu = subtractMinutesFromHmLocal(d, hm, dur);
+        if (!pu) {
+          Alert.alert('Datos incompletos', 'La hora de llegada no es válida para esa fecha.');
+          return;
+        }
+        pickupHm = pu;
+        if (!isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) {
+          Alert.alert(
+            'Anticipación mínima',
+            'La salida estimada (recogida) tiene que quedar al menos 4 horas desde ahora. Elegí una llegada más tarde u otra fecha.'
+          );
+          return;
+        }
       } else {
-        const route = await fetchRoute(
-          { lat: snap.originLat!, lng: snap.originLng! },
-          { lat: snap.destinationLat!, lng: snap.destinationLng! },
-          []
-        );
-        const poly = route.polyline && route.polyline.length >= 2 ? route.polyline : null;
-        const baseTripArgs = {
-          accessToken: token,
-          userId,
-          originLat: snap.originLat!,
-          originLng: snap.originLng!,
-          originLabel: (snap.origin.trim() || 'Origen').slice(0, 500),
-          destinationLat: snap.destinationLat!,
-          destinationLng: snap.destinationLng!,
-          destinationLabel: (snap.destination.trim() || 'Destino').slice(0, 500),
-          requestedDate: d,
-          requestedTime: normalizeHmForTripRequest(pickupHm),
-          seats: 1,
-          routePolyline: poly,
-          routeLengthKm: route.distanceKm ?? null,
-          pricingKind: 'internal' as const,
-          internalQuoteAcknowledged: true,
-          passengerFavoriteSlot: activateSlot,
-        };
-        let tripRes = await saveTripRequest(baseTripArgs);
-        if (!tripRes.ok && tripRes.code === 'GROUPED_FAVORITE_EXISTS') {
-          const leaveGroup = await new Promise<boolean>((resolve) => {
-            Alert.alert(
-              'Ya está en un grupo',
-              tripRes.error ??
-                'Esta solicitud ya figuraba en un grupo de demanda. Si continuás, salís de ese grupo y se registra una solicitud nueva.',
-              [
-                { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
-                { text: 'Salir del grupo y registrar', onPress: () => resolve(true) },
-              ],
-              { cancelable: true, onDismiss: () => resolve(false) }
-            );
-          });
-          if (leaveGroup) {
-            tripRes = await saveTripRequest({ ...baseTripArgs, confirmLeaveGroupedFavorite: true });
+        pickupHm = hm;
+        if (!isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) {
+          Alert.alert(
+            'Anticipación mínima',
+            'Elegí fecha y hora con al menos 4 horas desde ahora (hora de este dispositivo).'
+          );
+          return;
+        }
+      }
+
+      const snap = activateSnap;
+      await upsertPassengerFavorite(userId, activateSlot, {
+        date: d,
+        fromTime: pickupHm,
+        routeNameQuery: snap.routeNameQuery,
+        origin: snap.origin,
+        destination: snap.destination,
+        originLat: snap.originLat,
+        originLng: snap.originLng,
+        destinationLat: snap.destinationLat,
+        destinationLng: snap.destinationLng,
+        rideKind: snap.rideKind,
+        enabled: true,
+        scheduleDaily: Boolean(snap.scheduleDaily),
+        scheduleWeekdayMask: snap.scheduleWeekdayMask,
+        scheduledDateYmd: d,
+        scheduledTimeHm: pickupHm,
+        scheduledArrivalTimeHm: dur != null ? hm.trim() : undefined,
+        nextTriggerAtIso:
+          computeNextTriggerIso(new Date(), d, pickupHm, Boolean(snap.scheduleDaily), snap.scheduleWeekdayMask) ??
+          undefined,
+      });
+      const all = await loadPassengerFavorites(userId);
+      setFavorites(all);
+      void pushPassengerHomeMapShortcuts(all);
+      if (activateRegisterTripRequest && snap.rideKind !== 'long_distance') {
+        const token = session?.access_token?.trim();
+        const hasCoords =
+          snap.originLat != null &&
+          snap.originLng != null &&
+          snap.destinationLat != null &&
+          snap.destinationLng != null;
+        if (!token) {
+          Alert.alert('Solicitud de viaje', 'No se pudo registrar la solicitud: sesión inválida.');
+        } else if (!hasCoords) {
+          Alert.alert(
+            'Solicitud de viaje',
+            'No se pudo registrar la solicitud pendiente porque faltan origen/destino en el mapa.'
+          );
+        } else {
+          const route = await fetchRoute(
+            { lat: snap.originLat!, lng: snap.originLng! },
+            { lat: snap.destinationLat!, lng: snap.destinationLng! },
+            []
+          );
+          const poly = route.polyline && route.polyline.length >= 2 ? route.polyline : null;
+          const baseTripArgs = {
+            accessToken: token,
+            userId,
+            originLat: snap.originLat!,
+            originLng: snap.originLng!,
+            originLabel: (snap.origin.trim() || 'Origen').slice(0, 500),
+            destinationLat: snap.destinationLat!,
+            destinationLng: snap.destinationLng!,
+            destinationLabel: (snap.destination.trim() || 'Destino').slice(0, 500),
+            requestedDate: d,
+            requestedTime: normalizeHmForTripRequest(pickupHm),
+            seats: 1,
+            routePolyline: poly,
+            routeLengthKm: route.distanceKm ?? null,
+            pricingKind: 'internal' as const,
+            internalQuoteAcknowledged: true,
+            passengerFavoriteSlot: activateSlot,
+          };
+          let tripRes = await saveTripRequest(baseTripArgs);
+          if (!tripRes.ok && tripRes.code === 'GROUPED_FAVORITE_EXISTS') {
+            const leaveGroup = await new Promise<boolean>((resolve) => {
+              Alert.alert(
+                'Ya está en un grupo',
+                tripRes.error ??
+                  'Esta solicitud ya figuraba en un grupo de demanda. Si continuás, salís de ese grupo y se registra una solicitud nueva.',
+                [
+                  { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+                  { text: 'Salir del grupo y registrar', onPress: () => resolve(true) },
+                ],
+                { cancelable: true, onDismiss: () => resolve(false) }
+              );
+            });
+            if (leaveGroup) {
+              tripRes = await saveTripRequest({ ...baseTripArgs, confirmLeaveGroupedFavorite: true });
+            }
+          }
+          if (!tripRes.ok) {
+            Alert.alert('Solicitud de viaje', tripRes.error || 'No se pudo registrar la solicitud pendiente.');
           }
         }
-        if (!tripRes.ok) {
-          Alert.alert('Solicitud de viaje', tripRes.error || 'No se pudo registrar la solicitud pendiente.');
-        }
       }
+      cancelActivateFavorite();
+    } finally {
+      confirmActivateBusyRef.current = false;
+      setActivateSubmitting(false);
     }
-    cancelActivateFavorite();
   }, [
     session,
     userId,
@@ -757,6 +788,8 @@ export function HomeScreen() {
                 {homeFavoriteSlots.map((slot) => {
                   const snap = favorites[slot];
                   const enabled = isFavoriteEnabled(snap);
+                  const switchShowsOn =
+                    enabled || (activateOpen && activateSlot === slot);
                   const configured = favoriteHasConfig(snap);
                   return (
                     <TouchableOpacity
@@ -801,7 +834,7 @@ export function HomeScreen() {
                         onTouchEnd={(e) => e.stopPropagation()}
                       >
                         <Switch
-                          value={enabled}
+                          value={switchShowsOn}
                           onValueChange={(v) => {
                             if (!v) {
                               void setFavoriteDisabled(slot);
@@ -810,7 +843,7 @@ export function HomeScreen() {
                             void openActivateFavoriteModal(slot);
                           }}
                           trackColor={{ false: '#d1d5db', true: '#86efac' }}
-                          thumbColor={enabled ? '#166534' : '#f3f4f6'}
+                          thumbColor={switchShowsOn ? '#166534' : '#f3f4f6'}
                         />
                       </View>
                     </TouchableOpacity>
@@ -1020,35 +1053,50 @@ export function HomeScreen() {
                       Podés cambiar fecha y hora acá antes de confirmar.
                     </Text>
                   )}
-                  <View style={styles.activateModalToggleRow}>
-                    <View style={styles.activateModalToggleTextWrap}>
-                      <Text style={styles.activateModalToggleTitle}>Registrar solicitud pendiente</Text>
-                      <Text style={styles.activateModalToggleHint}>
-                        Crea una `solicitud de viaje` para demanda agrupada con este favorito.
-                      </Text>
+                  {activateSnap &&
+                  activateSnap.rideKind !== 'long_distance' &&
+                  activateSnap.originLat != null &&
+                  activateSnap.originLng != null &&
+                  activateSnap.destinationLat != null &&
+                  activateSnap.destinationLng != null ? (
+                    <View style={styles.activateModalToggleRow}>
+                      <View style={styles.activateModalToggleTextWrap}>
+                        <Text style={styles.activateModalToggleTitle}>Incluir en Mis solicitudes</Text>
+                        <Text style={styles.activateModalToggleHint}>
+                          Es aparte del switch de la lista: acá elegís si también querés una solicitud para demanda
+                          agrupada. Si lo apagás, solo se activa el favorito en Inicio.
+                        </Text>
+                      </View>
+                      <Switch
+                        value={activateRegisterTripRequest}
+                        onValueChange={setActivateRegisterTripRequest}
+                        trackColor={{ false: '#d1d5db', true: '#86efac' }}
+                        thumbColor={activateRegisterTripRequest ? '#166534' : '#f3f4f6'}
+                      />
                     </View>
-                    <Switch
-                      value={activateRegisterTripRequest && activateSnap?.rideKind !== 'long_distance'}
-                      onValueChange={setActivateRegisterTripRequest}
-                      disabled={activateSnap?.rideKind === 'long_distance'}
-                      trackColor={{ false: '#d1d5db', true: '#86efac' }}
-                      thumbColor={activateRegisterTripRequest ? '#166534' : '#f3f4f6'}
-                    />
-                  </View>
+                  ) : null}
                   <View style={styles.activateModalActions}>
                     <TouchableOpacity
                       style={[styles.activateModalBtn, styles.activateModalBtnGhost]}
                       onPress={cancelActivateFavorite}
+                      disabled={activateSubmitting}
                       accessibilityRole="button"
                     >
                       <Text style={styles.activateModalBtnGhostText}>Cancelar</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.activateModalBtn, styles.activateModalBtnPrimary]}
+                      style={[
+                        styles.activateModalBtn,
+                        styles.activateModalBtnPrimary,
+                        activateSubmitting && styles.activateModalBtnPrimaryDisabled,
+                      ]}
                       onPress={() => void confirmActivateFavorite()}
+                      disabled={activateSubmitting}
                       accessibilityRole="button"
                     >
-                      <Text style={styles.activateModalBtnPrimaryText}>Activar</Text>
+                      <Text style={styles.activateModalBtnPrimaryText}>
+                        {activateSubmitting ? 'Guardando…' : 'Activar'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </Pressable>
@@ -1443,5 +1491,6 @@ const styles = StyleSheet.create({
   },
   activateModalBtnGhostText: { fontSize: 15, fontWeight: '600', color: '#374151' },
   activateModalBtnPrimary: { backgroundColor: '#166534' },
+  activateModalBtnPrimaryDisabled: { opacity: 0.55 },
   activateModalBtnPrimaryText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 });

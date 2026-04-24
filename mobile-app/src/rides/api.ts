@@ -1048,6 +1048,34 @@ export async function cancelTripRequest(requestId: string, userId: string) {
   if (error) throw error;
 }
 
+/**
+ * Al desactivar el favorito en Inicio: cancela solicitudes **pendientes** vinculadas a ese slot.
+ * (Si la solicitud ya pasó a agrupada, el pasajero sigue viendo “Mis solicitudes” hasta salir del grupo desde ahí.)
+ */
+export async function cancelTripRequestsForPassengerFavoriteSlot(userId: string, favoriteSlot: string): Promise<void> {
+  const slot = favoriteSlot.trim();
+  if (!slot) return;
+
+  const { data, error } = await supabase
+    .from('trip_requests')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('passenger_favorite_slot', slot)
+    .eq('status', 'pending');
+
+  if (error || !data?.length) return;
+
+  for (const row of data as { id: string }[]) {
+    const id = String(row.id ?? '').trim();
+    if (!id) continue;
+    try {
+      await cancelTripRequest(id, userId);
+    } catch {
+      // seguir con el resto
+    }
+  }
+}
+
 /** Salir de demanda agrupada: RPC con la sesión de Supabase de la app (mismo proyecto que el resto del cliente). */
 export async function leaveDemandGroupForTripRequest(
   tripRequestId: string
