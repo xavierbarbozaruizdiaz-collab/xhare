@@ -136,7 +136,9 @@ function listHomeFavoriteSlotsToShow(
 
 function favoriteHasConfig(snap: PassengerFavoriteSnapshot | undefined): boolean {
   if (!snap) return false;
-  if (snap.origin.trim() && snap.destination.trim()) return true;
+  const o = typeof snap.origin === 'string' ? snap.origin.trim() : '';
+  const d = typeof snap.destination === 'string' ? snap.destination.trim() : '';
+  if (o && d) return true;
   return (
     snap.originLat != null &&
     snap.originLng != null &&
@@ -656,10 +658,10 @@ export function HomeScreen() {
             userId,
             originLat: snap.originLat!,
             originLng: snap.originLng!,
-            originLabel: (snap.origin.trim() || 'Origen').slice(0, 500),
+            originLabel: (String(snap.origin ?? '').trim() || 'Origen').slice(0, 500),
             destinationLat: snap.destinationLat!,
             destinationLng: snap.destinationLng!,
-            destinationLabel: (snap.destination.trim() || 'Destino').slice(0, 500),
+            destinationLabel: (String(snap.destination ?? '').trim() || 'Destino').slice(0, 500),
             requestedDate: d,
             requestedTime: normalizeHmForTripRequest(pickupHm),
             seats: 1,
