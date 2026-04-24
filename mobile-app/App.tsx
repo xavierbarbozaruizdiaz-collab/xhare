@@ -1,5 +1,5 @@
-import React, { Component, type ErrorInfo, type ReactNode } from 'react';
-import { ScrollView, StyleSheet, Text } from 'react-native';
+import React, { Component, useEffect, type ErrorInfo, type ReactNode } from 'react';
+import { LogBox, ScrollView, StyleSheet, Text } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/auth/AuthContext';
@@ -56,6 +56,16 @@ const styles = StyleSheet.create({
 });
 
 export default function App() {
+  useEffect(() => {
+    if (!__DEV__) return;
+    // Expo Dev Client (RN 0.83 / bridgeless): al arrancar puede intentar keep-awake
+    // antes de que la Activity esté lista y dispara un rechazo no fatal.
+    LogBox.ignoreLogs([
+      'ExpoKeepAwake.activate has been rejected',
+      'The current activity is no longer available',
+    ]);
+  }, []);
+
   return (
     <RootErrorBoundary>
       <SafeAreaProvider>

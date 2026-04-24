@@ -1,6 +1,6 @@
 /**
- * No se importa desde `index.ts`: reemplazar `globalThis.TextDecoder` en arranque rompía el runtime
- * en algunos dispositivos/Hermes. Si hace falta utf-16le, importar este módulo solo donde aplique.
+ * Hermes no soporta `new TextDecoder('utf-16le')` en algunos entornos.
+ * Este polyfill agrega solo ese encoding y delega todo lo demás al runtime nativo.
  */
 type DecoderInput = ArrayBuffer | ArrayBufferView | null | undefined;
 
@@ -31,7 +31,7 @@ function decodeUtf16Le(input: DecoderInput): string {
 }
 
 export function installTextDecoderUtf16LePolyfill(): void {
-  const NativeTextDecoder = globalThis.TextDecoder as any;
+  const NativeTextDecoder = (globalThis as any).TextDecoder as any;
   if (typeof NativeTextDecoder !== 'function') return;
 
   try {
@@ -71,5 +71,26 @@ export function installTextDecoderUtf16LePolyfill(): void {
     }
   }
 
-  (globalThis as any).TextDecoder = PatchedTextDecoder;
+  try {
+    Object.defineProperty(globalThis, 'TextDecoder', {
+      value: PatchedTextDecoder,
+      writable: true,
+      configurable: true,
+    });
+  } catch {
+    (globalThis as any).TextDecoder = PatchedTextDecoder;
+  }
+
+  // Algunos runtimes exponen `global` separado de `globalThis`.
+  if ((globalThis as any).global && (globalThis as any).global !== globalThis) {
+    try {
+      Object.defineProperty((globalThis as any).global, 'TextDecoder', {
+        value: PatchedTextDecoder,
+        writable: true,
+        configurable: true,
+      });
+    } catch {
+      (globalThis as any).global.TextDecoder = PatchedTextDecoder;
+    }
+  }
 }
