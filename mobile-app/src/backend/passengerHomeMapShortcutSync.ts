@@ -66,16 +66,20 @@ export async function pushPassengerHomeMapShortcuts(
   }
 
   for (const slot of FIXED_SLOTS) {
+    try {
     const snap = store[slot];
     if (!snap || !isShortcutEnabled(snap) || !hasMapCoords(snap)) {
       await supabase.from('passenger_home_map_shortcuts').delete().eq('user_id', userId).eq('slot', slot);
       continue;
     }
 
-    const rawDate = (snap.scheduledDateYmd ?? snap.date ?? '').trim();
+    const rawDate = String(snap.scheduledDateYmd ?? snap.date ?? '').trim();
     const dateYmd = validYmd(rawDate) ? rawDate : new Date().toISOString().slice(0, 10);
-    const timeHm = padHm((snap.scheduledTimeHm ?? snap.fromTime ?? '08:00').trim() || '08:00');
-    const arrivalRaw = snap.scheduledArrivalTimeHm?.trim();
+    const timeHm = padHm(String(snap.scheduledTimeHm ?? snap.fromTime ?? '08:00').trim() || '08:00');
+    const arrivalRaw =
+      snap.scheduledArrivalTimeHm != null && snap.scheduledArrivalTimeHm !== ''
+        ? String(snap.scheduledArrivalTimeHm).trim()
+        : '';
     const scheduledArrivalTime =
       arrivalRaw && /^(\d{1,2}):(\d{2})(?::\d{2})?$/.test(arrivalRaw) ? padHm(arrivalRaw) : null;
     const scheduleDaily = Boolean(snap.scheduleDaily);
@@ -86,8 +90,8 @@ export async function pushPassengerHomeMapShortcuts(
       user_id: userId,
       slot,
       enabled: true,
-      origin_label: snap.origin.trim() || null,
-      destination_label: snap.destination.trim() || null,
+      origin_label: String(snap.origin ?? '').trim() || null,
+      destination_label: String(snap.destination ?? '').trim() || null,
       origin_lat: Number(snap.originLat),
       origin_lng: Number(snap.originLng),
       destination_lat: Number(snap.destinationLat),
@@ -110,6 +114,10 @@ export async function pushPassengerHomeMapShortcuts(
     if (error) {
       // eslint-disable-next-line no-console
       console.warn('[pushPassengerHomeMapShortcuts]', slot, error.message, error.code ?? '');
+    }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[pushPassengerHomeMapShortcuts] slot', slot, e instanceof Error ? e.message : e);
     }
   }
 }
