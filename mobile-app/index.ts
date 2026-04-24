@@ -1,5 +1,6 @@
 // Debe ejecutarse antes de cargar Expo/RN para soportar utf-16le en runtimes Hermes.
 require('./src/polyfills/textDecoder').installTextDecoderUtf16LePolyfill();
+require('./src/background/driverLocationTask');
 const { registerRootComponent } = require('expo');
 const App = require('./App').default;
 

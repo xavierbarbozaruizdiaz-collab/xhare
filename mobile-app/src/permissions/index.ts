@@ -24,7 +24,10 @@ export async function requestLocationPermission(): Promise<boolean> {
  */
 export async function requestBackgroundLocationPermission(): Promise<boolean> {
   const fg = await Location.getForegroundPermissionsAsync();
-  if (fg.status !== 'granted') return false;
+  if (fg.status !== 'granted') {
+    const asked = await Location.requestForegroundPermissionsAsync();
+    if (asked.status !== 'granted') return false;
+  }
   const { status } = await Location.requestBackgroundPermissionsAsync();
   return status === 'granted';
 }

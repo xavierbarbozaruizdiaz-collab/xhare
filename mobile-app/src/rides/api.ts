@@ -9,6 +9,7 @@ import { raceWithTimeout } from '../backend/withTimeout';
 import { distanceMeters, distancePointToPolylineMeters, type Point } from '../lib/geo';
 import { tripRequestSuperHexPair } from '@/lib/tripRequestH3';
 import { insertOrUpdatePendingTripRequestFromFavorite } from '../lib/trip-request-favorite-pending-upsert';
+import type { PassengerFavoriteSnapshot } from '../lib/passengerFavorites';
 
 const SUPABASE_QUERY_TIMEOUT_MS = 28_000;
 const SAVE_TRIP_REQUEST_INSERT_TIMEOUT_MS = 22_000;
@@ -1120,4 +1121,79 @@ export async function fetchMyBookings(passengerId: string) {
     .limit(100);
   if (error) throw error;
   return data ?? [];
+}
+
+/**
+ * Favoritos (Inicio): si el pasajero ya tiene una reserva cuyo ride está `en_route` y coincide con
+ * el trayecto del favorito, devolver ese ride para abrir el mapa directo.
+ */
+export async function findEnRouteRideIdForFavorite(
+  passengerId: string,
+  favorite: PassengerFavoriteSnapshot | null | undefined
+): Promise<string | null> {
+  if (!passengerId || !favorite) return null;
+
+  const fOrigin =
+    favorite.originLat != null && favorite.originLng != null
+      ? { lat: Number(favorite.originLat), lng: Number(favorite.originLng) }
+      : null;
+  const fDest =
+    favorite.destinationLat != null && favorite.destinationLng != null
+      ? { lat: Number(favorite.destinationLat), lng: Number(favorite.destinationLng) }
+      : null;
+
+  const { data, error } = await supabase
+    .from('bookings')
+    .select(
+      `
+      ride_id, status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+      ride:rides(id, status, origin_lat, origin_lng, destination_lat, destination_lng)
+    `
+    )
+    .eq('passenger_id', passengerId)
+    .neq('status', 'cancelled')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error || !data?.length) return null;
+
+  const candidates = (data as Array<Record<string, unknown>>).filter((row) => {
+    const ride = row.ride as Record<string, unknown> | null | undefined;
+    return ride && String(ride.status ?? '') === 'en_route' && String(ride.id ?? '').trim().length > 0;
+  });
+  if (candidates.length === 0) return null;
+
+  // Si no hay coordenadas en el favorito, usar el en_route más reciente.
+  if (!fOrigin || !fDest) {
+    const ride = candidates[0]?.ride as Record<string, unknown> | undefined;
+    return ride ? String(ride.id ?? '') : null;
+  }
+
+  let best: { rideId: string; score: number } | null = null;
+  for (const row of candidates) {
+    const ride = row.ride as Record<string, unknown>;
+    const rideId = String(ride.id ?? '').trim();
+    if (!rideId) continue;
+
+    const pickup = Number.isFinite(Number(row.pickup_lat)) && Number.isFinite(Number(row.pickup_lng))
+      ? { lat: Number(row.pickup_lat), lng: Number(row.pickup_lng) }
+      : Number.isFinite(Number(ride.origin_lat)) && Number.isFinite(Number(ride.origin_lng))
+        ? { lat: Number(ride.origin_lat), lng: Number(ride.origin_lng) }
+        : null;
+    const dropoff = Number.isFinite(Number(row.dropoff_lat)) && Number.isFinite(Number(row.dropoff_lng))
+      ? { lat: Number(row.dropoff_lat), lng: Number(row.dropoff_lng) }
+      : Number.isFinite(Number(ride.destination_lat)) && Number.isFinite(Number(ride.destination_lng))
+        ? { lat: Number(ride.destination_lat), lng: Number(ride.destination_lng) }
+        : null;
+    if (!pickup || !dropoff) continue;
+
+    const originM = distanceMeters(fOrigin, pickup);
+    const destM = distanceMeters(fDest, dropoff);
+    const score = originM + destM;
+    const isMatchWindow = originM <= 3000 && destM <= 3000;
+    if (!isMatchWindow) continue;
+    if (!best || score < best.score) best = { rideId, score };
+  }
+
+  return best?.rideId ?? null;
 }

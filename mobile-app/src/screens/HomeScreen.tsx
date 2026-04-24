@@ -65,7 +65,11 @@ import {
   baseFareFromDistanceKmWithPricing,
   totalFareFromBaseAndSeatsWithPricing,
 } from '../lib/pricing/segment-fare';
-import { saveTripRequest, cancelTripRequestsForPassengerFavoriteSlot } from '../rides/api';
+import {
+  saveTripRequest,
+  cancelTripRequestsForPassengerFavoriteSlot,
+  findEnRouteRideIdForFavorite,
+} from '../rides/api';
 
 type IonName = ComponentProps<typeof Ionicons>['name'];
 
@@ -378,15 +382,21 @@ export function HomeScreen() {
   );
 
   const goFavorite = useCallback(
-    (slot: PassengerFavoriteSlot) => {
+    async (slot: PassengerFavoriteSlot) => {
       if (!session) {
         Alert.alert('Inicia sesion', 'Necesitas una cuenta para guardar favoritos.');
         return;
       }
       setAddFavoriteOpen(false);
+      const snap = favorites[slot];
+      const enRouteRideId = await findEnRouteRideIdForFavorite(session.id, snap);
+      if (enRouteRideId) {
+        parentNav?.navigate('RideDetail', { rideId: enRouteRideId });
+        return;
+      }
       parentNav?.navigate('SearchPublishedRides', { favoriteSlot: slot });
     },
-    [parentNav, session]
+    [parentNav, session, favorites]
   );
 
   const openAddFavorite = useCallback(() => {

@@ -39,10 +39,14 @@ import {
 } from '../lib/buildMasterBookRidePolyline';
 import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
 import { distanceMeters, type Point } from '../lib/geo';
-import { sendRideLocation } from '../backend/locationApi';
 import { confirmRideBookingPayment, arriveAtStop, setRideAwaitingStopConfirmation } from '../backend/api';
 import { requestLocationPermission } from '../permissions';
 import { getOriginForExternalNavigation } from '../location/getOriginForExternalNavigation';
+import {
+  startDriverTrackingInBackground,
+  stopDriverTrackingInBackground,
+  isDriverTrackingActive,
+} from '../background/driverTrackingService';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'RideDetail'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'RideDetail'>;
@@ -609,7 +613,18 @@ export function RideDetailScreen() {
       void loadPassengerBooking();
       void refetchDriverBookingPins();
       void refetchCoPassengerMapPoints();
-    }, [load, loadPassengerBooking, refetchDriverBookingPins, refetchCoPassengerMapPoints])
+      if (
+        session?.id &&
+        ride &&
+        String(ride.driver_id) === String(session.id) &&
+        String(ride.status ?? '') === 'en_route'
+      ) {
+        void (async () => {
+          const active = await isDriverTrackingActive();
+          if (!active) await startDriverTrackingInBackground(rideId);
+        })();
+      }
+    }, [load, loadPassengerBooking, refetchDriverBookingPins, refetchCoPassengerMapPoints, session?.id, ride, rideId])
   );
 
   const handleCancelPassengerBooking = useCallback(() => {
@@ -645,7 +660,7 @@ export function RideDetailScreen() {
     );
   }, [session?.id, passengerBooking, load, loadPassengerBooking]);
 
-  /** Conductor en_route: ubicación + datos. Pasajero con reserva: ver cuando el viaje pasa a en_route y el pin del conductor (sin depender de salir de la pantalla). */
+  /** Poll de UI: pasajero con reserva ve avances y pin en mapa sin salir de pantalla. */
   useEffect(() => {
     if (!ride) return;
     const st = String(ride.status ?? '');
@@ -653,7 +668,7 @@ export function RideDetailScreen() {
     const isPassengerWithBooking = Boolean(
       session?.id && passengerBooking && String(ride.driver_id) !== String(session.id)
     );
-    const driverNeedsTick = isDriver && st === 'en_route';
+    const driverNeedsTick = isDriver;
     const passengerNeedsTick =
       isPassengerWithBooking && st !== 'completed' && st !== 'cancelled';
     if (!driverNeedsTick && !passengerNeedsTick) return;
@@ -678,27 +693,25 @@ export function RideDetailScreen() {
   useEffect(() => {
     if (!ride || !session?.id) return;
     if (String(ride.driver_id) !== String(session.id)) return;
-    if (String(ride.status ?? '') !== 'en_route') return;
+    const st = String(ride.status ?? '');
     let cancelled = false;
-    const send = async () => {
-      const granted = await requestLocationPermission();
-      if (!granted || cancelled) return;
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      }).catch(() => null);
-      if (!pos || cancelled) return;
-      const { data: auth } = await supabase.auth.getSession();
-      const token = auth.session?.access_token;
-      if (!token || cancelled) return;
-      await sendRideLocation(rideId, pos.coords.latitude, pos.coords.longitude, token).catch(() => false);
-    };
-    void send();
-    const t = setInterval(() => {
-      void send();
-    }, 25_000);
+    void (async () => {
+      if (st === 'en_route') {
+        const ok = await startDriverTrackingInBackground(rideId);
+        if (!ok && !cancelled) {
+          Alert.alert(
+            'Ubicación en segundo plano',
+            'Para iniciar viaje se requiere ubicación en segundo plano. Activá el permiso y reintentá.'
+          );
+        }
+        return;
+      }
+      if (st === 'completed' || st === 'cancelled') {
+        await stopDriverTrackingInBackground();
+      }
+    })();
     return () => {
       cancelled = true;
-      clearInterval(t);
     };
   }, [ride, rideId, session?.id]);
 
@@ -734,10 +747,13 @@ export function RideDetailScreen() {
                 }
                 await load({ quiet: true });
                 if (next === 'en_route') {
+                  await startDriverTrackingInBackground(rideId);
                   Alert.alert('Listo', 'El viaje quedó en curso.');
                 } else if (next === 'completed') {
+                  await stopDriverTrackingInBackground();
                   Alert.alert('Listo', 'Viaje finalizado.');
                 } else {
+                  await stopDriverTrackingInBackground();
                   Alert.alert(
                     'Listo',
                     'Viaje cancelado. Si venía de sistema/demanda, quedó disponible para reasignación.'

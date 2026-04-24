@@ -8,8 +8,8 @@ const locationSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
-/** Máximo 1 request cada 15 s por (usuario, viaje) para no saturar en producción. */
-const LOCATION_WINDOW_MS = 15_000;
+/** Máximo 1 request cada 10 s por (usuario, viaje) para tracking fluido. */
+const LOCATION_WINDOW_MS = 10_000;
 const LOCATION_MAX_PER_WINDOW = 1;
 
 /** El conductor envía su posición durante el viaje (status en_route). */

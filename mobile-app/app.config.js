@@ -58,6 +58,13 @@ module.exports = {
       },
       // Para poder instalar "driver" y "pasajero" simultáneamente en el emulador.
       package: isDriver ? 'com.xhare.driver' : 'com.xhare.app',
+      permissions: [
+        'ACCESS_COARSE_LOCATION',
+        'ACCESS_FINE_LOCATION',
+        'ACCESS_BACKGROUND_LOCATION',
+        'FOREGROUND_SERVICE',
+        'FOREGROUND_SERVICE_LOCATION',
+      ],
       // Evita que herramientas intenten abrir placeholders literales (${mainActivityClass}).
       mainActivity: '.MainActivity',
       // Mapa en Reservar (react-native-maps): en Android hace falta API key de Google Maps
