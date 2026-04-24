@@ -23,7 +23,6 @@
     "web": "expo start --web",
     "check": "npm run check:ts",
     "check:ts": "tsc --noEmit",
-    "postinstall": "patch-package",
     "icons:android": "cross-env APP_FLAVOR=passenger node scripts/sync-android-launcher-icons.cjs",
     "build:android:release": "node scripts/run-android-release-flavor.cjs both",
     "build:android:release:passenger": "node scripts/run-android-release-flavor.cjs passenger",
@@ -56,7 +55,6 @@
     "@types/react": "~19.2.2",
     "cross-env": "^10.1.0",
     "dotenv": "^16.4.5",
-    "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
   "private": true
