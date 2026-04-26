@@ -11,24 +11,8 @@ export default function AdminDemandGroupingPage() {
   const [diagLoading, setDiagLoading] = useState(false);
   const [diagErr, setDiagErr] = useState<string | null>(null);
 
-  const [runLoading, setRunLoading] = useState(false);
-  const [runErr, setRunErr] = useState<string | null>(null);
-  const [lastRun, setLastRun] = useState<unknown>(null);
-  const [dryRunLoading, setDryRunLoading] = useState(false);
-  const [dryRunErr, setDryRunErr] = useState<string | null>(null);
-  const [lastDryRun, setLastDryRun] = useState<unknown>(null);
-  const [maxSeats, setMaxSeats] = useState(15);
-  const [minScore, setMinScore] = useState(0.55);
-  const [maxOriginKm, setMaxOriginKm] = useState(8);
-  const [maxDestKm, setMaxDestKm] = useState(8);
   /** GET diagnostics?explain=1 — muestras geo (motivos) + classified listos para RPC. */
   const [includeExplain, setIncludeExplain] = useState(false);
-
-  const authHeaders = useCallback((): HeadersInit => {
-    const h: Record<string, string> = {};
-    if (accessToken) h.Authorization = `Bearer ${accessToken}`;
-    return h;
-  }, [accessToken]);
 
   const loadDiagnostics = useCallback(async () => {
     if (!accessToken) return;
@@ -70,87 +54,6 @@ export default function AdminDemandGroupingPage() {
     void loadDiagnostics();
   }, [ready, isAdmin, accessToken, loadDiagnostics, includeExplain]);
 
-  const runDryRunGeo = async () => {
-    if (!accessToken) return;
-    setDryRunErr(null);
-    setDryRunLoading(true);
-    try {
-      let token = accessToken;
-      let res = await fetch('/api/admin/demand-grouping/dry-run', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ maxSeats, minScore, maxOriginKm, maxDestKm }),
-      });
-      if (res.status === 401) {
-        token = (await refetch()) ?? '';
-        if (token) {
-          res = await fetch('/api/admin/demand-grouping/dry-run', {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ maxSeats, minScore, maxOriginKm, maxDestKm }),
-          });
-        }
-      }
-      const body = await res.json();
-      if (!res.ok) {
-        setDryRunErr(typeof (body as { error?: string }).error === 'string' ? (body as { error: string }).error : 'Falló el dry-run');
-        setLastDryRun(body);
-        return;
-      }
-      setLastDryRun(body);
-      await loadDiagnostics();
-    } catch (e) {
-      setDryRunErr(e instanceof Error ? e.message : 'Error de red');
-    } finally {
-      setDryRunLoading(false);
-    }
-  };
-
-  const runExecute = async (mode: 'both' | 'classified' | 'geo') => {
-    if (!accessToken) return;
-    setRunErr(null);
-    setRunLoading(true);
-    try {
-      let token = accessToken;
-      let res = await fetch('/api/admin/demand-grouping/execute', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode, maxSeats, minScore, maxOriginKm, maxDestKm }),
-      });
-      if (res.status === 401) {
-        token = (await refetch()) ?? '';
-        if (token) {
-          res = await fetch('/api/admin/demand-grouping/execute', {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ mode, maxSeats, minScore, maxOriginKm, maxDestKm }),
-          });
-        }
-      }
-      const body = await res.json();
-      if (!res.ok) {
-        setRunErr(typeof (body as { error?: string }).error === 'string' ? (body as { error: string }).error : 'Falló la ejecución');
-        setLastRun(body);
-        return;
-      }
-      setLastRun(body);
-      await loadDiagnostics();
-    } catch (e) {
-      setRunErr(e instanceof Error ? e.message : 'Error de red');
-    } finally {
-      setRunLoading(false);
-    }
-  };
 
   if (!ready || !isAdmin) {
     return (
@@ -161,10 +64,10 @@ export default function AdminDemandGroupingPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Agrupación de demanda</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Agrupación de demanda (HEX-only)</h1>
         <p className="text-sm text-gray-600 mt-1 max-w-3xl">
-          Fase 1–2: diagnóstico en vivo y ejecución <strong>en proceso</strong> (service role tras validar admin): mismo RPC y mismo
-          sync geo que antes, sin depender de un HTTP interno al deploy. Ves conteos antes/después y el resultado de cada paso. En
+          Runtime simplificado: se ejecuta solo el motor <strong>HEX</strong> y la corrida se hace <strong>solo por cron</strong>.
+          Los motores corridor/classified y geo_sync quedaron deshabilitados para evitar solapamientos. En
           endpoint <code className="text-xs bg-gray-100 px-1 rounded">GET /api/cron/demand-grouping</code> con{' '}
           <code className="text-xs bg-gray-100 px-1 rounded">Authorization: Bearer CRON_SECRET</code> (o{' '}
           <code className="text-xs bg-gray-100 px-1 rounded">DEMAND_ROUTES_SYNC_SECRET</code>) ejecuta el mismo pipeline. En Vercel{' '}
@@ -175,26 +78,17 @@ export default function AdminDemandGroupingPage() {
       </div>
 
       <details className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm text-slate-800">
-        <summary className="font-semibold cursor-pointer text-slate-900">Auditoría rápida (Fase 0) — qué hay hoy en el código</summary>
+        <summary className="font-semibold cursor-pointer text-slate-900">Auditoría rápida — estado actual</summary>
         <ul className="mt-3 list-disc pl-5 space-y-2">
           <li>
-            Activá <strong>Incluir muestras</strong> y refrescá: en el JSON verás <code className="text-xs bg-white px-1 rounded">explain_samples</code>{' '}
-            con intentos de encaje geo (motivos como <code className="text-xs bg-white px-1 rounded">outside_2km_corridor</code>) y filas
-            classified listas para el RPC.
+            El pipeline productivo corre en <strong>HEX-only</strong> para evitar que varios motores procesen la misma demanda.
           </li>
           <li>
-            <strong>Dry-run geo:</strong> simula el sync sin INSERT/UPDATE en Supabase; puede llamar a <strong>OSRM</strong> para
-            polilíneas faltantes (no las guarda).
+            La clasificación por etiquetas HEX se calcula al crear la trip (<code className="text-xs bg-white px-1 rounded">origin_super_hex</code>{' '}
+            y <code className="text-xs bg-white px-1 rounded">dest_super_hex</code>).
           </li>
           <li>
-            <strong>Dry-run classified:</strong> usa el RPC <code className="text-xs bg-white px-1 rounded">auto_group_classified_trip_requests_preview</code>{' '}
-            (migración <code className="text-xs bg-white px-1 rounded">070</code> en Supabase). Misma partición en lotes que el RPC real, sin escribir.
-          </li>
-          <li>
-            <strong>Dos pipelines:</strong> geo (<code className="text-xs bg-white px-1 rounded">/api/demand-routes/sync</code>) para
-            pedidos <code className="text-xs bg-white px-1 rounded">pending</code> sin clasificar o <code className="text-xs bg-white px-1 rounded">unclassified</code>; y corredor+bucket (
-            <code className="text-xs bg-white px-1 rounded">/api/demand-routes/auto-group-classified</code>) para <code className="text-xs bg-white px-1 rounded">classified</code> con{' '}
-            <code className="text-xs bg-white px-1 rounded">corridor_id</code> y <code className="text-xs bg-white px-1 rounded">time_bucket</code>.
+            Endpoints legacy de corridor/classified y geo_sync permanecen como <strong>noop/deprecated</strong> por compatibilidad.
           </li>
           <li>
             <strong>Tubos violeta</strong> en Corredores leen <code className="text-xs bg-white px-1 rounded">demand_route_groups</code> con
@@ -217,7 +111,7 @@ export default function AdminDemandGroupingPage() {
                 checked={includeExplain}
                 onChange={(e) => setIncludeExplain(e.target.checked)}
               />
-              Incluir muestras (motivos geo + classified listos)
+              Incluir detalle adicional
             </label>
             <button
               type="button"
@@ -239,115 +133,8 @@ export default function AdminDemandGroupingPage() {
         )}
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-900 mb-2">Ejecutar agrupación (real)</h2>
-        <p className="text-xs text-gray-600 mb-3">
-          Usa tu sesión admin hacia los endpoints existentes. Orden en modo “ambos”: primero{' '}
-          <strong>auto-group-classified</strong>, luego <strong>sync geo</strong>.
-        </p>
-        {runErr && <p className="text-sm text-red-700 mb-2">{runErr}</p>}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <label className="text-xs text-gray-700">
-            Max seats
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={maxSeats}
-              onChange={(e) => setMaxSeats(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
-              className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm"
-            />
-          </label>
-          <label className="text-xs text-gray-700">
-            Min score (0-0.99)
-            <input
-              type="number"
-              min={0}
-              max={0.99}
-              step={0.01}
-              value={minScore}
-              onChange={(e) => setMinScore(Math.max(0, Math.min(0.99, Number(e.target.value) || 0)))}
-              className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm"
-            />
-          </label>
-          <label className="text-xs text-gray-700">
-            Max origen km
-            <input
-              type="number"
-              min={0.05}
-              step={0.1}
-              value={maxOriginKm}
-              onChange={(e) => setMaxOriginKm(Math.max(0.05, Number(e.target.value) || 0.05))}
-              className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm"
-            />
-          </label>
-          <label className="text-xs text-gray-700">
-            Max destino km
-            <input
-              type="number"
-              min={0.05}
-              step={0.1}
-              value={maxDestKm}
-              onChange={(e) => setMaxDestKm(Math.max(0.05, Number(e.target.value) || 0.05))}
-              className="mt-1 w-full border border-gray-300 rounded px-2 py-1 text-sm"
-            />
-          </label>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="text-sm py-2 px-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100 disabled:opacity-50"
-            disabled={dryRunLoading || !accessToken}
-            onClick={() => void runDryRunGeo()}
-          >
-            {dryRunLoading ? 'Simulando…' : 'Simular geo + classified (dry-run)'}
-          </button>
-          <button
-            type="button"
-            className="btn-primary text-sm py-2 px-4 disabled:opacity-50"
-            disabled={runLoading || !accessToken}
-            onClick={() => void runExecute('both')}
-          >
-            {runLoading ? 'Ejecutando…' : 'Ambos pasos'}
-          </button>
-          <button
-            type="button"
-            className="text-sm py-2 px-4 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
-            disabled={runLoading || !accessToken}
-            onClick={() => void runExecute('classified')}
-          >
-            Solo corredor + bucket
-          </button>
-          <button
-            type="button"
-            className="text-sm py-2 px-4 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
-            disabled={runLoading || !accessToken}
-            onClick={() => void runExecute('geo')}
-          >
-            Solo sync geo
-          </button>
-        </div>
-        {dryRunErr && <p className="text-sm text-red-700 mb-2">{dryRunErr}</p>}
-        {lastDryRun != null && (
-          <div className="mt-4">
-            <h3 className="text-sm font-medium text-amber-900 mb-1">Última simulación (geo + classified preview, sin escribir en base)</h3>
-            <pre className="text-xs bg-amber-950 text-amber-50 p-3 rounded-lg overflow-x-auto max-h-[320px] overflow-y-auto">
-              {JSON.stringify(lastDryRun, null, 2)}
-            </pre>
-          </div>
-        )}
-        {lastRun != null && (
-          <div className="mt-4">
-            <h3 className="text-sm font-medium text-gray-800 mb-1">Última ejecución real</h3>
-            <pre className="text-xs bg-gray-900 text-amber-100 p-3 rounded-lg overflow-x-auto max-h-[360px] overflow-y-auto">
-              {JSON.stringify(lastRun, null, 2)}
-            </pre>
-          </div>
-        )}
-      </div>
-
       <p className="text-xs text-gray-500">
-        Opcional después: historial de corridas en tabla, o export CSV del <code className="bg-gray-100 px-1 rounded">planned</code> / batches.
+        El panel queda en modo lectura. La ejecución se realiza exclusivamente desde cron.
       </p>
     </div>
   );

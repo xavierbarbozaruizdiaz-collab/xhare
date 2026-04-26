@@ -4,10 +4,30 @@ import { drainDriverDemandPassengerLeftPushQueue } from '@/lib/push/sendDriverDe
 import {
   normalizeDemandGroupingParams,
   runDemandGroupingPipeline,
-  type DemandGroupingMode,
 } from '@/lib/demand-grouping-pipeline';
 
 export const dynamic = 'force-dynamic';
+
+function inferTriggerSource(request: NextRequest): 'cron_get' | 'cron_post' {
+  return request.method === 'POST' ? 'cron_post' : 'cron_get';
+}
+
+function extractHexCounters(steps: Array<{ name: string; body: unknown }>): {
+  tripRequestsGrouped: number;
+  groupsCreated: number;
+  groupsMerged: number;
+} {
+  const hexStep = steps.find((s) => s.name === 'auto_group_hex_trip_requests_v3');
+  const body = (hexStep?.body ?? {}) as Record<string, unknown>;
+  const tripRequestsGrouped = Number(body.trip_requests_grouped ?? 0);
+  const groupsCreated = Number(body.groups_created ?? 0);
+  const groupsMerged = Number(body.groups_merged ?? 0);
+  return {
+    tripRequestsGrouped: Number.isFinite(tripRequestsGrouped) ? tripRequestsGrouped : 0,
+    groupsCreated: Number.isFinite(groupsCreated) ? groupsCreated : 0,
+    groupsMerged: Number.isFinite(groupsMerged) ? groupsMerged : 0,
+  };
+}
 
 function cronAuthorized(request: NextRequest): boolean {
   const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization');
@@ -47,8 +67,7 @@ async function handle(request: NextRequest) {
     }
   }
 
-  const mode: DemandGroupingMode =
-    body.mode === 'classified' || body.mode === 'geo' ? (body.mode as DemandGroupingMode) : 'both';
+  const mode = 'both';
   const params = normalizeDemandGroupingParams({
     maxSeats: body.maxSeats as number | undefined,
     minScore: body.minScore as number | undefined,
@@ -57,6 +76,23 @@ async function handle(request: NextRequest) {
   });
 
   const service = createServiceClient();
+  const startedAt = new Date();
+  const triggerSource = inferTriggerSource(request);
+  let runId: string | null = null;
+  {
+    const { data: runRow } = await service
+      .from('demand_grouping_runs')
+      .insert({
+        trigger_source: triggerSource,
+        engine_mode: 'hex_only',
+        status: 'running',
+        started_at: startedAt.toISOString(),
+        params,
+      })
+      .select('id')
+      .single();
+    runId = runRow?.id ?? null;
+  }
   try {
     await drainDriverDemandPassengerLeftPushQueue(service);
   } catch (e) {
@@ -64,6 +100,34 @@ async function handle(request: NextRequest) {
   }
   const { steps } = await runDemandGroupingPipeline(service, mode, params);
   const anyFail = steps.some((s) => s.status >= 400);
+  const finishedAt = new Date();
+  const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
+  const { tripRequestsGrouped, groupsCreated, groupsMerged } = extractHexCounters(steps);
+  const httpStatus = anyFail ? 500 : 200;
+  if (runId) {
+    const firstErrorStep = steps.find((s) => s.status >= 400);
+    const firstError = (firstErrorStep?.body ?? {}) as Record<string, unknown>;
+    const errorMessage =
+      firstError && typeof firstError.error === 'string'
+        ? firstError.error
+        : firstErrorStep
+          ? `Paso fallido: ${firstErrorStep.name}`
+          : null;
+    await service
+      .from('demand_grouping_runs')
+      .update({
+        status: anyFail ? 'error' : 'ok',
+        finished_at: finishedAt.toISOString(),
+        duration_ms: durationMs,
+        http_status: httpStatus,
+        steps,
+        trip_requests_grouped: tripRequestsGrouped,
+        groups_created: groupsCreated,
+        groups_merged: groupsMerged,
+        error_message: errorMessage,
+      })
+      .eq('id', runId);
+  }
 
   return NextResponse.json(
     {
@@ -72,9 +136,11 @@ async function handle(request: NextRequest) {
       path: '/api/cron/demand-grouping',
       mode,
       params,
+      engine: 'hex_only',
+      runId,
       steps,
     },
-    { status: anyFail ? 500 : 200 }
+    { status: httpStatus }
   );
 }
 

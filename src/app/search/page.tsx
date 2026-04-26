@@ -364,6 +364,7 @@ export default function SearchPage() {
         status: 'pending',
         origin_super_hex: hex.origin_super_hex,
         dest_super_hex: hex.dest_super_hex,
+        routing_engine: 'hex',
       });
       if (error) throw error;
       setRequestSaved(true);

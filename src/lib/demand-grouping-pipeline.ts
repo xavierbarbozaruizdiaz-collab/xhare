@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { runHexGroupingGooglePass } from '@/lib/demand-hex-google-optimize';
-import { runDemandRoutesGeoSync } from '@/lib/demand-routes-geo-sync';
 
 function parseHexGroupIds(data: unknown): string[] {
   if (!data || typeof data !== 'object') return [];
@@ -36,9 +35,8 @@ export function normalizeDemandGroupingParams(body: {
 }
 
 /**
- * 1) Agrupa por super-hex (v3) + optimización Google fase pickups (degradación FIFO si falla).
- * 2) Agrupa classified (v2 con score; fallback v1 si falla el RPC v2).
- * 3) Sync geo para pending unclassified (misma lógica que POST /api/demand-routes/sync).
+ * Pipeline actual: solo HEX.
+ * Los motores corridor/classified y geo_sync quedan deshabilitados en runtime.
  */
 export async function runDemandGroupingPipeline(
   service: SupabaseClient,
@@ -46,9 +44,9 @@ export async function runDemandGroupingPipeline(
   params: DemandGroupingParams
 ): Promise<{ steps: DemandGroupingStep[] }> {
   const steps: DemandGroupingStep[] = [];
-  const { maxSeats, minScore, maxOriginKm, maxDestKm } = params;
+  const { maxSeats } = params;
 
-  if (mode === 'both' || mode === 'classified') {
+  if (mode === 'both' || mode === 'classified' || mode === 'geo') {
     const { data: hexData, error: hexErr } = await service.rpc('auto_group_hex_trip_requests_v3', {
       p_max_seats: maxSeats,
     });
@@ -83,66 +81,16 @@ export async function runDemandGroupingPipeline(
     }
   }
 
-  if (mode === 'both' || mode === 'classified') {
-    const { data, error } = await service.rpc('auto_group_classified_trip_requests_v2', {
-      p_max_seats: maxSeats,
-      p_min_score: minScore,
-      p_max_origin_km: maxOriginKm,
-      p_max_dest_km: maxDestKm,
-    });
-    if (error) {
-      const { data: fbData, error: fbErr } = await service.rpc('auto_group_classified_trip_requests', {
-        p_max_seats: maxSeats,
-      });
-      if (fbErr) {
-        steps.push({
-          name: 'auto_group_classified_trip_requests_v2',
-          status: 500,
-          body: {
-            error: error.message,
-            code: error.code,
-            fallback_error: fbErr.message,
-            hint: 'Revisá migración 075 (motor v2) y RPC v1.',
-          },
-        });
-      } else {
-        steps.push({
-          name: 'auto_group_classified_trip_requests (fallback_v1)',
-          status: 200,
-          body: fbData ?? { ok: true, fallback: true },
-        });
-      }
-    } else {
-      steps.push({
-        name: 'auto_group_classified_trip_requests_v2',
-        status: 200,
-        body: data ?? { ok: true },
-      });
-    }
-  }
-
-  if (mode === 'both' || mode === 'geo') {
-    const geo = await runDemandRoutesGeoSync(service);
-    if (!geo.ok) {
-      steps.push({
-        name: 'demand_routes_geo_sync',
-        status: 500,
-        body: { error: geo.error },
-      });
-    } else {
-      steps.push({
-        name: 'demand_routes_geo_sync',
-        status: 200,
-        body: {
-          ok: true,
-          processed: geo.processed,
-          addedToExisting: geo.addedToExisting,
-          newGroupsCreated: geo.newGroupsCreated,
-          ...(geo.message ? { message: geo.message } : {}),
-        },
-      });
-    }
-  }
+  steps.push({
+    name: 'legacy_engines_disabled',
+    status: 200,
+    body: {
+      ok: true,
+      disabled: ['corridor_bucket', 'classified', 'geo_sync'],
+      note: 'Pipeline ejecutado en modo HEX-only.',
+      requested_mode: mode,
+    },
+  });
 
   return { steps };
 }

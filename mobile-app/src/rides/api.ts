@@ -61,7 +61,8 @@ export function driverLiveMapPoint(
   ride: { driver_lat?: unknown; driver_lng?: unknown; status?: unknown } | null | undefined
 ): Point | null {
   if (!ride) return null;
-  if (String(ride.status ?? '') !== 'en_route') return null;
+  const st = String(ride.status ?? '').trim();
+  if (!st || st === 'draft' || st === 'completed' || st === 'cancelled') return null;
   const lat = ride.driver_lat;
   const lng = ride.driver_lng;
   if (lat == null || lng == null) return null;
@@ -698,6 +699,7 @@ function buildTripRequestRow(params: {
     seats: Math.max(1, Math.min(50, params.seats ?? 1)),
     status: 'pending',
     pricing_kind: kind,
+    routing_engine: 'hex',
   };
   if (params.originCity != null) row.origin_city = params.originCity;
   if (params.originDepartment != null) row.origin_department = params.originDepartment;

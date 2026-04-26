@@ -159,6 +159,7 @@ export async function POST(request: NextRequest) {
       seats: p.seats ?? 1,
       status: 'pending',
       pricing_kind: kind,
+      routing_engine: 'hex',
     };
 
     const ts = p.requested_time_start?.trim();
@@ -248,6 +249,7 @@ export async function POST(request: NextRequest) {
       classification_status?: string | null;
       origin_node_key?: string | null;
       destination_node_key?: string | null;
+      routing_engine?: string | null;
     };
     let inserted: InsertedTripSummary | null = null;
 
@@ -263,7 +265,7 @@ export async function POST(request: NextRequest) {
       const { data: sel, error: selErr } = await auth.supabase
         .from('trip_requests')
         .select(
-          'id, requested_mode, requested_time_start, requested_time_end, seats, corridor_id, time_bucket, classification_status, origin_node_key, destination_node_key'
+          'id, requested_mode, requested_time_start, requested_time_end, seats, corridor_id, time_bucket, classification_status, origin_node_key, destination_node_key, routing_engine'
         )
         .eq('id', up.id)
         .single();
@@ -277,7 +279,7 @@ export async function POST(request: NextRequest) {
         .from('trip_requests')
         .insert(row)
         .select(
-          'id, requested_mode, requested_time_start, requested_time_end, seats, corridor_id, time_bucket, classification_status, origin_node_key, destination_node_key'
+          'id, requested_mode, requested_time_start, requested_time_end, seats, corridor_id, time_bucket, classification_status, origin_node_key, destination_node_key, routing_engine'
         )
         .single();
 
@@ -299,6 +301,7 @@ export async function POST(request: NextRequest) {
       requested_time_start: inserted?.requested_time_start,
       requested_time_end: inserted?.requested_time_end,
       seats: inserted?.seats,
+      routing_engine: inserted?.routing_engine,
     });
 
     const logClassification =

@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
-import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
-import { normalizeDemandGroupingParams, runDemandGroupingPipeline } from '@/lib/demand-grouping-pipeline';
+import { authGetUser, createServerClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/demand-routes/auto-group-classified
- * Solo paso classified: v2 (score) con fallback v1, mismos parámetros opcionales que admin/cron.
+ * Endpoint legado: corridor/classified deshabilitado. Se mantiene como noop para compatibilidad.
  * Auth: conductor/admin o Bearer DEMAND_ROUTES_SYNC_SECRET.
  */
 export async function POST(request: Request) {
@@ -30,32 +29,14 @@ export async function POST(request: Request) {
       }
     }
 
-    let body: Record<string, unknown> = {};
-    try {
-      body = (await request.json()) as Record<string, unknown>;
-    } catch {
-      body = {};
-    }
-    const params = normalizeDemandGroupingParams({
-      maxSeats: body.maxSeats as number | undefined,
-      minScore: body.minScore as number | undefined,
-      maxOriginKm: body.maxOriginKm as number | undefined,
-      maxDestKm: body.maxDestKm as number | undefined,
+    return NextResponse.json({
+      ok: true,
+      deprecated: true,
+      engine: 'corridor_bucket/classified',
+      status: 'disabled',
+      message: 'auto-group-classified está deshabilitado; el pipeline opera en HEX-only.',
+      steps: [],
     });
-
-    const supabase = createServiceClient();
-    const { steps } = await runDemandGroupingPipeline(supabase, 'classified', params);
-    const step = steps[0];
-    const ok = step?.status === 200;
-
-    if (process.env.NODE_ENV !== 'production' && ok) {
-      console.info('[classification] auto_group_classified pipeline', step?.body);
-    }
-
-    return NextResponse.json(
-      { ok, steps, params },
-      { status: ok ? 200 : 500 }
-    );
   } catch (e) {
     console.error('[auto-group-classified] error:', e);
     return NextResponse.json(
