@@ -16,25 +16,12 @@ export type DescargarLandingProps = {
   whatsappUrl: string;
   playStoreUrl: string;
   appStoreUrl: string;
-  heroImageUrl: string;
+  heroImageUrls: string[];
   screenshotUrls: string[];
   defaultTheme: string;
 };
 
 type ThemePref = 'system' | 'light' | 'dark' | 'highContrast';
-
-const THEME_STORAGE_KEY = 'xhare.descargar.themePref';
-
-function readInitialThemePref(fallback: ThemePref): ThemePref {
-  if (typeof window === 'undefined') return 'system';
-  try {
-    const raw = window.localStorage.getItem(THEME_STORAGE_KEY);
-    if (raw === 'light' || raw === 'dark' || raw === 'highContrast' || raw === 'system') return raw;
-  } catch {
-    // ignore
-  }
-  return fallback;
-}
 
 function useSystemDark() {
   const [isDark, setIsDark] = useState(false);
@@ -223,15 +210,12 @@ export function DescargarLanding(props: DescargarLandingProps) {
     props.defaultTheme === 'system'
       ? props.defaultTheme
       : 'system';
-  const [themePref, setThemePref] = useState<ThemePref>(() => readInitialThemePref(adminDefaultTheme));
+  const [themePref, setThemePref] = useState<ThemePref>(adminDefaultTheme);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, themePref);
-    } catch {
-      // ignore
-    }
-  }, [themePref]);
+    // Keep admin-selected default as source of truth on page load/refresh.
+    setThemePref(adminDefaultTheme);
+  }, [adminDefaultTheme]);
 
   const { isDark, highContrast } = useMemo(() => {
     if (themePref === 'highContrast') return { isDark: true, highContrast: true };
@@ -252,12 +236,27 @@ export function DescargarLanding(props: DescargarLandingProps) {
   const topBar = isDark ? 'border-white/10 bg-black/30' : 'border-slate-200 bg-white/70';
 
   const setTheme = useCallback((next: ThemePref) => setThemePref(next), []);
-  const heroSrc = props.heroImageUrl || '/descargar/hero-route.svg';
+  const [heroIndex, setHeroIndex] = useState(0);
   const previewScrollerRef = useRef<HTMLDivElement | null>(null);
+  const normalizedHeroImages = props.heroImageUrls.filter((url) => !!url.trim());
+  const effectiveHeroImages =
+    normalizedHeroImages.length > 0 ? normalizedHeroImages : ['/descargar/hero-route.svg'];
   const normalizedScreenshots = PREVIEW_ITEMS.map((item, idx) => ({
     ...item,
     src: props.screenshotUrls[idx] ?? '',
   }));
+
+  useEffect(() => {
+    setHeroIndex(0);
+  }, [effectiveHeroImages.length]);
+
+  useEffect(() => {
+    if (reduceMotion || effectiveHeroImages.length <= 1) return;
+    const timer = window.setInterval(() => {
+      setHeroIndex((prev) => (prev + 1) % effectiveHeroImages.length);
+    }, 3200);
+    return () => window.clearInterval(timer);
+  }, [reduceMotion, effectiveHeroImages.length]);
 
   useEffect(() => {
     if (reduceMotion) return;
@@ -335,7 +334,7 @@ export function DescargarLanding(props: DescargarLandingProps) {
           >
             <div className="relative overflow-hidden rounded-2xl">
               <Image
-                src={heroSrc}
+                src={effectiveHeroImages[heroIndex]}
                 alt="Ilustración: ruta en Central con minibús (placeholder visual)"
                 width={960}
                 height={640}
@@ -343,10 +342,21 @@ export function DescargarLanding(props: DescargarLandingProps) {
                 className="h-auto w-full"
               />
             </div>
-            <p className={`mt-3 px-2 text-xs ${isDark ? 'text-white/45' : 'text-slate-500'}`}>
-              Podés cambiar esta imagen desde <strong>Admin → Configuración → Descarga APK</strong>. Recomendado:
-              <span className="font-mono"> 1600x1066</span> en <span className="font-mono">.webp</span>.
-            </p>
+            {effectiveHeroImages.length > 1 ? (
+              <div className="mt-3 flex items-center justify-center gap-2">
+                {effectiveHeroImages.map((_, idx) => (
+                  <button
+                    key={`hero-dot-${idx}`}
+                    type="button"
+                    onClick={() => setHeroIndex(idx)}
+                    aria-label={`Hero ${idx + 1}`}
+                    className={`h-2.5 w-2.5 rounded-full transition ${
+                      idx === heroIndex ? 'bg-[#38b000]' : isDark ? 'bg-white/30 hover:bg-white/50' : 'bg-slate-300 hover:bg-slate-400'
+                    }`}
+                  />
+                ))}
+              </div>
+            ) : null}
           </motion.div>
         </div>
 

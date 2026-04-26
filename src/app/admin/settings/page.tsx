@@ -61,6 +61,10 @@ export default function AdminSettingsPage() {
   const [playStoreUrl, setPlayStoreUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.playStoreUrl);
   const [appStoreUrl, setAppStoreUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.appStoreUrl);
   const [heroImageUrl, setHeroImageUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.heroImageUrl);
+  const [heroImage2Url, setHeroImage2Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.heroImage2Url);
+  const [heroImage3Url, setHeroImage3Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.heroImage3Url);
+  const [heroImage4Url, setHeroImage4Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.heroImage4Url);
+  const [heroImage5Url, setHeroImage5Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.heroImage5Url);
   const [screenshot1Url, setScreenshot1Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot1Url);
   const [screenshot2Url, setScreenshot2Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot2Url);
   const [screenshot3Url, setScreenshot3Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot3Url);
@@ -91,6 +95,10 @@ export default function AdminSettingsPage() {
         playRes,
         appRes,
         heroImageRes,
+        heroImage2Res,
+        heroImage3Res,
+        heroImage4Res,
+        heroImage5Res,
         screenshot1Res,
         screenshot2Res,
         screenshot3Res,
@@ -108,6 +116,10 @@ export default function AdminSettingsPage() {
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.playStoreUrl).maybeSingle(),
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.appStoreUrl).maybeSingle(),
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.heroImageUrl).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.heroImage2Url).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.heroImage3Url).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.heroImage4Url).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.heroImage5Url).maybeSingle(),
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot1Url).maybeSingle(),
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot2Url).maybeSingle(),
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot3Url).maybeSingle(),
@@ -126,6 +138,10 @@ export default function AdminSettingsPage() {
       setPlayStoreUrl(typeof playRes.data?.value === 'string' ? playRes.data.value : '');
       setAppStoreUrl(typeof appRes.data?.value === 'string' ? appRes.data.value : '');
       setHeroImageUrl(typeof heroImageRes.data?.value === 'string' ? heroImageRes.data.value : '');
+      setHeroImage2Url(typeof heroImage2Res.data?.value === 'string' ? heroImage2Res.data.value : '');
+      setHeroImage3Url(typeof heroImage3Res.data?.value === 'string' ? heroImage3Res.data.value : '');
+      setHeroImage4Url(typeof heroImage4Res.data?.value === 'string' ? heroImage4Res.data.value : '');
+      setHeroImage5Url(typeof heroImage5Res.data?.value === 'string' ? heroImage5Res.data.value : '');
       setScreenshot1Url(typeof screenshot1Res.data?.value === 'string' ? screenshot1Res.data.value : '');
       setScreenshot2Url(typeof screenshot2Res.data?.value === 'string' ? screenshot2Res.data.value : '');
       setScreenshot3Url(typeof screenshot3Res.data?.value === 'string' ? screenshot3Res.data.value : '');
@@ -331,6 +347,10 @@ export default function AdminSettingsPage() {
       { key: DOWNLOAD_SETTINGS_KEYS.playStoreUrl, value: playStoreUrl.trim(), updated_at: nowIso },
       { key: DOWNLOAD_SETTINGS_KEYS.appStoreUrl, value: appStoreUrl.trim(), updated_at: nowIso },
       { key: DOWNLOAD_SETTINGS_KEYS.heroImageUrl, value: heroImageUrl.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.heroImage2Url, value: heroImage2Url.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.heroImage3Url, value: heroImage3Url.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.heroImage4Url, value: heroImage4Url.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.heroImage5Url, value: heroImage5Url.trim(), updated_at: nowIso },
       { key: DOWNLOAD_SETTINGS_KEYS.screenshot1Url, value: screenshot1Url.trim(), updated_at: nowIso },
       { key: DOWNLOAD_SETTINGS_KEYS.screenshot2Url, value: screenshot2Url.trim(), updated_at: nowIso },
       { key: DOWNLOAD_SETTINGS_KEYS.screenshot3Url, value: screenshot3Url.trim(), updated_at: nowIso },
@@ -363,6 +383,10 @@ export default function AdminSettingsPage() {
     e: React.ChangeEvent<HTMLInputElement>,
     field:
       | 'hero'
+      | 'hero2'
+      | 'hero3'
+      | 'hero4'
+      | 'hero5'
       | 's1'
       | 's2'
       | 's3'
@@ -393,11 +417,55 @@ export default function AdminSettingsPage() {
 
     const publicUrl = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
     if (field === 'hero') setHeroImageUrl(publicUrl);
+    if (field === 'hero2') setHeroImage2Url(publicUrl);
+    if (field === 'hero3') setHeroImage3Url(publicUrl);
+    if (field === 'hero4') setHeroImage4Url(publicUrl);
+    if (field === 'hero5') setHeroImage5Url(publicUrl);
     if (field === 's1') setScreenshot1Url(publicUrl);
     if (field === 's2') setScreenshot2Url(publicUrl);
     if (field === 's3') setScreenshot3Url(publicUrl);
     if (field === 's4') setScreenshot4Url(publicUrl);
     if (field === 's5') setScreenshot5Url(publicUrl);
+  }
+
+  async function handleHeroBatchUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []).slice(0, 5);
+    if (files.length === 0) return;
+
+    const bucket = mediaBucket.trim() || 'app-releases';
+    setUploadingField('hero-batch');
+
+    const nextUrls = ['', '', '', '', ''];
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      const ext = (file.name.split('.').pop() || 'webp').toLowerCase();
+      const safeExt = ext.replace(/[^a-z0-9]/g, '') || 'webp';
+      const stamp = Date.now() + i;
+      const path = `download-landing/hero-${i + 1}-${stamp}.${safeExt}`;
+
+      const uploadRes = await supabase.storage.from(bucket).upload(path, file, {
+        cacheControl: '31536000',
+        upsert: true,
+        contentType: file.type || undefined,
+      });
+
+      if (uploadRes.error) {
+        setUploadingField(null);
+        e.target.value = '';
+        alert(`No se pudo subir hero ${i + 1}: ${uploadRes.error.message}`);
+        return;
+      }
+
+      nextUrls[i] = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+    }
+
+    setUploadingField(null);
+    e.target.value = '';
+    if (nextUrls[0]) setHeroImageUrl(nextUrls[0]);
+    if (nextUrls[1]) setHeroImage2Url(nextUrls[1]);
+    if (nextUrls[2]) setHeroImage3Url(nextUrls[2]);
+    if (nextUrls[3]) setHeroImage4Url(nextUrls[3]);
+    if (nextUrls[4]) setHeroImage5Url(nextUrls[4]);
   }
 
   if (loading) {
@@ -715,55 +783,102 @@ export default function AdminSettingsPage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tema por defecto en /descargar</label>
-                <select
-                  value={defaultTheme}
-                  onChange={(e) => setDefaultTheme(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white"
-                >
-                  <option value="system">Sistema (auto)</option>
-                  <option value="dark">Oscuro</option>
-                  <option value="light">Claro</option>
-                  <option value="highContrast">Alto contraste</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Bucket media (Supabase Storage)</label>
-                <input
-                  type="text"
-                  value={mediaBucket}
-                  onChange={(e) => setMediaBucket(e.target.value)}
-                  placeholder="app-releases"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Debe ser bucket público para que se vea en landing.
-                </p>
-              </div>
+            <div className="mb-4 rounded-lg border border-gray-200 p-4 bg-gray-50">
+              <h3 className="text-sm font-semibold text-gray-900 mb-2">Tema de la landing (/descargar)</h3>
+              <p className="text-xs text-gray-600 mb-3">
+                Este selector queda separado del bloque de imágenes para que el cambio sea más claro.
+              </p>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tema por defecto</label>
+              <select
+                value={defaultTheme}
+                onChange={(e) => setDefaultTheme(e.target.value)}
+                className="w-full md:w-72 px-3 py-2 border border-gray-300 rounded-lg bg-white"
+              >
+                <option value="system">Sistema (auto)</option>
+                <option value="dark">Oscuro</option>
+                <option value="light">Claro</option>
+                <option value="highContrast">Alto contraste</option>
+              </select>
             </div>
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Hero image URL (landing /descargar)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bucket media (Supabase Storage)</label>
               <input
-                type="url"
-                value={heroImageUrl}
-                onChange={(e) => setHeroImageUrl(e.target.value)}
-                placeholder="https://.../hero.webp"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                type="text"
+                value={mediaBucket}
+                onChange={(e) => setMediaBucket(e.target.value)}
+                placeholder="app-releases"
+                className="w-full md:w-72 px-3 py-2 border border-gray-300 rounded-lg"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Recomendado 1600x1066 en WebP/AVIF. Si queda vacío, usa el placeholder local.
+                Debe ser bucket público para que se vea en landing.
               </p>
-              <div className="mt-2">
-                <label className="block text-xs text-gray-600 mb-1">Subir archivo al bucket</label>
+            </div>
+            <div className="mb-4 rounded-lg border border-gray-200 p-3 bg-gray-50">
+              <p className="text-sm font-medium text-gray-800 mb-1">Hero carrusel (1 a 5 imágenes)</p>
+              <p className="text-xs text-gray-600 mb-2">
+                Seleccioná varias imágenes juntas y se asignan automáticamente a Hero 1..5 en orden.
+              </p>
+              <input
+                type="file"
+                multiple
+                accept="image/webp,image/avif,image/png,image/jpeg"
+                onChange={(e) => void handleHeroBatchUpload(e)}
+                className="text-sm"
+              />
+              {uploadingField === 'hero-batch' ? (
+                <p className="text-xs text-gray-500 mt-1">Subiendo carrusel hero...</p>
+              ) : null}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 1 URL</label>
                 <input
-                  type="file"
-                  accept="image/webp,image/avif,image/png,image/jpeg"
-                  onChange={(e) => void handleImageUpload(e, 'hero')}
-                  className="text-sm"
+                  type="url"
+                  value={heroImageUrl}
+                  onChange={(e) => setHeroImageUrl(e.target.value)}
+                  placeholder="https://.../hero1.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 />
-                {uploadingField === 'hero' ? <p className="text-xs text-gray-500 mt-1">Subiendo hero...</p> : null}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 2 URL</label>
+                <input
+                  type="url"
+                  value={heroImage2Url}
+                  onChange={(e) => setHeroImage2Url(e.target.value)}
+                  placeholder="https://.../hero2.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 3 URL</label>
+                <input
+                  type="url"
+                  value={heroImage3Url}
+                  onChange={(e) => setHeroImage3Url(e.target.value)}
+                  placeholder="https://.../hero3.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 4 URL</label>
+                <input
+                  type="url"
+                  value={heroImage4Url}
+                  onChange={(e) => setHeroImage4Url(e.target.value)}
+                  placeholder="https://.../hero4.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 5 URL</label>
+                <input
+                  type="url"
+                  value={heroImage5Url}
+                  onChange={(e) => setHeroImage5Url(e.target.value)}
+                  placeholder="https://.../hero5.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
