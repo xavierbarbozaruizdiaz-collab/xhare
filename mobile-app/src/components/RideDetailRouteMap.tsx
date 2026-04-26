@@ -14,6 +14,7 @@ import { captionForPolylineSource, type ResolvedPolyline } from '../lib/resolveR
 import type { RideStopForReserve } from '../rides/api';
 import { buildPassengerMergedRoute, type PassengerMergedSegments } from '../lib/passengerMergedRoute';
 import { driverIntermediateStopsBetween, mergeOsrmWaypointsBetween } from '../lib/passengerRouteWaypoints';
+import { fetchRoute } from '../backend/routeApi';
 
 /** Evita pin en (0,0) si algún caller pasa coordenadas basura. */
 function isPlausibleGps(p: Point): boolean {
@@ -49,6 +50,8 @@ type Props = {
   coPassengerDropoffs?: Point[];
   /** Posición actual del conductor durante el viaje en curso (pasajero). */
   driverLocation?: Point | null;
+  /** Conductor con viaje iniciado: oculta la leyenda tipo “Recorrido por calles…” bajo el mapa. */
+  hidePolylineSourceNote?: boolean;
 };
 
 function regionForPoints(pts: Point[]) {
@@ -72,6 +75,7 @@ function bookingGeoKey(g: PassengerBookingMapGeo | null | undefined): string {
   return `${g.pickup.lat},${g.pickup.lng}|${g.dropoff.lat},${g.dropoff.lng}|${ex}`;
 }
 
+/** Rumbo aproximado entre dos puntos geográficos (grados 0..360). */
 export function RideDetailRouteMap({
   ride,
   rideStops,
@@ -83,6 +87,7 @@ export function RideDetailRouteMap({
   coPassengerPickups = [],
   coPassengerDropoffs = [],
   driverLocation = null,
+  hidePolylineSourceNote = false,
 }: Props) {
   const polyline = resolvedRoute.points;
   const note = useMemo(() => {
@@ -97,6 +102,11 @@ export function RideDetailRouteMap({
   const [masterGreyRoute, setMasterGreyRoute] = useState<Point[]>([]);
   const [masterGreyLoading, setMasterGreyLoading] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+  const [driverFacingScaleX, setDriverFacingScaleX] = useState(1);
+  const [driverToRouteLeadCoords, setDriverToRouteLeadCoords] = useState<Array<{ latitude: number; longitude: number }>>(
+    []
+  );
+  const prevDriverPointRef = useRef<Point | null>(null);
 
   const sortedStops = useMemo(
     () => [...rideStops].sort((a, b) => a.stop_order - b.stop_order),
@@ -301,6 +311,21 @@ export function RideDetailRouteMap({
     setMapReady(false);
   }, [rideId]);
 
+  /**
+   * Orientación simple para marcador top-down:
+   * El asset base mira hacia la izquierda. Solo espejar cuando el movimiento lateral va hacia la derecha.
+   */
+  useEffect(() => {
+    if (!driverLocation || !isPlausibleGps(driverLocation)) return;
+    const prev = prevDriverPointRef.current;
+    prevDriverPointRef.current = driverLocation;
+    if (!prev || !isPlausibleGps(prev)) return;
+    const dLat = driverLocation.lat - prev.lat;
+    const dLng = driverLocation.lng - prev.lng;
+    if (Math.abs(dLat) < 0.00002 && Math.abs(dLng) < 0.00002) return;
+    if (Math.abs(dLng) > Math.abs(dLat) * 1.15) setDriverFacingScaleX(dLng > 0 ? -1 : 1);
+  }, [driverLocation?.lat, driverLocation?.lng]);
+
   /** Solo cuando cambia la “forma” de la ruta; evita fit en cada render → menos Skipped frames / Davey. */
   const mapFitKey = useMemo(
     () =>
@@ -368,8 +393,62 @@ export function RideDetailRouteMap({
       .map((p) => ({ latitude: p.lat, longitude: p.lng }));
   }, [passengerSeg]);
 
+  /** Tramo vial desde auto actual al primer punto de la ruta visible. */
+  useEffect(() => {
+    if (!driverLocation || !isPlausibleGps(driverLocation) || displayBase.length < 1) {
+      setDriverToRouteLeadCoords([]);
+      return;
+    }
+    const first = displayBase[0];
+    if (!first || !isPlausibleGps(first)) {
+      setDriverToRouteLeadCoords([]);
+      return;
+    }
+    const latDiff = Math.abs(driverLocation.lat - first.lat);
+    const lngDiff = Math.abs(driverLocation.lng - first.lng);
+    if (latDiff < 0.00001 && lngDiff < 0.00001) {
+      setDriverToRouteLeadCoords([]);
+      return;
+    }
+    let cancelled = false;
+    const ac = new AbortController();
+    void fetchRoute(driverLocation, first, [], { signal: ac.signal })
+      .then((res) => {
+        if (cancelled) return;
+        const pts = Array.isArray(res.polyline) ? res.polyline : [];
+        if (pts.length >= 2) {
+          setDriverToRouteLeadCoords(
+            pts
+              .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+              .map((p) => ({ latitude: p.lat, longitude: p.lng }))
+          );
+          return;
+        }
+        setDriverToRouteLeadCoords([
+          { latitude: driverLocation.lat, longitude: driverLocation.lng },
+          { latitude: first.lat, longitude: first.lng },
+        ]);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDriverToRouteLeadCoords([
+          { latitude: driverLocation.lat, longitude: driverLocation.lng },
+          { latitude: first.lat, longitude: first.lng },
+        ]);
+      });
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, [driverLocation?.lat, driverLocation?.lng, displayBaseSig]);
+
   const showOtherPins = otherBookingsGeo.length > 0;
   const showCoPassengerPins = coPassengerPickups.length > 0 || coPassengerDropoffs.length > 0;
+  const driverMarkerFallbackPoint = useMemo(() => {
+    if (driverLocation && isPlausibleGps(driverLocation)) return driverLocation;
+    if (displayBase.length > 0 && isPlausibleGps(displayBase[0])) return displayBase[0];
+    return null;
+  }, [driverLocation?.lat, driverLocation?.lng, displayBaseSig]);
   /** Gris cuando hay recorrido compartido (reservas) o pasajero viendo su tramo sobre la base. */
   const baseLineUsesSlate = hasSharedBookingPoints || Boolean(passengerBookingGeo);
   const baseLineColor = baseLineUsesSlate ? SLATE : GREEN;
@@ -447,6 +526,17 @@ export function RideDetailRouteMap({
               lineCap="round"
               lineJoin="round"
               zIndex={2}
+            />
+          ) : null}
+          {driverToRouteLeadCoords.length >= 2 ? (
+            <Polyline
+              coordinates={driverToRouteLeadCoords}
+              strokeColor="#2563eb"
+              strokeWidth={3}
+              lineDashPattern={[8, 8]}
+              lineCap="round"
+              lineJoin="round"
+              zIndex={3}
             />
           ) : null}
           {sortedStops.map((s, i) => {
@@ -550,18 +640,17 @@ export function RideDetailRouteMap({
               <View style={styles.otherPassengerPin} collapsable={false} />
             </Marker>
           ))}
-          {driverLocation && isPlausibleGps(driverLocation) ? (
+          {driverMarkerFallbackPoint ? (
             <Marker
-              coordinate={{ latitude: driverLocation.lat, longitude: driverLocation.lng }}
-              anchor={{ x: 0.5, y: 1 }}
+              coordinate={{ latitude: driverMarkerFallbackPoint.lat, longitude: driverMarkerFallbackPoint.lng }}
+              anchor={{ x: 0.5, y: 0.5 }}
               tracksViewChanges={false}
-              zIndex={100}
+              zIndex={101}
               title="Conductor en camino"
-            >
-              <View style={styles.driverMarkerWrap} collapsable={false}>
-                <View style={styles.driverTriangle} collapsable={false} />
-              </View>
-            </Marker>
+              image={require('../../assets/driver-minibus-map-2x.png')}
+              rotation={driverFacingScaleX < 0 ? 180 : 0}
+              flat={false}
+            />
           ) : null}
         </MapView>
         {showRouteLoadingBadge ? (
@@ -570,7 +659,7 @@ export function RideDetailRouteMap({
           </View>
         ) : null}
       </View>
-      {note ? <Text style={styles.note}>{note}</Text> : null}
+      {!hidePolylineSourceNote && note ? <Text style={styles.note}>{note}</Text> : null}
       {passengerBookingGeo && passengerMidCoords.length < 2 && !passengerLineLoading ? (
         <Text style={styles.noteMuted}>
           Tu tramo por calles no pudo calcularse ahora; igual ves subida y bajada en el mapa.
@@ -683,33 +772,4 @@ const styles = StyleSheet.create({
     }),
   },
   routeStopEnd: { backgroundColor: '#b91c1c' },
-  /** Triángulo = “proa” del conductor; ancla en la base (coordenada en el suelo del vehículo). */
-  driverMarkerWrap: {
-    width: 22,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOpacity: 0.25,
-        shadowRadius: 2,
-        shadowOffset: { width: 0, height: 1 },
-      },
-      android: { elevation: 4 },
-    }),
-  },
-  driverTriangle: {
-    width: 0,
-    height: 0,
-    backgroundColor: 'transparent',
-    borderStyle: 'solid',
-    borderLeftWidth: 8,
-    borderRightWidth: 8,
-    borderBottomWidth: 15,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: '#1d4ed8',
-    borderTopWidth: 0,
-  },
 });

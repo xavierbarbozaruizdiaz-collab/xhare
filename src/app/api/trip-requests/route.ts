@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getAuth } from '@/lib/api-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import { tripRequestSuperHexPair } from '@/lib/trip-request-h3';
 import { classificationLogFromRow } from '@/lib/trip-request-classification';
 import { insertOrUpdatePendingTripRequestFromFavorite } from '@/lib/trip-request-favorite-pending-upsert';
@@ -12,6 +13,8 @@ import {
 } from '@/lib/push/sendDriverDemandPassengerLeftPush';
 
 const polyPoint = z.object({ lat: z.number(), lng: z.number() });
+const TRIP_REQUEST_WINDOW_MS = 60_000;
+const TRIP_REQUEST_MAX_PER_WINDOW = 12;
 
 /**
  * Cuerpo alineado a `trip_requests` (sin user_id: lo toma del JWT).
@@ -113,6 +116,13 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await getAuth(request);
     if (auth instanceof NextResponse) return auth;
+    const clientId = getClientId(request, auth.user.id);
+    if (!checkRateLimit(`trip-requests:${clientId}`, TRIP_REQUEST_WINDOW_MS, TRIP_REQUEST_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
+    }
 
     const raw = await request.json();
     const parsed = insertBodySchema.safeParse(raw);
@@ -192,7 +202,11 @@ export async function POST(request: NextRequest) {
         .eq('requested_time', p.requested_time.trim())
         .in('status', ['grouping', 'grouped', 'group_linked_pending']);
       if (gErr) {
-        return NextResponse.json({ error: gErr.message }, { status: 400 });
+        console.error('[api/trip-requests] grouped hits query failed', {
+          userId: auth.user.id,
+          message: gErr.message,
+        });
+        return NextResponse.json({ error: 'No se pudo validar el estado de solicitudes agrupadas.' }, { status: 400 });
       }
       const groupedCount = groupedHits?.length ?? 0;
       if (groupedCount > 0 && !confirmLeaveGroup) {
@@ -271,7 +285,7 @@ export async function POST(request: NextRequest) {
         .single();
       if (selErr || !sel) {
         console.error('[api/trip-requests] select after upsert failed', { message: selErr?.message });
-        return NextResponse.json({ error: selErr?.message ?? 'No se pudo leer la solicitud.' }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudo leer la solicitud.' }, { status: 400 });
       }
       inserted = sel as InsertedTripSummary;
     } else {
@@ -289,7 +303,7 @@ export async function POST(request: NextRequest) {
           message: error.message,
           code: error.code,
         });
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudo guardar la solicitud de viaje.' }, { status: 400 });
       }
       inserted = ins as InsertedTripSummary;
     }
@@ -316,8 +330,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true, id: inserted?.id });
   } catch (e) {
+    console.error('[api/trip-requests] unexpected', e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : 'Error interno' },
+      { error: 'Error interno' },
       { status: 500 }
     );
   }

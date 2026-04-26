@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
@@ -8,9 +8,12 @@ const locationSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
-/** Máximo 1 request cada 10 s por (usuario, viaje) para tracking fluido. */
-const LOCATION_WINDOW_MS = 10_000;
+/** Máximo 1 request cada 5 s por (usuario, viaje) para tracking más fluido. */
+const LOCATION_WINDOW_MS = 5_000;
 const LOCATION_MAX_PER_WINDOW = 1;
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder-anon-key';
 
 /** El conductor envía su posición durante el viaje (status en_route). */
 export async function POST(
@@ -18,18 +21,24 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = createServerClient(request);
     const rideId = params.id;
 
     const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim();
 
+    const supabase = token
+      ? createClient(supabaseUrl, supabaseAnonKey, {
+          auth: { persistSession: false },
+          global: { headers: { Authorization: `Bearer ${token}` } },
+        })
+      : null;
+
     const {
       data: { user },
       error: authError,
-    } = token ? await supabase.auth.getUser(token) : { data: { user: null }, error: { message: 'missing token' } as any };
+    } = supabase ? await supabase.auth.getUser() : { data: { user: null }, error: { message: 'missing token' } as any };
 
-    if (authError || !user) {
+    if (authError || !user || !supabase) {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
@@ -74,7 +83,8 @@ export async function POST(
       .eq('id', rideId);
 
     if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 400 });
+      console.error('[ride-location] update error:', updateError.message);
+      return NextResponse.json({ error: 'No se pudo actualizar la ubicación del conductor.' }, { status: 400 });
     }
 
     return NextResponse.json({ success: true });

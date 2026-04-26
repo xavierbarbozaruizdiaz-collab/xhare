@@ -2,12 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { sendRideLocation } from '../backend/locationApi';
-import { supabase } from '../backend/supabase';
+import { resolveApiAccessToken } from '../backend/api';
 
 export const TRACK_DRIVER_LOCATION_TASK = 'TRACK_DRIVER_LOCATION';
 const TRACKING_RIDE_ID_KEY = '@xhare/tracking_ride_id';
 const LAST_SENT_AT_MS_KEY = '@xhare/tracking_last_sent_ms';
-const MIN_SEND_GAP_MS = 9_000;
+const MIN_SEND_GAP_MS = 4_500;
 
 async function readActiveRideId(): Promise<string | null> {
   const id = (await AsyncStorage.getItem(TRACKING_RIDE_ID_KEY))?.trim();
@@ -38,8 +38,7 @@ if (!(TaskManager as unknown as { isTaskDefined?: (name: string) => boolean }).i
     const nowMs = Date.now();
     if (!(await shouldSendNow(nowMs))) return;
 
-    const { data: auth } = await supabase.auth.getSession();
-    const token = auth.session?.access_token?.trim();
+    const token = await resolveApiAccessToken();
     if (!token) return;
 
     const ok = await sendRideLocation(

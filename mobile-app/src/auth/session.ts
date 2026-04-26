@@ -29,6 +29,13 @@ export async function getSessionProfileFromSession(session: Session | null): Pro
 
     const access_token = pickAccessToken(session);
     if (!access_token) return null;
+    const minimal: SessionProfile = {
+      id: String(userId),
+      role: null,
+      access_token,
+      email: session.user?.email ?? null,
+      full_name: null,
+    };
 
     const profileQuery = supabase
       .from('profiles')
@@ -64,9 +71,9 @@ export async function getSessionProfileFromSession(session: Session | null): Pro
     );
 
     if (error && (error as { message?: string }).message === 'PROFILE_FETCH_TIMEOUT') {
-      return null;
+      return minimal;
     }
-    if (error || !profile) return null;
+    if (error || !profile) return minimal;
 
     return {
       ...(profile as Record<string, unknown>),
@@ -74,7 +81,16 @@ export async function getSessionProfileFromSession(session: Session | null): Pro
       email: session.user?.email ?? null,
     } as SessionProfile;
   } catch {
-    return null;
+    const userId = session?.user?.id;
+    const access_token = pickAccessToken(session);
+    if (!userId || !access_token) return null;
+    return {
+      id: String(userId),
+      role: null,
+      access_token,
+      email: session.user?.email ?? null,
+      full_name: null,
+    } as SessionProfile;
   }
 }
 

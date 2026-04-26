@@ -15,10 +15,33 @@ export type ConversationRow = {
   unread_count: number;
 };
 
+export type ConversationPeer = {
+  id: string;
+  full_name: string;
+  avatar_url?: string | null;
+};
+
 export async function fetchMyConversations(userId: string): Promise<ConversationRow[]> {
   const { data, error } = await supabase.rpc('get_my_conversations', { p_user_id: userId });
   if (error) return [];
   return Array.isArray(data) ? (data as ConversationRow[]) : [];
+}
+
+/** Busca el "otro usuario" de una conversación usando el RPC principal (más robusto que leer participants directo). */
+export async function resolveConversationPeer(
+  userId: string,
+  conversationId: string
+): Promise<ConversationPeer | null> {
+  const rows = await fetchMyConversations(userId);
+  const row = rows.find((r) => String(r.conversation_id) === String(conversationId));
+  if (!row) return null;
+  const otherId = String(row.other_user_id ?? '').trim();
+  if (!otherId) return null;
+  return {
+    id: otherId,
+    full_name: String(row.other_user_name ?? '').trim() || 'Usuario',
+    avatar_url: row.other_user_avatar ?? null,
+  };
 }
 
 export type ChatMessage = {
@@ -38,13 +61,25 @@ export async function fetchChatMessages(conversationId: string): Promise<ChatMes
   return (data ?? []) as ChatMessage[];
 }
 
-export async function sendChatMessage(conversationId: string, senderId: string, body: string): Promise<{ error: Error | null }> {
-  const { error } = await supabase.from('chat_messages').insert({
-    conversation_id: conversationId,
-    sender_id: senderId,
-    body: body.trim().slice(0, 2000),
-  });
-  return { error: error ? new Error(error.message) : null };
+export async function sendChatMessage(
+  conversationId: string,
+  senderId: string,
+  body: string
+): Promise<{ error: Error | null; message?: ChatMessage }> {
+  const clean = body.trim().slice(0, 2000);
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .insert({
+      conversation_id: conversationId,
+      sender_id: senderId,
+      body: clean,
+    })
+    .select('id, sender_id, body, created_at')
+    .single();
+  return {
+    error: error ? new Error(error.message) : null,
+    message: data ? (data as ChatMessage) : undefined,
+  };
 }
 
 export async function markConversationRead(conversationId: string, userId: string): Promise<void> {

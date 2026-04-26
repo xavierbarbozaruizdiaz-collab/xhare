@@ -17,11 +17,15 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const q = searchParams.get('q');
+  const qRaw = searchParams.get('q');
   const countrycodes = searchParams.get('countrycodes') ?? 'py';
-  const limit = searchParams.get('limit') ?? '5';
+  const q = (qRaw ?? '').trim();
+  const requestedLimit = Number.parseInt(searchParams.get('limit') ?? '5', 10);
+  const limit = Number.isFinite(requestedLimit)
+    ? String(Math.max(1, Math.min(10, requestedLimit)))
+    : '5';
 
-  if (!q || q.length < 2) {
+  if (!q || q.length < 2 || q.length > 200) {
     return NextResponse.json({ error: 'q required (min 2 chars)' }, { status: 400 });
   }
 
@@ -40,9 +44,8 @@ export async function GET(request: NextRequest) {
     });
 
     if (!res.ok) {
-      const text = await res.text();
       return NextResponse.json(
-        { error: 'Nominatim error', details: text },
+        { error: 'Nominatim error' },
         { status: res.status }
       );
     }

@@ -7,6 +7,57 @@ import { supabase } from './supabase';
 
 /** Red móvil + cold start (Vercel) pueden superar 20–25s en casos reales. */
 const API_REQUEST_TIMEOUT_MS = 35_000;
+const TOKEN_EXPIRY_SKEW_SEC = 45;
+let refreshInFlight: Promise<string | null> | null = null;
+
+function validSessionToken(
+  session: { access_token?: string | null; expires_at?: number | null } | null | undefined
+): string | null {
+  const token = session?.access_token?.trim() ?? '';
+  if (!token) return null;
+  const exp = Number(session?.expires_at ?? 0);
+  if (!Number.isFinite(exp) || exp <= 0) return token;
+  const nowSec = Math.floor(Date.now() / 1000);
+  return exp > nowSec + TOKEN_EXPIRY_SKEW_SEC ? token : null;
+}
+
+async function refreshAccessTokenSingleFlight(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const { data: fresh } = await supabase.auth.refreshSession();
+      return validSessionToken(fresh.session);
+    } catch {
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+export async function resolveApiAccessToken(options?: { forceRefresh?: boolean }): Promise<string | null> {
+  const forceRefresh = Boolean(options?.forceRefresh);
+  if (!forceRefresh) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = validSessionToken(session);
+    if (token) return token;
+  }
+
+  const refreshed = await refreshAccessTokenSingleFlight();
+  if (refreshed) return refreshed;
+
+  try {
+    const {
+      data: { session: fallbackSession },
+    } = await supabase.auth.getSession();
+    return validSessionToken(fallbackSession);
+  } catch {
+    return null;
+  }
+}
 
 function getApiBase(): string {
   const base = env.apiBaseUrl?.trim();
@@ -34,8 +85,7 @@ async function apiRequest(
 ): Promise<{ ok: boolean; status: number; data?: unknown; error?: string }> {
   const base = getApiBase();
   if (!base) return { ok: false, status: 0, error: 'EXPO_PUBLIC_API_BASE_URL no configurado' };
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token;
+  const token = await resolveApiAccessToken();
   if (!token) return { ok: false, status: 401, error: 'No hay sesión' };
   const url = `${base}${path.startsWith('/') ? path : '/' + path}`;
 
@@ -56,8 +106,7 @@ async function apiRequest(
   try {
     let res = await fetch(url, { ...buildInit(token), signal: controller.signal });
     if (res.status === 401) {
-      const { data: ref } = await supabase.auth.refreshSession();
-      const t2 = ref.session?.access_token;
+      const t2 = await resolveApiAccessToken({ forceRefresh: true });
       if (t2 && t2 !== token) {
         res = await fetch(url, { ...buildInit(t2), signal: controller.signal });
       }
@@ -126,6 +175,8 @@ export async function arriveAtStop(
   driverLng?: number
 ) {
   const body: Record<string, unknown> = { stopOrder, passengers };
+  const token = await resolveApiAccessToken();
+  if (token) body.access_token = token;
   if (
     driverLat != null &&
     driverLng != null &&
@@ -139,7 +190,11 @@ export async function arriveAtStop(
 }
 
 export async function setRideAwaitingStopConfirmation(rideId: string, awaiting: boolean) {
-  return apiPost(`/api/rides/${rideId}/set-awaiting-confirmation`, { awaiting });
+  const token = await resolveApiAccessToken({ forceRefresh: true });
+  return apiPost(`/api/rides/${rideId}/set-awaiting-confirmation`, {
+    awaiting,
+    ...(token ? { access_token: token } : {}),
+  });
 }
 
 export async function confirmRideBookingPayment(rideId: string, bookingId: string) {

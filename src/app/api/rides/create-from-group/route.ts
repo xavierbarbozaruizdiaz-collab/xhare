@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const bodySchema = z.object({
   group_id: z.string().uuid(),
 });
+const CREATE_FROM_GROUP_WINDOW_MS = 60_000;
+const CREATE_FROM_GROUP_MAX_PER_WINDOW = 30;
 
 /**
  * POST /api/rides/create-from-group
@@ -16,6 +19,7 @@ export async function POST(request: NextRequest) {
     const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization');
     const cronSecret = process.env.DEMAND_ROUTES_SYNC_SECRET;
     const useCron = cronSecret && authHeader === `Bearer ${cronSecret}`;
+    const cronClientId = getClientId(request, 'cron');
 
     if (!useCron) {
       const server = createServerClient(request);
@@ -33,6 +37,18 @@ export async function POST(request: NextRequest) {
           { status: 403 }
         );
       }
+      const userClientId = getClientId(request, user.id);
+      if (!checkRateLimit(`create-from-group:${userClientId}`, CREATE_FROM_GROUP_WINDOW_MS, CREATE_FROM_GROUP_MAX_PER_WINDOW)) {
+        return NextResponse.json(
+          { error: 'Demasiadas solicitudes. Esperá un momento.' },
+          { status: 429 }
+        );
+      }
+    } else if (!checkRateLimit(`create-from-group:${cronClientId}`, CREATE_FROM_GROUP_WINDOW_MS, CREATE_FROM_GROUP_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
     }
 
     let raw: unknown;
@@ -57,7 +73,7 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       console.error('[create-from-group] rpc error:', error.message);
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json({ error: 'No se pudo crear el viaje desde el grupo.' }, { status: 400 });
     }
 
     const out = data as Record<string, unknown> | null;
@@ -73,7 +89,7 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     console.error('[create-from-group]', e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : 'Error interno' },
+      { error: 'Error interno' },
       { status: 500 }
     );
   }

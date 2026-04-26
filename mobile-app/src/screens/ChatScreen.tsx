@@ -13,13 +13,15 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Alert,
 } from 'react-native';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
 import {
   fetchChatMessages,
+  resolveConversationPeer,
   sendChatMessage,
   markConversationRead,
   type ChatMessage,
@@ -27,6 +29,17 @@ import {
 import type { MainStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'Chat'>;
+
+function mergeMessagesById(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  if (current.length === 0) return incoming;
+  if (incoming.length === 0) return current;
+  const map = new Map<string, ChatMessage>();
+  for (const m of current) map.set(String(m.id), m);
+  for (const m of incoming) map.set(String(m.id), m);
+  return [...map.values()].sort(
+    (a, b) => new Date(String(a.created_at)).getTime() - new Date(String(b.created_at)).getTime()
+  );
+}
 
 export function ChatScreen() {
   const navigation = useNavigation<Nav>();
@@ -42,15 +55,34 @@ export function ChatScreen() {
 
   const load = useCallback(async () => {
     if (!conversationId || !session?.id) return;
-    const [msgs, participantsRes] = await Promise.all([
+    const [msgs, peerFromRpc] = await Promise.all([
       fetchChatMessages(conversationId),
-      supabase.from('conversation_participants').select('user_id').eq('conversation_id', conversationId),
+      resolveConversationPeer(session.id, conversationId),
     ]);
-    setMessages(msgs);
+    setMessages((prev) => mergeMessagesById(prev, msgs));
+    if (peerFromRpc) {
+      setOtherUser(peerFromRpc);
+      await markConversationRead(conversationId, session.id);
+      setLoading(false);
+      return;
+    }
+    // Fallback legacy por si el RPC aún no devuelve la conversación recién creada.
+    const participantsRes = await supabase
+      .from('conversation_participants')
+      .select('user_id')
+      .eq('conversation_id', conversationId);
     const otherId = (participantsRes.data ?? []).find((p: { user_id: string }) => p.user_id !== session.id)?.user_id;
     if (otherId) {
-      const { data: profile } = await supabase.from('profiles').select('id, full_name, avatar_url').eq('id', otherId).maybeSingle();
-      setOtherUser(profile ? { id: profile.id, full_name: (profile.full_name as string) || 'Usuario', avatar_url: profile.avatar_url } : { id: otherId, full_name: 'Usuario' });
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, full_name, avatar_url')
+        .eq('id', otherId)
+        .maybeSingle();
+      setOtherUser(
+        profile
+          ? { id: profile.id, full_name: (profile.full_name as string) || 'Usuario', avatar_url: profile.avatar_url }
+          : { id: otherId, full_name: 'Usuario' }
+      );
       await markConversationRead(conversationId, session.id);
     }
     setLoading(false);
@@ -68,7 +100,10 @@ export function ChatScreen() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `conversation_id=eq.${conversationId}` },
         (payload) => {
-          setMessages((prev) => [...prev, payload.new as ChatMessage]);
+          const incoming = payload.new as ChatMessage;
+          setMessages((prev) =>
+            prev.some((m) => String(m.id) === String(incoming.id)) ? prev : [...prev, incoming]
+          );
         }
       )
       .subscribe();
@@ -76,6 +111,17 @@ export function ChatScreen() {
       supabase.removeChannel(channel);
     };
   }, [conversationId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!conversationId || !session?.id) return;
+      void load();
+      const t = setInterval(() => {
+        void load();
+      }, 5000);
+      return () => clearInterval(t);
+    }, [conversationId, session?.id, load])
+  );
 
   useEffect(() => {
     if (messages.length > 0) listRef.current?.scrollToEnd({ animated: true });
@@ -86,10 +132,21 @@ export function ChatScreen() {
     if (!body || !session?.id || sending) return;
     setSending(true);
     setNewBody('');
-    const { error } = await sendChatMessage(conversationId, session.id, body);
-    if (error) setNewBody(body);
+    const { error, message } = await sendChatMessage(conversationId, session.id, body);
+    if (error) {
+      setNewBody(body);
+      Alert.alert('No se pudo enviar', error.message || 'Revisá tu conexión e intentá de nuevo.');
+      setSending(false);
+      return;
+    }
+    if (message) {
+      setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+    } else {
+      // Si no volvió payload del insert, refrescamos para no dejar la UI "sin cambios".
+      void load();
+    }
     setSending(false);
-  }, [conversationId, session?.id, newBody, sending]);
+  }, [conversationId, session?.id, newBody, sending, load]);
 
   const renderItem = useCallback(
     ({ item }: { item: ChatMessage }) => {

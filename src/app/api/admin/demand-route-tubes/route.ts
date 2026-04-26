@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import type { Point } from '@/types';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-demand-route-tubes';
+const DEMAND_ROUTE_TUBES_WINDOW_MS = 60_000;
+const DEMAND_ROUTE_TUBES_MAX_PER_WINDOW = 40;
 
 function parsePolyline(raw: unknown): Point[] | null {
   if (!Array.isArray(raw) || raw.length < 2) return null;
@@ -52,8 +55,15 @@ export type DemandTubeRow = {
  * Si `base_polyline` no sirve, intenta `trip_requests.route_polyline` o recta origen→destino del pedido base.
  */
 export async function GET(request: NextRequest) {
-  return withAdminAuth(request, async () => {
+  return withAdminAuth(request, async (_req, user) => {
     try {
+      const clientId = getClientId(request, user.id);
+      if (!checkRateLimit(`admin-demand-route-tubes:${clientId}`, DEMAND_ROUTE_TUBES_WINDOW_MS, DEMAND_ROUTE_TUBES_MAX_PER_WINDOW)) {
+        return NextResponse.json(
+          { error: 'Demasiadas solicitudes. Esperá un momento.' },
+          { status: 429 }
+        );
+      }
       const service = createServiceClient();
       const { searchParams } = new URL(request.url);
       const today = new Date().toISOString().slice(0, 10);
@@ -79,7 +89,7 @@ export async function GET(request: NextRequest) {
 
       if (error) {
         logBlockError(BLOCK, error.message, error);
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudieron obtener los tubos de demanda.' }, { status: 400 });
       }
 
       const rows = data ?? [];

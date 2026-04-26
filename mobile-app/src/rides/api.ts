@@ -276,17 +276,45 @@ export async function searchRides(options: {
   /** Si viene, filtra por proximidad al origen del viaje (metros); no combina con `origin` texto en el mismo eje. */
   originNear?: NearPointFilter;
   destinationNear?: NearPointFilter;
+  /** Código para compartir viaje (ej. XH-ABC123). Si viene, prioriza búsqueda exacta por código. */
+  shareCode?: string;
   seats?: number;
   maxPrice?: number | string;
 }) {
-  const { date, fromTimeLocal, routeName, origin, destination, originNear, destinationNear, seats = 1, maxPrice } =
+  const { date, fromTimeLocal, routeName, origin, destination, originNear, destinationNear, shareCode, seats = 1, maxPrice } =
     options;
+  const normalizedShareCode = String(shareCode ?? '').trim().toUpperCase();
   // Sin join a `profiles`: la policy solo permite ver otros perfiles a `authenticated`;
   // con sesión anónima el embed falla y la query puede venir vacía o sin filas útiles.
   let query = supabase
     .from('rides')
     .select(`*, ride_stops(*)`)
     .eq('status', 'published');
+
+  if (normalizedShareCode) {
+    const byCodeQuery = query
+      .eq('share_code', normalizedShareCode)
+      .order('departure_time', { ascending: true })
+      .limit(1);
+    const { data, error } = await raceWithTimeout(
+      byCodeQuery,
+      SUPABASE_QUERY_TIMEOUT_MS,
+      () =>
+        ({
+          data: null,
+          error: { message: 'SUPABASE_QUERY_TIMEOUT', details: '', hint: '', code: 'TIMEOUT' },
+        }) as Awaited<typeof byCodeQuery>
+    );
+    if (error?.message === 'SUPABASE_QUERY_TIMEOUT') return [];
+    if (error) throw error;
+    const now = new Date();
+    return (data ?? []).filter(
+      (r: { status?: string; departure_time?: string }) =>
+        String(r.status ?? '') === 'published' &&
+        r.departure_time != null &&
+        new Date(r.departure_time).getTime() > now.getTime()
+    );
+  }
 
   const now = new Date();
   const bounds = date?.trim() ? localDayBounds(date) : null;
@@ -1198,4 +1226,82 @@ export async function findEnRouteRideIdForFavorite(
   }
 
   return best?.rideId ?? null;
+}
+
+/**
+ * Shortcut "viaje actual" para Home del pasajero.
+ * Prioriza:
+ * 1) reserva en viaje `en_route`
+ * 2) solicitud vinculada a ride `en_route` (incluye favoritos/demanda agrupada)
+ */
+export async function findPassengerActiveRideShortcut(params: {
+  userId: string;
+  favoriteSlots?: string[];
+}): Promise<string | null> {
+  const userId = String(params.userId ?? '').trim();
+  if (!userId) return null;
+  const favSlots = new Set(
+    (params.favoriteSlots ?? [])
+      .map((s) => String(s ?? '').trim())
+      .filter(Boolean)
+  );
+  const extractJoinedRide = (row: Record<string, unknown>): Record<string, unknown> | null => {
+    const raw = row.ride;
+    if (Array.isArray(raw)) {
+      const first = raw[0];
+      return first && typeof first === 'object' ? (first as Record<string, unknown>) : null;
+    }
+    return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
+  };
+
+  const { data: bookingRows, error: bookingErr } = await supabase
+    .from('bookings')
+    .select('created_at, ride:rides(id, status, started_at, departure_time)')
+    .eq('passenger_id', userId)
+    .neq('status', 'cancelled')
+    .order('created_at', { ascending: false })
+    .limit(80);
+  if (!bookingErr && Array.isArray(bookingRows)) {
+    const enRoute = bookingRows.find((row) => {
+      const ride = extractJoinedRide(row as Record<string, unknown>);
+      return ride && String(ride.status ?? '') === 'en_route' && String(ride.id ?? '').trim().length > 0;
+    });
+    if (enRoute) {
+      const ride = extractJoinedRide(enRoute as Record<string, unknown>);
+      if (!ride) return null;
+      return String(ride.id ?? '').trim() || null;
+    }
+  }
+
+  const { data: reqRows, error: reqErr } = await supabase
+    .from('trip_requests')
+    .select('created_at, passenger_favorite_slot, ride:rides(id, status, started_at, departure_time)')
+    .eq('user_id', userId)
+    .not('ride_id', 'is', null)
+    .in('status', ['accepted', 'group_linked_pending', 'grouped', 'pending'])
+    .order('created_at', { ascending: false })
+    .limit(80);
+  if (reqErr || !Array.isArray(reqRows)) return null;
+
+  const enRouteRequests = reqRows.filter((row) => {
+    const ride = extractJoinedRide(row as Record<string, unknown>);
+    return ride && String(ride.status ?? '') === 'en_route' && String(ride.id ?? '').trim().length > 0;
+  });
+  if (enRouteRequests.length === 0) return null;
+
+  // Si hay favoritos activos asociados, darles prioridad para el acceso directo.
+  if (favSlots.size > 0) {
+    const fromFavorite = enRouteRequests.find((row) =>
+      favSlots.has(String((row as { passenger_favorite_slot?: unknown }).passenger_favorite_slot ?? '').trim())
+    );
+    if (fromFavorite) {
+      const ride = extractJoinedRide(fromFavorite as Record<string, unknown>);
+      if (!ride) return null;
+      return String(ride.id ?? '').trim() || null;
+    }
+  }
+
+  const firstRide = extractJoinedRide(enRouteRequests[0] as Record<string, unknown>);
+  if (!firstRide) return null;
+  return String(firstRide.id ?? '').trim() || null;
 }

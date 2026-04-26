@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-corridors';
+const ADMIN_CORRIDORS_WINDOW_MS = 60_000;
+const ADMIN_CORRIDORS_MAX_PER_WINDOW = 50;
 
 export type AdminCorridorRow = {
   id: string;
@@ -22,8 +25,12 @@ export type AdminCorridorRow = {
  * Lista corredores MVP (zonas bbox) usados en clasificación y agrupación de demanda.
  */
 export async function GET(request: NextRequest) {
-  return withAdminAuth(request, async () => {
+  return withAdminAuth(request, async (_req, user) => {
     try {
+      const clientId = getClientId(request, user.id);
+      if (!checkRateLimit(`admin-corridors:${clientId}`, ADMIN_CORRIDORS_WINDOW_MS, ADMIN_CORRIDORS_MAX_PER_WINDOW)) {
+        return NextResponse.json({ error: 'Demasiadas solicitudes. Esperá un momento.' }, { status: 429 });
+      }
       const service = createServiceClient();
       const { data, error } = await service
         .from('corridors')
@@ -33,7 +40,7 @@ export async function GET(request: NextRequest) {
 
       if (error) {
         logBlockError(BLOCK, error.message, error);
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudieron obtener los corredores.' }, { status: 400 });
       }
 
       logBlockOk(BLOCK);

@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
@@ -38,7 +39,7 @@ import {
   type OrderedMapVisitRow,
 } from '../lib/buildMasterBookRidePolyline';
 import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
-import { distanceMeters, type Point } from '../lib/geo';
+import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
 import { confirmRideBookingPayment, arriveAtStop, setRideAwaitingStopConfirmation } from '../backend/api';
 import { requestLocationPermission } from '../permissions';
 import { getOriginForExternalNavigation } from '../location/getOriginForExternalNavigation';
@@ -53,12 +54,16 @@ type ScreenRoute = RouteProp<MainStackParamList, 'RideDetail'>;
 
 /** No duplicar en el mapa el pin “otro pasajero” si coincide con tu subida/bajada/paradas extra. */
 const CO_PASSENGER_DEDUP_M = 35;
+/** Debe coincidir con backend (`ARRIVE_DRIVER_MAX_DISTANCE_M`). */
+const ARRIVE_ALLOWED_DISTANCE_M = 520;
 
 type PassengerBookingSummary = {
   id: string;
   status: string;
   seats_count: number;
   price_paid: number;
+  pickup_stop_id: string | null;
+  dropoff_stop_id: string | null;
   pickup_label: string | null;
   dropoff_label: string | null;
   payment_status: string | null;
@@ -67,6 +72,15 @@ type PassengerBookingSummary = {
   dropoff_lat: number | null;
   dropoff_lng: number | null;
 };
+
+function polylineLengthMeters(points: Point[]): number {
+  if (points.length < 2) return 0;
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    total += distanceMeters(points[i - 1], points[i]);
+  }
+  return total;
+}
 
 type DriverBookingStop = {
   id: string;
@@ -354,6 +368,8 @@ export function RideDetailScreen() {
   const [coPassengerPickups, setCoPassengerPickups] = useState<Point[]>([]);
   const [coPassengerDropoffs, setCoPassengerDropoffs] = useState<Point[]>([]);
   const [driverRideBookings, setDriverRideBookings] = useState<DriverBookingStop[]>([]);
+  const [driverLiveLocalGps, setDriverLiveLocalGps] = useState<Point | null>(null);
+  const [bookingDetailsExpanded, setBookingDetailsExpanded] = useState(false);
   const [arriveModalOpen, setArriveModalOpen] = useState(false);
   const [arriveDecisions, setArriveDecisions] = useState<Record<string, 'boarded' | 'no_show' | 'dropped_off'>>({});
   const [arrivePaymentConfirmed, setArrivePaymentConfirmed] = useState<Record<string, boolean>>({});
@@ -377,7 +393,7 @@ export function RideDetailScreen() {
     const { data, error } = await supabase
       .from('bookings')
       .select(
-        'id, status, seats_count, price_paid, pickup_label, dropoff_label, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
+        'id, status, seats_count, price_paid, pickup_stop_id, dropoff_stop_id, pickup_label, dropoff_label, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
       )
       .eq('ride_id', rideId)
       .eq('passenger_id', session.id)
@@ -400,6 +416,8 @@ export function RideDetailScreen() {
       status: String(data.status ?? ''),
       seats_count: Math.max(1, Number(data.seats_count ?? 1)),
       price_paid: Number(data.price_paid ?? 0),
+      pickup_stop_id: data.pickup_stop_id != null ? String(data.pickup_stop_id) : null,
+      dropoff_stop_id: data.dropoff_stop_id != null ? String(data.dropoff_stop_id) : null,
       pickup_label: data.pickup_label != null ? String(data.pickup_label) : null,
       dropoff_label: data.dropoff_label != null ? String(data.dropoff_label) : null,
       payment_status: data.payment_status != null ? String(data.payment_status) : null,
@@ -434,6 +452,54 @@ export function RideDetailScreen() {
     ride ? String(ride.driver_lat ?? '') : '',
     ride ? String(ride.driver_lng ?? '') : '',
   ]);
+
+  /** Fallback visual para conductor: si la DB tarda en reflejar driver_lat/lng, mostrar GPS local en su propio mapa. */
+  useEffect(() => {
+    const isOwnRide = Boolean(session?.id && ride && String(ride.driver_id) === String(session.id));
+    const inProgress = String(ride?.status ?? '') === 'en_route';
+    if (!isOwnRide || !inProgress) {
+      setDriverLiveLocalGps(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (cancelled) return;
+        const lat = Number(loc.coords.latitude);
+        const lng = Number(loc.coords.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        setDriverLiveLocalGps({ lat, lng });
+      } catch {
+        // ignore; mapa seguirá con dato de backend si existe
+      }
+    };
+    void tick();
+    const t = setInterval(() => {
+      void tick();
+    }, 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [session?.id, ride ? String(ride.driver_id ?? '') : '', ride ? String(ride.status ?? '') : '']);
+
+  const driverLocationForMap = useMemo(
+    () => driverLiveForMap ?? driverLiveLocalGps,
+    [driverLiveForMap, driverLiveLocalGps]
+  );
+  const passengerPickupPoint = useMemo<Point | null>(() => {
+    if (!passengerBooking) return null;
+    const lat = Number(passengerBooking.pickup_lat);
+    const lng = Number(passengerBooking.pickup_lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    const stopId = String(passengerBooking.pickup_stop_id ?? '').trim();
+    if (!stopId) return null;
+    const stop = rideStops.find((s) => String(s.id) === stopId);
+    if (!stop) return null;
+    if (!Number.isFinite(Number(stop.lat)) || !Number.isFinite(Number(stop.lng))) return null;
+    return { lat: Number(stop.lat), lng: Number(stop.lng) };
+  }, [passengerBooking, rideStops]);
 
   const passengerMapGeo = useMemo((): PassengerBookingMapGeo | null => {
     if (!passengerBooking) return null;
@@ -676,7 +742,15 @@ export function RideDetailScreen() {
     const t = setInterval(() => {
       void load({ quiet: true });
       void loadPassengerBooking();
-      if (isDriver) void refetchDriverBookingPins();
+      if (isDriver) {
+        void refetchDriverBookingPins();
+        if (st === 'en_route') {
+          void (async () => {
+            const active = await isDriverTrackingActive();
+            if (!active) await startDriverTrackingInBackground(rideId);
+          })();
+        }
+      }
       if (isPassengerWithBooking) void refetchCoPassengerMapPoints();
     }, 22_000);
     return () => clearInterval(t);
@@ -732,15 +806,9 @@ export function RideDetailScreen() {
           style: next === 'completed' || next === 'cancelled' ? 'destructive' : 'default',
           onPress: () => {
             void (async () => {
-              const { data: auth } = await supabase.auth.getSession();
-              const token = auth.session?.access_token;
-              if (!token) {
-                Alert.alert('Sesión', 'Volvé a iniciar sesión.');
-                return;
-              }
               setStatusUpdating(true);
               try {
-                const r = await updateRideStatus(rideId, next, token);
+                const r = await updateRideStatus(rideId, next, '');
                 if (!r.ok) {
                   Alert.alert('No se pudo actualizar', friendlyStatusError(r.error, r.details));
                   return;
@@ -942,6 +1010,8 @@ export function RideDetailScreen() {
   const available = Math.max(0, Number(ride.available_seats ?? 0));
   const totalSeats = Math.max(0, Number(ride.total_seats ?? 0));
   const status = String(ride.status ?? '');
+  /** Conductor con viaje en curso: UI más compacta (mapa + acciones; sin textos repetidos de publicación). */
+  const driverUiEnRoute = isOwn && status === 'en_route';
   const depIso = ride.departure_time ? String(ride.departure_time) : '';
   const priceSeat = Number(ride.price_per_seat ?? 0);
   const description = ride.description != null ? String(ride.description).trim() : '';
@@ -965,6 +1035,24 @@ export function RideDetailScreen() {
     isOwn && status !== 'en_route' && status !== 'completed' && status !== 'cancelled';
 
   const awaitingStop = Boolean(ride.awaiting_stop_confirmation);
+  const passengerEtaToPickupMin = (() => {
+    if (isOwn || status !== 'en_route') return null;
+    if (!driverLocationForMap || !passengerPickupPoint) return null;
+    const routePoints = resolvedRideRoute.points;
+    const routeLen = polylineLengthMeters(routePoints);
+    let meters = distanceMeters(driverLocationForMap, passengerPickupPoint);
+    if (routeLen > 0 && routePoints.length >= 2) {
+      const tDriver = getPositionAlongPolyline(driverLocationForMap, routePoints);
+      const tPickup = getPositionAlongPolyline(passengerPickupPoint, routePoints);
+      if (Number.isFinite(tDriver) && Number.isFinite(tPickup) && tPickup >= tDriver) {
+        meters = Math.max(20, (tPickup - tDriver) * routeLen);
+      }
+    }
+    if (!Number.isFinite(meters) || meters <= 0) return null;
+    // ETA aproximado para mostrar progreso en vivo sin bloquear UI.
+    const avgCitySpeedKmh = 28;
+    return Math.max(1, Math.round((meters / 1000 / avgCitySpeedKmh) * 60));
+  })();
   /** Índice en `rideStops` (ordenado por stop_order). Si ≥ length, ya pasaron todas las paradas (finalizar viaje). */
   const rawStopIdx = Number(ride.current_stop_index ?? 0);
   const rideLen = rideStops.length;
@@ -974,8 +1062,9 @@ export function RideDetailScreen() {
   const stopIdxForActualBadge = hasValidCurrentStop ? rawStopIdx : -1;
   const pickupAtCurrentStop = driverRideBookings.filter((b) => bookingPickupNearPublishedStop(b, currentNavStop));
   const dropoffAtCurrentStop = driverRideBookings.filter((b) => bookingDropoffNearPublishedStop(b, currentNavStop));
+  const noPassengersAtCurrentStop = pickupAtCurrentStop.length === 0 && dropoffAtCurrentStop.length === 0;
   const allArriveDecisionsSet = (() => {
-    if (pickupAtCurrentStop.length === 0 && dropoffAtCurrentStop.length === 0) return true;
+    if (noPassengersAtCurrentStop) return true;
     const hasPickupDecisions = pickupAtCurrentStop.every((b) => {
       const v = arriveDecisions[`pickup:${b.id}`];
       return v === 'boarded' || v === 'no_show';
@@ -1018,10 +1107,36 @@ export function RideDetailScreen() {
       Alert.alert('Parada', 'No hay parada actual para confirmar.');
       return;
     }
+    try {
+      const perm = await requestLocationPermission();
+      if (perm) {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const d = distanceMeters(
+          { lat: Number(loc.coords.latitude), lng: Number(loc.coords.longitude) },
+          { lat: Number(currentNavStop.lat), lng: Number(currentNavStop.lng) }
+        );
+        if (Number.isFinite(d) && d > ARRIVE_ALLOWED_DISTANCE_M) {
+          Alert.alert(
+            'Aún no llegaste al punto',
+            `Estás a ${Math.round(d)} m de la parada actual. Acercate a menos de ${ARRIVE_ALLOWED_DISTANCE_M} m para usar "Llegué".`
+          );
+          return;
+        }
+      }
+    } catch {
+      // Si no se puede medir localmente, dejamos que backend valide al confirmar la parada.
+    }
     const r = await setRideAwaitingStopConfirmation(rideId, true);
     if (!r.ok) {
-      Alert.alert('No se pudo marcar llegada', r.error ?? 'Intentá de nuevo.');
-      return;
+      const errMsg = String(r.error ?? '');
+      const looksLikeAuth = /sesi[oó]n|no autorizado|unauthorized|token/i.test(errMsg);
+      // No bloquear "Llegué" por el flag intermedio: la confirmación real y validaciones de parada ocurren en /arrive.
+      if (!looksLikeAuth) {
+        Alert.alert(
+          'Aviso',
+          'No pudimos registrar el estado intermedio de llegada, pero podés confirmar la parada igual.'
+        );
+      }
     }
     setArriveDecisions({});
     setArrivePaymentConfirmed({});
@@ -1109,11 +1224,15 @@ export function RideDetailScreen() {
             <View style={[styles.statusDot, { backgroundColor: stCfg.color }]} />
             <Text style={[styles.statusPillText, { color: stCfg.color }]}>{stCfg.label}</Text>
           </View>
-          <Text style={styles.sectionLabel}>Ruta</Text>
-          {routeNameLine ? <Text style={styles.routeNameLine}>{routeNameLine}</Text> : null}
-          <Text style={styles.title}>
-            {String(ride.origin_label ?? 'Origen')} → {String(ride.destination_label ?? 'Destino')}
-          </Text>
+          {driverUiEnRoute ? null : (
+            <>
+              <Text style={styles.sectionLabel}>Ruta</Text>
+              {routeNameLine ? <Text style={styles.routeNameLine}>{routeNameLine}</Text> : null}
+              <Text style={styles.title}>
+                {String(ride.origin_label ?? 'Origen')} → {String(ride.destination_label ?? 'Destino')}
+              </Text>
+            </>
+          )}
           <RideDetailRouteMap
             ride={ride}
             rideStops={rideStops}
@@ -1121,26 +1240,31 @@ export function RideDetailScreen() {
             resolvedRouteLoading={resolvedRideRoute.loading}
             height={300}
             otherBookingsGeo={driverBookingPins}
-            driverLocation={driverLiveForMap}
+            driverLocation={driverLocationForMap}
+            hidePolylineSourceNote={driverUiEnRoute}
           />
-          <Text style={styles.sectionLabel}>Salida</Text>
-          <Text style={styles.bodyLine}>
-            {formatRideDate(depIso)} · {formatRideTime(depIso)}
-          </Text>
-          <Text style={styles.bodyMuted}>
-            {flexible ? 'Ventana ±30 min alrededor de la hora' : 'Salida a horario acordado (±5 min)'}
-          </Text>
-          {durMin > 0 ? (
+          {driverUiEnRoute ? null : (
             <>
-              <Text style={styles.sectionLabel}>Duración estimada</Text>
-              <Text style={styles.bodyLine}>{durMin} minutos</Text>
+              <Text style={styles.sectionLabel}>Salida</Text>
+              <Text style={styles.bodyLine}>
+                {formatRideDate(depIso)} · {formatRideTime(depIso)}
+              </Text>
+              <Text style={styles.bodyMuted}>
+                {flexible ? 'Ventana ±30 min alrededor de la hora' : 'Salida a horario acordado (±5 min)'}
+              </Text>
+              {durMin > 0 ? (
+                <>
+                  <Text style={styles.sectionLabel}>Duración estimada</Text>
+                  <Text style={styles.bodyLine}>{durMin} minutos</Text>
+                </>
+              ) : null}
+              <Text style={styles.sectionLabel}>Asientos</Text>
+              <Text style={styles.bodyLine}>
+                {available} libres
+                {totalSeats > 0 ? ` de ${totalSeats}` : ''}
+              </Text>
             </>
-          ) : null}
-          <Text style={styles.sectionLabel}>Asientos</Text>
-          <Text style={styles.bodyLine}>
-            {available} libres
-            {totalSeats > 0 ? ` de ${totalSeats}` : ''}
-          </Text>
+          )}
           {driverBookingRevenue.count > 0 ? (
             <View style={styles.driverRevenueBox}>
               <Text style={styles.driverRevenueBlockTitle}>Dinero según reservas</Text>
@@ -1180,11 +1304,13 @@ export function RideDetailScreen() {
           {rideStops.length > 0 ? (
             <>
               <Text style={styles.sectionLabel}>Recorrido en orden del mapa</Text>
-              <Text style={styles.bodyMuted}>
-                Mismo orden que la ruta en el mapa. Verde: parada publicada con “Llegué” confirmado ahí, o subida/bajada
-                con registro de pasajero. Amarillo: un solo “En camino” (el primero en este orden que coincide con tu
-                parada actual). Navegar abre ese mismo punto.
-              </Text>
+              {driverUiEnRoute ? null : (
+                <Text style={styles.bodyMuted}>
+                  Mismo orden que la ruta en el mapa. Verde: parada publicada con “Llegué” confirmado ahí, o subida/bajada
+                  con registro de pasajero. Amarillo: un solo “En camino” (el primero en este orden que coincide con tu
+                  parada actual). Navegar abre ese mismo punto.
+                </Text>
+              )}
               <TouchableOpacity
                 style={styles.collapsibleHit}
                 onPress={() => setMapRouteListExpanded((v) => !v)}
@@ -1316,10 +1442,6 @@ export function RideDetailScreen() {
                       <Text style={styles.navBtnText}>Navegar a la parada actual</Text>
                     </TouchableOpacity>
                   ) : null}
-                  <Text style={styles.navHintMuted}>
-                    El destino es el punto resaltado “En camino” en la lista de arriba (orden del mapa): subida, bajada o
-                    parada publicada. Maps/Waze abren esas coordenadas.
-                  </Text>
                 </>
               )}
             </>
@@ -1327,6 +1449,37 @@ export function RideDetailScreen() {
         </>
       ) : (
         <>
+          {!passengerBooking ? (
+            <View style={[styles.statusPill, { borderColor: stCfg.color, marginBottom: 12 }]}>
+              <View style={[styles.statusDot, { backgroundColor: stCfg.color }]} />
+              <Text style={[styles.statusPillText, { color: stCfg.color }]}>
+                Viaje: {stCfg.label}
+                {status === 'en_route' ? ' · El conductor comparte ubicación en el mapa (punto azul).' : ''}
+              </Text>
+            </View>
+          ) : null}
+          {!passengerBooking && routeNameLine ? <Text style={styles.routeNameLine}>{routeNameLine}</Text> : null}
+          {!passengerBooking ? (
+            <Text style={styles.title}>
+              {String(ride.origin_label ?? 'Origen')} → {String(ride.destination_label ?? 'Destino')}
+            </Text>
+          ) : null}
+          <RideDetailRouteMap
+            ride={ride}
+            rideStops={rideStops}
+            resolvedRoute={resolvedRideRoute}
+            resolvedRouteLoading={resolvedRideRoute.loading}
+            height={300}
+            passengerBookingGeo={passengerMapGeo}
+            coPassengerPickups={mapCoPassengerPickups}
+            coPassengerDropoffs={mapCoPassengerDropoffs}
+            driverLocation={driverLocationForMap}
+          />
+          {passengerBooking && passengerEtaToPickupMin != null ? (
+            <Text style={styles.passengerEtaHint}>
+              El conductor llega en aprox. {passengerEtaToPickupMin} min a tu punto de subida.
+            </Text>
+          ) : null}
           {passengerBooking ? (
             <View style={styles.bookingCard}>
               <Text style={styles.bookingCardTitle}>Tu reserva</Text>
@@ -1336,32 +1489,40 @@ export function RideDetailScreen() {
                   ? ` · Pago: ${passengerBooking.payment_status}`
                   : ''}
               </Text>
-              <Text style={styles.sectionLabel}>Asientos</Text>
-              <Text style={styles.bodyLine}>{passengerBooking.seats_count}</Text>
-              {passengerBooking.pickup_label ? (
+              <View style={styles.bookingSummaryRow}>
+                <View style={styles.bookingSummaryCol}>
+                  <Text style={styles.sectionLabel}>Asientos</Text>
+                  <Text style={styles.bodyLine}>{passengerBooking.seats_count}</Text>
+                </View>
+                <View style={styles.bookingSummaryCol}>
+                  <Text style={styles.sectionLabel}>Total</Text>
+                  <Text style={styles.bodyLine}>{passengerBooking.price_paid.toLocaleString('es-PY')} PYG</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.bookingChevronBtn}
+                  onPress={() => setBookingDetailsExpanded((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityLabel={bookingDetailsExpanded ? 'Ocultar subida y bajada' : 'Ver subida y bajada'}
+                >
+                  <Ionicons
+                    name={bookingDetailsExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+                    size={20}
+                    color="#14532d"
+                  />
+                </TouchableOpacity>
+              </View>
+              {bookingDetailsExpanded ? (
                 <>
                   <Text style={styles.sectionLabel}>Subida</Text>
-                  <Text style={styles.bodyLine}>{passengerBooking.pickup_label}</Text>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.sectionLabel}>Subida</Text>
-                  <Text style={styles.bodyMuted}>Ubicación elegida en el mapa al reservar.</Text>
-                </>
-              )}
-              {passengerBooking.dropoff_label ? (
-                <>
+                  <Text style={passengerBooking.pickup_label ? styles.bodyLine : styles.bodyMuted}>
+                    {passengerBooking.pickup_label ?? 'Ubicación elegida en el mapa al reservar.'}
+                  </Text>
                   <Text style={styles.sectionLabel}>Bajada</Text>
-                  <Text style={styles.bodyLine}>{passengerBooking.dropoff_label}</Text>
+                  <Text style={passengerBooking.dropoff_label ? styles.bodyLine : styles.bodyMuted}>
+                    {passengerBooking.dropoff_label ?? 'Ubicación elegida en el mapa al reservar.'}
+                  </Text>
                 </>
-              ) : (
-                <>
-                  <Text style={styles.sectionLabel}>Bajada</Text>
-                  <Text style={styles.bodyMuted}>Ubicación elegida en el mapa al reservar.</Text>
-                </>
-              )}
-              <Text style={styles.sectionLabel}>Total</Text>
-              <Text style={styles.bodyLine}>{passengerBooking.price_paid.toLocaleString('es-PY')} PYG</Text>
+              ) : null}
               {canPassengerCancelReservation(passengerBooking.status, status) ? (
                 <TouchableOpacity
                   style={[styles.cancelBookingBtn, cancellingBooking && styles.btnDisabled]}
@@ -1377,37 +1538,17 @@ export function RideDetailScreen() {
               ) : null}
             </View>
           ) : null}
-          {passengerBooking ? (
-            <View style={[styles.statusPill, { borderColor: stCfg.color, marginBottom: 12 }]}>
-              <View style={[styles.statusDot, { backgroundColor: stCfg.color }]} />
-              <Text style={[styles.statusPillText, { color: stCfg.color }]}>
-                Viaje: {stCfg.label}
-                {status === 'en_route' ? ' · El conductor comparte ubicación en el mapa (punto azul).' : ''}
+          {status !== 'en_route' ? (
+            <>
+              <Text style={styles.sectionLabel}>Salida</Text>
+              <Text style={styles.bodyLine}>
+                {formatRideDate(depIso)} · {formatRideTime(depIso)}
               </Text>
-            </View>
+              <Text style={styles.bodyMuted}>
+                {flexible ? 'Ventana ±30 min alrededor de la hora' : 'Salida a horario acordado (±5 min)'}
+              </Text>
+            </>
           ) : null}
-          {routeNameLine ? <Text style={styles.routeNameLine}>{routeNameLine}</Text> : null}
-          <Text style={styles.title}>
-            {String(ride.origin_label ?? 'Origen')} → {String(ride.destination_label ?? 'Destino')}
-          </Text>
-          <RideDetailRouteMap
-            ride={ride}
-            rideStops={rideStops}
-            resolvedRoute={resolvedRideRoute}
-            resolvedRouteLoading={resolvedRideRoute.loading}
-            height={300}
-            passengerBookingGeo={passengerMapGeo}
-            coPassengerPickups={mapCoPassengerPickups}
-            coPassengerDropoffs={mapCoPassengerDropoffs}
-            driverLocation={driverLiveForMap}
-          />
-          <Text style={styles.sectionLabel}>Salida</Text>
-          <Text style={styles.bodyLine}>
-            {formatRideDate(depIso)} · {formatRideTime(depIso)}
-          </Text>
-          <Text style={styles.bodyMuted}>
-            {flexible ? 'Ventana ±30 min alrededor de la hora' : 'Salida a horario acordado (±5 min)'}
-          </Text>
           <Text style={styles.sectionLabel}>Cupos</Text>
           <Text style={styles.bodyLine}>
             {available} disponibles
@@ -1422,10 +1563,25 @@ export function RideDetailScreen() {
           {durMin > 0 ? (
             <>
               <Text style={styles.sectionLabel}>Duración estimada</Text>
-              <Text style={styles.bodyLine}>{durMin} minutos</Text>
+              {status === 'en_route' && passengerBooking ? (
+                <View style={styles.etaRow}>
+                  <View style={styles.etaCol}>
+                    <Text style={styles.bodyLine}>{durMin} minutos</Text>
+                    <Text style={styles.etaSubLabel}>Duración total</Text>
+                  </View>
+                  <View style={styles.etaCol}>
+                    <Text style={styles.bodyLine}>
+                      {passengerEtaToPickupMin != null ? `${passengerEtaToPickupMin} min` : '—'}
+                    </Text>
+                    <Text style={styles.etaSubLabel}>Llega conductor</Text>
+                  </View>
+                </View>
+              ) : (
+                <Text style={styles.bodyLine}>{durMin} minutos</Text>
+              )}
             </>
           ) : null}
-          {maxDevKm > 0 ? (
+          {maxDevKm > 0 && !passengerBooking ? (
             <>
               <Text style={styles.sectionLabel}>Subida y bajada</Text>
               <Text style={styles.bodyMuted}>
@@ -1452,7 +1608,7 @@ export function RideDetailScreen() {
               <Text style={styles.description}>{description}</Text>
             </>
           ) : null}
-          {rideStops.length > 0 ? (
+          {rideStops.length > 0 && !passengerBooking ? (
             <>
               <Text style={styles.sectionLabel}>Paradas del recorrido</Text>
               {rideStops.map((s, i) => (
@@ -1579,9 +1735,6 @@ export function RideDetailScreen() {
                 (hasValidCurrentStop ? `parada ${rawStopIdx + 1}` : 'parada')}
             </Text>
             <ScrollView style={styles.arriveBody}>
-              {pickupAtCurrentStop.length === 0 && dropoffAtCurrentStop.length === 0 ? (
-                <Text style={styles.bodyMuted}>No hay pasajeros para confirmar en esta parada.</Text>
-              ) : null}
               {pickupAtCurrentStop.map((b) => (
                 <View key={`p:${b.id}`} style={styles.arriveRow}>
                   <Text style={styles.arriveLabel}>Subida · {b.pickup_label?.trim() || 'Pasajero'}</Text>
@@ -1643,22 +1796,36 @@ export function RideDetailScreen() {
               ))}
             </ScrollView>
             <View style={styles.arriveFooter}>
-              <TouchableOpacity
-                style={styles.arriveCancel}
-                onPress={() => {
-                  setArriveModalOpen(false);
-                  void setRideAwaitingStopConfirmation(rideId, false);
-                }}
-              >
-                <Text style={styles.arriveCancelText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.arriveConfirm, (!allArriveDecisionsSet || submittingArrive) && styles.btnDisabled]}
-                disabled={!allArriveDecisionsSet || submittingArrive}
-                onPress={() => void submitArriveModal()}
-              >
-                <Text style={styles.arriveConfirmText}>{submittingArrive ? 'Guardando…' : 'Confirmar'}</Text>
-              </TouchableOpacity>
+              {noPassengersAtCurrentStop ? (
+                <TouchableOpacity
+                  style={[styles.arriveConfirm, submittingArrive && styles.btnDisabled]}
+                  disabled={submittingArrive}
+                  onPress={() => void submitArriveModal()}
+                >
+                  <Text style={styles.arriveConfirmText}>
+                    {submittingArrive ? 'Guardando…' : 'Continuar viaje'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={styles.arriveCancel}
+                    onPress={() => {
+                      setArriveModalOpen(false);
+                      void setRideAwaitingStopConfirmation(rideId, false);
+                    }}
+                  >
+                    <Text style={styles.arriveCancelText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.arriveConfirm, (!allArriveDecisionsSet || submittingArrive) && styles.btnDisabled]}
+                    disabled={!allArriveDecisionsSet || submittingArrive}
+                    onPress={() => void submitArriveModal()}
+                  >
+                    <Text style={styles.arriveConfirmText}>{submittingArrive ? 'Guardando…' : 'Confirmar'}</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
           </View>
         </View>
@@ -1954,6 +2121,34 @@ const styles = StyleSheet.create({
   },
   bookingCardTitle: { fontSize: 17, fontWeight: '800', color: '#14532d', marginBottom: 6 },
   bookingMeta: { fontSize: 13, color: '#166534', marginBottom: 8, fontWeight: '600' },
+  bookingSummaryRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
+  bookingSummaryCol: { flex: 1, minWidth: 0 },
+  etaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 18 },
+  etaCol: { minWidth: 110 },
+  etaSubLabel: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  bookingChevronBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+    backgroundColor: '#eff6ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  passengerEtaHint: {
+    fontSize: 13,
+    color: '#14532d',
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#86efac',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    marginTop: 8,
+    marginBottom: 10,
+    fontWeight: '600',
+  },
   cancelBookingBtn: {
     marginTop: 16,
     paddingVertical: 12,

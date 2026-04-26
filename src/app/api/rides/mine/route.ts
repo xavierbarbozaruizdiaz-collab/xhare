@@ -39,7 +39,8 @@ export async function GET(request: NextRequest) {
       .order('departure_time', { ascending: true });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      console.error('[rides/mine] query error:', error.message);
+      return NextResponse.json({ error: 'No se pudieron obtener los viajes del conductor.' }, { status: 400 });
     }
 
     return NextResponse.json(rides ?? []);

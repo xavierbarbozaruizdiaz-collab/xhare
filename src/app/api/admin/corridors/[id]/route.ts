@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-corridors-patch';
+const ADMIN_CORRIDOR_PATCH_WINDOW_MS = 60_000;
+const ADMIN_CORRIDOR_PATCH_MAX_PER_WINDOW = 30;
 
 const hexPointSchema = z.object({
   lat: z.number().finite(),
@@ -81,7 +84,7 @@ function zoneToJson(box: z.infer<typeof zoneSchema>): Record<string, unknown> {
  * Actualiza origin_zone y/o destination_zone (bbox JSON).
  */
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
-  return withAdminAuth(request, async () => {
+  return withAdminAuth(request, async (_req, user) => {
     const id = params.id?.trim();
     if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
       return NextResponse.json({ error: 'id inválido' }, { status: 400 });
@@ -112,6 +115,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     }
 
     try {
+      const clientId = getClientId(request, user.id);
+      if (!checkRateLimit(`admin-corridor-patch:${clientId}`, ADMIN_CORRIDOR_PATCH_WINDOW_MS, ADMIN_CORRIDOR_PATCH_MAX_PER_WINDOW)) {
+        return NextResponse.json({ error: 'Demasiadas solicitudes. Esperá un momento.' }, { status: 429 });
+      }
       const svc = createServiceClient();
       const { data: row, error: fetchErr } = await svc
         .from('corridors')
@@ -121,7 +128,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
       if (fetchErr) {
         logBlockError(BLOCK, fetchErr.message, fetchErr);
-        return NextResponse.json({ error: fetchErr.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudo leer el corredor solicitado.' }, { status: 400 });
       }
       if (!row) {
         return NextResponse.json({ error: 'Corredor no encontrado' }, { status: 404 });
@@ -144,7 +151,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
       if (upErr) {
         logBlockError(BLOCK, upErr.message, upErr);
-        return NextResponse.json({ error: upErr.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudo actualizar el corredor.' }, { status: 400 });
       }
 
       logBlockOk(BLOCK);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,8 @@ function json(body: unknown, status = 200) {
 }
 
 const SLOTS = new Set(['home_to_work', 'work_to_home']);
+const HOME_SHORTCUT_WINDOW_MS = 60_000;
+const HOME_SHORTCUT_MAX_PER_WINDOW = 30;
 
 type Body = {
   delete?: boolean;
@@ -73,6 +76,10 @@ export async function POST(request: NextRequest) {
   if (userErr || !user?.id) {
     return json({ error: 'No autorizado' }, 401);
   }
+  const clientId = getClientId(request, user.id);
+  if (!checkRateLimit(`home-map-shortcut:${clientId}`, HOME_SHORTCUT_WINDOW_MS, HOME_SHORTCUT_MAX_PER_WINDOW)) {
+    return json({ error: 'Demasiadas solicitudes. Esperá un momento.' }, 429);
+  }
 
   const service = createServiceClient();
 
@@ -90,14 +97,20 @@ export async function POST(request: NextRequest) {
 
   if (body.delete === true) {
     const { error } = await service.from('passenger_home_map_shortcuts').delete().eq('user_id', user.id).eq('slot', slot);
-    if (error) return json({ error: error.message }, 400);
+    if (error) {
+      console.error('[passenger/home-map-shortcut] delete error:', error.message);
+      return json({ error: 'No se pudo eliminar el atajo.' }, 400);
+    }
     return json({ ok: true });
   }
 
   const enabled = Boolean(body.enabled);
   if (!enabled) {
     const { error } = await service.from('passenger_home_map_shortcuts').delete().eq('user_id', user.id).eq('slot', slot);
-    if (error) return json({ error: error.message }, 400);
+    if (error) {
+      console.error('[passenger/home-map-shortcut] disable error:', error.message);
+      return json({ error: 'No se pudo actualizar el atajo.' }, 400);
+    }
     return json({ ok: true });
   }
 
@@ -138,6 +151,9 @@ export async function POST(request: NextRequest) {
   };
 
   const { error } = await service.from('passenger_home_map_shortcuts').upsert(row, { onConflict: 'user_id,slot' });
-  if (error) return json({ error: error.message }, 400);
+  if (error) {
+    console.error('[passenger/home-map-shortcut] upsert error:', error.message);
+    return json({ error: 'No se pudo guardar el atajo.' }, 400);
+  }
   return json({ ok: true });
 }

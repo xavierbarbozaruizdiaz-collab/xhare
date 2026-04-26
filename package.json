@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "reset:demand:2026-04-30": "node ./supabase/scripts/reset_demand_groups_2026_04_30.cjs"
+    "reset:demand:2026-04-30": "node ./supabase/scripts/reset_demand_groups_2026_04_30.cjs",
+    "security:env:check": "node ./scripts/security-env-check.cjs",
+    "security:env:check:strict": "node ./scripts/security-env-check.cjs --strict"
   },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.19.3",

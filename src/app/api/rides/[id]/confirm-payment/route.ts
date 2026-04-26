@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireDriverOwnsRide } from '@/lib/api-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const bodySchema = z.object({
   bookingId: z.string().uuid(),
 });
+const CONFIRM_PAYMENT_WINDOW_MS = 60_000;
+const CONFIRM_PAYMENT_MAX_PER_WINDOW = 25;
 
 export async function POST(
   request: NextRequest,
@@ -14,6 +17,13 @@ export async function POST(
     const auth = await requireDriverOwnsRide(params.id, request);
     if (auth instanceof NextResponse) return auth;
     const { supabase, ride } = auth;
+    const clientId = getClientId(request, auth.user.id);
+    if (!checkRateLimit(`confirm-payment:${params.id}:${clientId}`, CONFIRM_PAYMENT_WINDOW_MS, CONFIRM_PAYMENT_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
+    }
 
     if (ride.status !== 'en_route' && ride.status !== 'completed') {
       return NextResponse.json(
@@ -51,7 +61,8 @@ export async function POST(
       .eq('ride_id', params.id);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      console.error('[confirm-payment] update error:', error.message);
+      return NextResponse.json({ error: 'No se pudo confirmar el cobro.' }, { status: 400 });
     }
 
     return NextResponse.json({ success: true });

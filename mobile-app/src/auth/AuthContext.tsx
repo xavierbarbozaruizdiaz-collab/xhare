@@ -37,6 +37,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<SessionProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const recoverProfileFromAuthStore = useCallback(async (): Promise<SessionProfile | null> => {
+    try {
+      const {
+        data: { session: s2 },
+      } = await supabase.auth.getSession();
+      return await getSessionProfileFromSession(s2);
+    } catch {
+      return null;
+    }
+  }, []);
+
   const refreshSession = useCallback(async (nextSession?: Session | null) => {
     console.log('[AUTH_DEBUG] refreshSession.start');
     const profile = nextSession ? await getSessionProfileFromSession(nextSession) : await getSessionProfile();
@@ -95,22 +106,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     })();
 
-    try {
-      const { data } = supabase.auth.onAuthStateChange(async (event, nextSession) => {
-        if (cancelled) return;
-        try {
-          console.log('[AUTH_DEBUG] onAuthStateChange', { event });
-          const profile = await getSessionProfileFromSession(nextSession);
-          console.log('[AUTH_DEBUG] onAuthStateChange.result', {
-            hasSession: !!profile,
-            userId: profile?.id,
-            role: profile?.role,
-          });
-          setSession(profile ?? minimalProfileFromSession(nextSession));
-        } catch {
-          console.log('[AUTH_DEBUG] onAuthStateChange.error');
-          setSession(minimalProfileFromSession(nextSession));
+    const handleAuthStateChange = async (event: string, nextSession: Session | null) => {
+      if (cancelled) return;
+      try {
+        console.log('[AUTH_DEBUG] onAuthStateChange', { event });
+        if (event === 'TOKEN_REFRESHED' && !nextSession) {
+          const recovered = await recoverProfileFromAuthStore();
+          if (recovered) {
+            console.log('[AUTH_DEBUG] onAuthStateChange.recovered', {
+              userId: recovered.id,
+              role: recovered.role,
+            });
+            if (!cancelled) setSession(recovered);
+            return;
+          }
+          if (!cancelled) setSession((prev) => prev);
+          return;
         }
+        const profile = await getSessionProfileFromSession(nextSession);
+        console.log('[AUTH_DEBUG] onAuthStateChange.result', {
+          hasSession: !!profile,
+          userId: profile?.id,
+          role: profile?.role,
+        });
+        if (!cancelled) setSession(profile ?? minimalProfileFromSession(nextSession));
+      } catch {
+        console.log('[AUTH_DEBUG] onAuthStateChange.error');
+        if (event === 'TOKEN_REFRESHED' && !nextSession) {
+          const recovered = await recoverProfileFromAuthStore();
+          if (recovered) {
+            if (!cancelled) setSession(recovered);
+            return;
+          }
+          if (!cancelled) setSession((prev) => prev);
+          return;
+        }
+        if (!cancelled) setSession(minimalProfileFromSession(nextSession));
+      }
+    };
+
+    try {
+      const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+        // Evitar bloqueo/re-entrancia: no hacer await dentro del callback de Supabase.
+        setTimeout(() => {
+          void handleAuthStateChange(String(event), nextSession ?? null);
+        }, 0);
       });
 
       subscription = data?.subscription ?? null;
@@ -125,7 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(timeoutId);
       subscription?.unsubscribe();
     };
-  }, []);
+  }, [recoverProfileFromAuthStore]);
 
   /**
    * React Native: el refresco de JWT por timer no es fiable en background.

@@ -57,7 +57,8 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      console.error('[requests] create error:', error.message);
+      return NextResponse.json({ error: 'No se pudo crear la solicitud.' }, { status: 400 });
     }
 
     // Log audit event
@@ -101,7 +102,8 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      console.error('[requests] list error:', error.message);
+      return NextResponse.json({ error: 'No se pudieron obtener las solicitudes.' }, { status: 400 });
     }
 
     return NextResponse.json(data);

@@ -23,13 +23,20 @@ export async function requestLocationPermission(): Promise<boolean> {
  * Call when starting "en route"; handle denied gracefully.
  */
 export async function requestBackgroundLocationPermission(): Promise<boolean> {
-  const fg = await Location.getForegroundPermissionsAsync();
-  if (fg.status !== 'granted') {
-    const asked = await Location.requestForegroundPermissionsAsync();
-    if (asked.status !== 'granted') return false;
+  try {
+    const fg = await Location.getForegroundPermissionsAsync();
+    if (fg.status !== 'granted') {
+      const asked = await Location.requestForegroundPermissionsAsync();
+      if (asked.status !== 'granted') return false;
+    }
+    const bg = await Location.getBackgroundPermissionsAsync();
+    if (bg.status === 'granted') return true;
+    const { status } = await Location.requestBackgroundPermissionsAsync();
+    return status === 'granted';
+  } catch (e) {
+    console.warn('[tracking] background permission request failed', e);
+    return false;
   }
-  const { status } = await Location.requestBackgroundPermissionsAsync();
-  return status === 'granted';
 }
 
 // Notifications: add expo-notifications when implementing push

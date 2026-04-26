@@ -107,7 +107,8 @@ export async function POST(
           { status: 409 }
         );
       }
-      return NextResponse.json({ error: insertError.message }, { status: 400 });
+      console.error('[rate-passenger] insert error:', insertError.message);
+      return NextResponse.json({ error: 'No se pudo guardar la calificación del pasajero.' }, { status: 400 });
     }
 
     return NextResponse.json({ success: true });

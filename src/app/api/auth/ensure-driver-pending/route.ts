@@ -61,7 +61,8 @@ export async function POST(request: NextRequest) {
         .from('profiles')
         .insert({ id: userId, ...driverData });
       if (insertError) {
-        return NextResponse.json({ error: insertError.message }, { status: 500 });
+        console.error('[auth/ensure-driver-pending] insert profile error:', insertError.message);
+        return NextResponse.json({ error: 'No se pudo crear el perfil del conductor.' }, { status: 500 });
       }
       return NextResponse.json({ ok: true, role: 'driver_pending' });
     }
@@ -76,7 +77,8 @@ export async function POST(request: NextRequest) {
         .update(driverData)
         .eq('id', userId);
       if (updateError) {
-        return NextResponse.json({ error: updateError.message }, { status: 500 });
+        console.error('[auth/ensure-driver-pending] update profile error:', updateError.message);
+        return NextResponse.json({ error: 'No se pudo actualizar el perfil del conductor.' }, { status: 500 });
       }
     } else if (profile.role === 'driver_pending' && (fullName !== undefined || phone !== undefined || address !== undefined || city !== undefined)) {
       const updatePayload: Record<string, unknown> = {};
@@ -91,8 +93,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true, role: 'driver_pending' });
   } catch (e) {
+    console.error('[auth/ensure-driver-pending] unexpected:', e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : 'Error interno' },
+      { error: 'Error interno' },
       { status: 500 }
     );
   }

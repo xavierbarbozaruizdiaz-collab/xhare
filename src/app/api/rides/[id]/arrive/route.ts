@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { createClient } from '@supabase/supabase-js';
+import { createServiceClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import {
@@ -24,6 +25,9 @@ const bodySchema = z.object({
 
 const ARRIVE_WINDOW_MS = 60_000;
 const ARRIVE_MAX_PER_WINDOW = 20;
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder-anon-key';
 
 type BookingArriveRow = {
   id: string;
@@ -51,27 +55,42 @@ export async function POST(
     const { stopOrder, passengers, access_token: tokenFromBody, driverLat, driverLng } = parsed.data;
 
     const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
-    const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim() || tokenFromBody || '';
+    const tokenFromHeader = authHeader.replace(/^\s*Bearer\s+/i, '').trim();
+    const tokenFromBodyClean = String(tokenFromBody ?? '').trim();
+    const tokenCandidates = [tokenFromHeader, tokenFromBodyClean].filter(Boolean);
 
-    if (!token) {
+    if (tokenCandidates.length === 0) {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
 
-    const authClient = createServerClient(request);
-    const {
-      data: { user },
-      error: authError,
-    } = await authClient.auth.getUser(token);
-    if (authError || !user) {
+    let userId = '';
+    let authenticated = false;
+    for (const token of tokenCandidates) {
+      // Importante: NO reutilizar `createServerClient(request)` aquí porque fija `Authorization`
+      // al primer Bearer de la request; si está vencido, invalida `getUser(tokenNuevo)` del body.
+      const jwtClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false },
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const {
+        data: { user },
+        error: authError,
+      } = await jwtClient.auth.getUser();
+      if (!authError && user?.id) {
+        userId = String(user.id);
+        authenticated = true;
+        break;
+      }
+    }
+    if (!authenticated || !userId) {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
-    const userId = user.id;
 
     const clientId = getClientId(request, userId);
     if (!checkRateLimit(`arrive:${clientId}`, ARRIVE_WINDOW_MS, ARRIVE_MAX_PER_WINDOW)) {
@@ -254,7 +273,8 @@ export async function POST(
       .eq('stop_order', stopOrder);
 
     if (stopError) {
-      return NextResponse.json({ error: stopError.message }, { status: 400 });
+      console.error('[arrive] stop update error:', stopError.message);
+      return NextResponse.json({ error: 'No se pudo registrar la llegada a la parada.' }, { status: 400 });
     }
 
     for (const p of passengers) {
@@ -265,8 +285,9 @@ export async function POST(
         event_type: p.action,
       });
       if (insertErr && insertErr.code !== '23505') {
+        console.error('[arrive] boarding event insert error:', insertErr.message);
         return NextResponse.json(
-          { error: `Error guardando evento: ${insertErr.message}` },
+          { error: 'No se pudo registrar uno de los eventos de abordaje.' },
           { status: 400 }
         );
       }
@@ -288,7 +309,8 @@ export async function POST(
       .maybeSingle();
 
     if (rideUpdateErr) {
-      return NextResponse.json({ error: rideUpdateErr.message }, { status: 400 });
+      console.error('[arrive] ride update error:', rideUpdateErr.message);
+      return NextResponse.json({ error: 'No se pudo actualizar el estado del viaje.' }, { status: 400 });
     }
     if (!updatedRide) {
       return NextResponse.json({ error: 'No se pudo actualizar el viaje.' }, { status: 500 });

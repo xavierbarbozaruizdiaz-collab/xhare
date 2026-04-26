@@ -1,18 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-demand-grouping-diagnostics';
+const ADMIN_DEMAND_GROUPING_DIAGNOSTICS_WINDOW_MS = 60_000;
+const ADMIN_DEMAND_GROUPING_DIAGNOSTICS_MAX_PER_WINDOW = 30;
 
 /**
  * GET /api/admin/demand-grouping/diagnostics
  * Diagnóstico HEX-only para panel admin.
  */
 export async function GET(request: NextRequest) {
-  return withAdminAuth(request, async (_req) => {
+  return withAdminAuth(request, async (_req, user) => {
     try {
+      const clientId = getClientId(request, user.id);
+      if (!checkRateLimit(`admin-demand-grouping-diagnostics:${clientId}`, ADMIN_DEMAND_GROUPING_DIAGNOSTICS_WINDOW_MS, ADMIN_DEMAND_GROUPING_DIAGNOSTICS_MAX_PER_WINDOW)) {
+        return NextResponse.json({ error: 'Demasiadas solicitudes. Esperá un momento.' }, { status: 429 });
+      }
       const service = createServiceClient();
       const notes: string[] = ['Motores corridor/classified y geo_sync deshabilitados en runtime.'];
 

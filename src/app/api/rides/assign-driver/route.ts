@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireDriver } from '@/lib/api-auth';
 import { createServiceClient } from '@/lib/supabase/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const bodySchema = z.object({
   ride_id: z.string().uuid(),
 });
+const ASSIGN_DRIVER_WINDOW_MS = 60_000;
+const ASSIGN_DRIVER_MAX_PER_WINDOW = 20;
 
 /**
  * POST /api/rides/assign-driver
@@ -16,6 +19,13 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireDriver(request);
     if (auth instanceof NextResponse) return auth;
+    const clientId = getClientId(request, auth.user.id);
+    if (!checkRateLimit(`assign-driver:${clientId}`, ASSIGN_DRIVER_WINDOW_MS, ASSIGN_DRIVER_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
+    }
 
     let raw: unknown;
     try {
@@ -42,7 +52,8 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (fetchErr) {
-      return NextResponse.json({ error: fetchErr.message }, { status: 400 });
+      console.error('[assign-driver] fetch:', fetchErr.message);
+      return NextResponse.json({ error: 'No se pudo consultar el viaje.' }, { status: 400 });
     }
     if (!existing) {
       return NextResponse.json({ error: 'Viaje no encontrado' }, { status: 404 });
@@ -72,7 +83,7 @@ export async function POST(request: NextRequest) {
 
     if (upErr) {
       console.error('[assign-driver] update:', upErr.message);
-      return NextResponse.json({ error: upErr.message }, { status: 400 });
+      return NextResponse.json({ error: 'No se pudo asignar el conductor.' }, { status: 400 });
     }
     if (!updated) {
       return NextResponse.json(
@@ -89,7 +100,7 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     console.error('[assign-driver]', e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : 'Error interno' },
+      { error: 'Error interno' },
       { status: 500 }
     );
   }

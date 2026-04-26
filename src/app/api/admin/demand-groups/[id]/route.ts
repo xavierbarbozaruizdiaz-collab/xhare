@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import { buildDemandRouteGroupDetailResult } from '@/lib/demand-route-group-detail-build';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-demand-groups-id';
+const ADMIN_DEMAND_GROUP_DETAIL_WINDOW_MS = 60_000;
+const ADMIN_DEMAND_GROUP_DETAIL_MAX_PER_WINDOW = 50;
+const ADMIN_DEMAND_GROUP_DELETE_WINDOW_MS = 60_000;
+const ADMIN_DEMAND_GROUP_DELETE_MAX_PER_WINDOW = 20;
 
 const ACTIVE_RIDE_STATUSES = ['published', 'booked', 'en_route'] as const;
 
@@ -18,8 +23,15 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  return withAdminAuth(request, async () => {
+  return withAdminAuth(request, async (_req, user) => {
     try {
+      const clientId = getClientId(request, user.id);
+      if (!checkRateLimit(`admin-demand-group-get:${clientId}`, ADMIN_DEMAND_GROUP_DETAIL_WINDOW_MS, ADMIN_DEMAND_GROUP_DETAIL_MAX_PER_WINDOW)) {
+        return NextResponse.json(
+          { error: 'Demasiadas solicitudes. Esperá un momento.' },
+          { status: 429 }
+        );
+      }
       const { id } = await params;
       if (!id || !String(id).trim()) {
         return NextResponse.json({ error: 'id requerido' }, { status: 400 });
@@ -47,8 +59,15 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  return withAdminAuth(request, async () => {
+  return withAdminAuth(request, async (_req, user) => {
     try {
+      const clientId = getClientId(request, user.id);
+      if (!checkRateLimit(`admin-demand-group-delete:${clientId}`, ADMIN_DEMAND_GROUP_DELETE_WINDOW_MS, ADMIN_DEMAND_GROUP_DELETE_MAX_PER_WINDOW)) {
+        return NextResponse.json(
+          { error: 'Demasiadas solicitudes. Esperá un momento.' },
+          { status: 429 }
+        );
+      }
       const { id: groupId } = await params;
       if (!groupId || !String(groupId).trim()) {
         return NextResponse.json({ error: 'id requerido' }, { status: 400 });
@@ -75,7 +94,7 @@ export async function DELETE(
           .maybeSingle();
         if (rErr) {
           logBlockError(BLOCK, rErr.message, rErr);
-          return NextResponse.json({ error: rErr.message }, { status: 400 });
+          return NextResponse.json({ error: 'No se pudo consultar el viaje asociado al grupo.' }, { status: 400 });
         }
         const st = String(ride?.status ?? '');
         if (ACTIVE_RIDE_STATUSES.includes(st as (typeof ACTIVE_RIDE_STATUSES)[number])) {
@@ -96,7 +115,7 @@ export async function DELETE(
             .neq('status', 'cancelled');
           if (bErr) {
             logBlockError(BLOCK, `bookings: ${bErr.message}`, bErr);
-            return NextResponse.json({ error: bErr.message }, { status: 400 });
+            return NextResponse.json({ error: 'No se pudieron cancelar las reservas del viaje de sistema.' }, { status: 400 });
           }
           const { error: rideUpdErr } = await service
             .from('rides')
@@ -113,7 +132,7 @@ export async function DELETE(
             .eq('id', rideId);
           if (rideUpdErr) {
             logBlockError(BLOCK, `rides: ${rideUpdErr.message}`, rideUpdErr);
-            return NextResponse.json({ error: rideUpdErr.message }, { status: 400 });
+            return NextResponse.json({ error: 'No se pudo cancelar el viaje de sistema asociado.' }, { status: 400 });
           }
         }
       }
@@ -124,7 +143,7 @@ export async function DELETE(
         .eq('group_id', groupId);
       if (mErr) {
         logBlockError(BLOCK, mErr.message, mErr);
-        return NextResponse.json({ error: mErr.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudieron obtener los miembros del grupo.' }, { status: 400 });
       }
       const memberTripIds = Array.from(
         new Set(
@@ -148,7 +167,7 @@ export async function DELETE(
         .in('status', ['grouping', 'grouped', 'group_linked_pending']);
       if (uPool) {
         logBlockError(BLOCK, `trip_requests pool: ${uPool.message}`, uPool);
-        return NextResponse.json({ error: uPool.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudieron restablecer solicitudes agrupadas del grupo.' }, { status: 400 });
       }
 
       if (rideId) {
@@ -165,7 +184,7 @@ export async function DELETE(
           .eq('ride_id', rideId);
         if (uAcc) {
           logBlockError(BLOCK, `trip_requests accepted/dispatch: ${uAcc.message}`, uAcc);
-          return NextResponse.json({ error: uAcc.message }, { status: 400 });
+          return NextResponse.json({ error: 'No se pudieron restablecer solicitudes aceptadas del grupo.' }, { status: 400 });
         }
       }
 
@@ -175,7 +194,7 @@ export async function DELETE(
         .eq('demand_group_id', groupId);
       if (uClear) {
         logBlockError(BLOCK, `trip_requests clear demand_group_id: ${uClear.message}`, uClear);
-        return NextResponse.json({ error: uClear.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudo limpiar la referencia al grupo en solicitudes.' }, { status: 400 });
       }
 
       if (memberTripIds.length > 0) {
@@ -191,20 +210,20 @@ export async function DELETE(
           .in('status', ['grouping', 'grouped', 'group_linked_pending']);
         if (uOrphan) {
           logBlockError(BLOCK, `trip_requests members orphan: ${uOrphan.message}`, uOrphan);
-          return NextResponse.json({ error: uOrphan.message }, { status: 400 });
+          return NextResponse.json({ error: 'No se pudieron restablecer solicitudes huérfanas del grupo.' }, { status: 400 });
         }
       }
 
       const { error: delM } = await service.from('demand_route_members').delete().eq('group_id', groupId);
       if (delM) {
         logBlockError(BLOCK, `demand_route_members: ${delM.message}`, delM);
-        return NextResponse.json({ error: delM.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudieron eliminar los miembros del grupo.' }, { status: 400 });
       }
 
       const { error: delG } = await service.from('demand_route_groups').delete().eq('id', groupId);
       if (delG) {
         logBlockError(BLOCK, `demand_route_groups: ${delG.message}`, delG);
-        return NextResponse.json({ error: delG.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudo eliminar el grupo de demanda.' }, { status: 400 });
       }
 
       logBlockOk(BLOCK);

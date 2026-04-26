@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { createClient } from '@supabase/supabase-js';
+import { createServiceClient } from '@/lib/supabase/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const extraStopSchema = z.object({
   lat: z.number(),
@@ -13,6 +15,11 @@ const bodySchema = z.object({
   stops: z.array(extraStopSchema).max(3),
   access_token: z.string().optional(),
 });
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder-anon-key';
+const EXTRA_STOPS_WINDOW_MS = 60_000;
+const EXTRA_STOPS_MAX_PER_WINDOW = 24;
 
 export async function POST(
   request: NextRequest,
@@ -31,27 +38,47 @@ export async function POST(
     const { stops, access_token: tokenFromBody } = parsed.data;
 
     const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
-    const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim() || tokenFromBody || '';
+    const tokenFromHeader = authHeader.replace(/^\s*Bearer\s+/i, '').trim();
+    const tokenFromBodyClean = String(tokenFromBody ?? '').trim();
+    const tokenCandidates = Array.from(new Set([tokenFromHeader, tokenFromBodyClean].filter(Boolean)));
 
-    if (!token) {
+    if (tokenCandidates.length === 0) {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
 
-    const authClient = createServerClient(request);
-    const {
-      data: { user },
-      error: authError,
-    } = await authClient.auth.getUser(token);
-    if (authError || !user) {
+    let userId = '';
+    let authenticated = false;
+    for (const token of tokenCandidates) {
+      const jwtClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false },
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const {
+        data: { user },
+        error: authError,
+      } = await jwtClient.auth.getUser();
+      if (!authError && user?.id) {
+        userId = String(user.id);
+        authenticated = true;
+        break;
+      }
+    }
+    if (!authenticated || !userId) {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
-    const userId = user.id;
+    const clientId = getClientId(request, userId);
+    if (!checkRateLimit(`extra-stops:${rideId}:${clientId}`, EXTRA_STOPS_WINDOW_MS, EXTRA_STOPS_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
+    }
 
     // Verificar que el usuario tiene una reserva activa en este viaje
     const { data: booking } = await service
@@ -80,7 +107,8 @@ export async function POST(
       .eq('passenger_id', userId);
 
     if (deleteError) {
-      return NextResponse.json({ error: deleteError.message }, { status: 400 });
+      console.error('[extra-stops] delete error:', deleteError.message);
+      return NextResponse.json({ error: 'No se pudieron actualizar las paradas extra.' }, { status: 400 });
     }
 
     if (stops.length === 0) {
@@ -103,7 +131,8 @@ export async function POST(
       .order('stop_order', { ascending: true });
 
     if (insertError) {
-      return NextResponse.json({ error: insertError.message }, { status: 400 });
+      console.error('[extra-stops] insert error:', insertError.message);
+      return NextResponse.json({ error: 'No se pudieron guardar las paradas extra.' }, { status: 400 });
     }
 
     return NextResponse.json({

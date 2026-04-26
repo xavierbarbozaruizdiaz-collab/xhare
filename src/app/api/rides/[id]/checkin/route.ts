@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { authGetUser, createServerClient } from '@/lib/supabase/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const checkinSchema = z.object({
   request_id: z.string().uuid(),
   status: z.enum(['checked_in', 'no_show']),
 });
+const CHECKIN_WINDOW_MS = 60_000;
+const CHECKIN_MAX_PER_WINDOW = 30;
 
 export async function POST(
   request: NextRequest,
@@ -22,6 +25,13 @@ export async function POST(
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const clientId = getClientId(request, user.id);
+    if (!checkRateLimit(`ride-checkin:${rideId}:${clientId}`, CHECKIN_WINDOW_MS, CHECKIN_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please wait a moment.' },
+        { status: 429 }
+      );
     }
 
     // Verify user is driver and owns this ride
@@ -47,8 +57,9 @@ export async function POST(
       .eq('request_id', validated.request_id);
 
     if (updateError) {
+      console.error('[ride-checkin] update error:', updateError.message);
       return NextResponse.json(
-        { error: updateError.message },
+        { error: 'No se pudo registrar el estado del pasajero.' },
         { status: 400 }
       );
     }

@@ -162,6 +162,15 @@ function mapSearchRadiusKmForRideKind(rideKind: 'all' | 'internal' | 'long_dista
   return 10;
 }
 
+function normalizeShareCodeInput(raw: string): string {
+  const text = String(raw ?? '').toUpperCase().trim();
+  if (!text) return '';
+  const m = text.match(/XH-?[A-Z0-9]{6}/);
+  if (!m) return '';
+  const compact = m[0].replace('-', '');
+  return `XH-${compact.slice(2)}`;
+}
+
 type BuscoFromSearchPayload = {
   originLabel: string;
   destinationLabel: string;
@@ -174,10 +183,8 @@ type BuscoFromSearchPayload = {
 };
 
 function SearchEmptyResults({
-  navigation,
   onCreateTripRequest,
 }: {
-  navigation: Nav;
   onCreateTripRequest: () => void;
 }) {
   return (
@@ -186,43 +193,14 @@ function SearchEmptyResults({
       <Text style={styles.emptyLead}>
         Guardá tu solicitud de trayecto para que los conductores la vean y puedan publicar un viaje para vos.
       </Text>
-
-      <View style={styles.emptySection}>
-        <Text style={styles.emptySectionTitle}>Otras opciones</Text>
-        <TouchableOpacity
-          style={styles.emptyPrimaryBtn}
-          onPress={onCreateTripRequest}
-          accessibilityRole="button"
-          accessibilityLabel="Guardar solicitud de trayecto con datos de la búsqueda"
-        >
-          <Text style={styles.emptyPrimaryBtnText}>Guardar solicitud de trayecto (datos de arriba)</Text>
-        </TouchableOpacity>
-        <Text style={styles.emptyMuted}>
-          Vas a confirmar si el trayecto es interno (ya cotizado) o larga distancia (precio que querés pagar por
-          asiento). Si falta origen o destino en el mapa, completalo en el formulario.
-        </Text>
-        <TouchableOpacity
-          style={styles.emptyLinkBtn}
-          onPress={() => navigation.navigate('AvailableRides')}
-          accessibilityRole="button"
-        >
-          <Text style={styles.emptyLinkBtnText}>Ver viajes disponibles (lista del día)</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.emptyLinkBtn}
-          onPress={() => navigation.navigate('PassengerDemandRoutes')}
-          accessibilityRole="button"
-        >
-          <Text style={styles.emptyLinkBtnText}>Rutas con demanda (unirme a un grupo)</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.emptyLinkBtnOutline}
-          onPress={() => navigation.navigate('MyTripRequests')}
-          accessibilityRole="button"
-        >
-          <Text style={styles.emptyLinkBtnOutlineText}>Ver mis solicitudes guardadas</Text>
-        </TouchableOpacity>
-      </View>
+      <TouchableOpacity
+        style={styles.emptyPrimaryBtn}
+        onPress={onCreateTripRequest}
+        accessibilityRole="button"
+        accessibilityLabel="Guardar solicitud de trayecto con datos de la búsqueda"
+      >
+        <Text style={styles.emptyPrimaryBtnText}>Guardar solicitud de trayecto (datos de arriba)</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -241,6 +219,7 @@ export function SearchPublishedRidesScreen() {
   /** Solo favoritos: hora a la que el usuario necesita llegar al destino (entrada principal). */
   const [arrivalTimeHm, setArrivalTimeHm] = useState('');
   const arrivalSyncedFromStoredPickupRef = useRef(false);
+  const [shareCodeQuery, setShareCodeQuery] = useState('');
   const [routeNameQuery, setRouteNameQuery] = useState('');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
@@ -249,6 +228,7 @@ export function SearchPublishedRidesScreen() {
   const [rideKind, setRideKind] = useState<'all' | 'internal' | 'long_distance'>('all');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [advancedFiltersExpanded, setAdvancedFiltersExpanded] = useState(false);
   const [scheduleDaily, setScheduleDaily] = useState(false);
   /** Bits 0=domingo … 6=sábado (`Date.getDay`). Solo con `scheduleDaily`. */
   const [scheduleWeekdayMask, setScheduleWeekdayMask] = useState(SCHEDULE_WEEKDAY_MASK_ALL);
@@ -349,8 +329,9 @@ export function SearchPublishedRidesScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     setList([]);
+    const normalizedShareCode = normalizeShareCodeInput(shareCodeQuery);
     const hmSearch = fromTime.trim() || '08:00';
-    if (!isPickupAtLeastLeadAhead(date.trim(), hmSearch, MIN_BOOKING_LEAD_MS)) {
+    if (!normalizedShareCode && !isPickupAtLeastLeadAhead(date.trim(), hmSearch, MIN_BOOKING_LEAD_MS)) {
       setSearchLeadError(
         'Elegí fecha y hora de salida con al menos 4 horas de anticipación respecto de ahora (hora de este dispositivo).'
       );
@@ -363,6 +344,7 @@ export function SearchPublishedRidesScreen() {
       const rows = (await searchRides({
         date: date.trim(),
         fromTimeLocal: fromTime.trim() || '08:00',
+        shareCode: normalizedShareCode || undefined,
         routeName: routeNameQuery.trim() || undefined,
         origin: originGeo ? undefined : origin.trim() || undefined,
         destination: destGeo ? undefined : destination.trim() || undefined,
@@ -380,7 +362,7 @@ export function SearchPublishedRidesScreen() {
     } finally {
       setLoading(false);
     }
-  }, [date, fromTime, routeNameQuery, origin, destination, originGeo, destGeo, rideKind]);
+  }, [date, fromTime, shareCodeQuery, routeNameQuery, origin, destination, originGeo, destGeo, rideKind]);
 
   useEffect(() => {
     if (isFavoriteMode) return;
@@ -649,6 +631,16 @@ export function SearchPublishedRidesScreen() {
           }}
         />
       ) : null}
+      <Text style={styles.label}>Código de viaje (opcional)</Text>
+      <TextInput
+        style={styles.input}
+        value={shareCodeQuery}
+        onChangeText={(t) => setShareCodeQuery(t.toUpperCase().replace(/\s+/g, ''))}
+        autoCapitalize="characters"
+        autoCorrect={false}
+        placeholder="Ej: XH-ABC123"
+        placeholderTextColor="#9ca3af"
+      />
       {favoriteSlot ? (
         <View style={styles.dailyRow}>
           <View style={styles.dailyTextWrap}>
@@ -706,63 +698,76 @@ export function SearchPublishedRidesScreen() {
           </View>
         </View>
       ) : null}
-      <Text style={styles.label}>
-        {favoriteArrivalCopy ? 'Tu transporte pasará aprox. a las:' : 'Llegada estimada en destino'}
-      </Text>
-      <View
-        style={[styles.pickerRow, styles.pickerRowReadOnly]}
-        accessibilityRole="text"
-        accessibilityLabel={
-          favoriteArrivalCopy
-            ? `Salida estimada: ${estimatedPickup.text}`
-            : `Llegada estimada: ${estimatedArrival.text}`
-        }
+      <TouchableOpacity
+        style={styles.advancedToggle}
+        onPress={() => setAdvancedFiltersExpanded((v) => !v)}
+        accessibilityRole="button"
+        accessibilityLabel={advancedFiltersExpanded ? 'Ocultar filtros adicionales' : 'Ver filtros adicionales'}
       >
-        <Text
-          style={
-            (favoriteArrivalCopy ? estimatedPickup : estimatedArrival).isPlaceholder
-              ? styles.pickerPlaceholder
-              : styles.pickerValue
-          }
-          selectable
-        >
-          {(favoriteArrivalCopy ? estimatedPickup : estimatedArrival).text}
-        </Text>
-      </View>
-      {!isFavoriteMode ? (
+        <Text style={styles.advancedToggleText}>Más filtros</Text>
+        <Text style={styles.advancedToggleArrow}>{advancedFiltersExpanded ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+      {advancedFiltersExpanded ? (
         <>
-          <Text style={styles.label}>Nombre del viaje (opcional)</Text>
+          <Text style={styles.label}>
+            {favoriteArrivalCopy ? 'Tu transporte pasará aprox. a las:' : 'Llegada estimada en destino'}
+          </Text>
+          <View
+            style={[styles.pickerRow, styles.pickerRowReadOnly]}
+            accessibilityRole="text"
+            accessibilityLabel={
+              favoriteArrivalCopy
+                ? `Salida estimada: ${estimatedPickup.text}`
+                : `Llegada estimada: ${estimatedArrival.text}`
+            }
+          >
+            <Text
+              style={
+                (favoriteArrivalCopy ? estimatedPickup : estimatedArrival).isPlaceholder
+                  ? styles.pickerPlaceholder
+                  : styles.pickerValue
+              }
+              selectable
+            >
+              {(favoriteArrivalCopy ? estimatedPickup : estimatedArrival).text}
+            </Text>
+          </View>
+          {!isFavoriteMode ? (
+            <>
+              <Text style={styles.label}>Nombre del viaje (opcional)</Text>
+              <TextInput
+                style={styles.input}
+                value={routeNameQuery}
+                onChangeText={setRouteNameQuery}
+                placeholder="Si el conductor lo definió al publicar"
+                placeholderTextColor="#9ca3af"
+              />
+            </>
+          ) : null}
+          <Text style={styles.label}>Origen</Text>
           <TextInput
             style={styles.input}
-            value={routeNameQuery}
-            onChangeText={setRouteNameQuery}
-            placeholder="Si el conductor lo definió al publicar"
+            value={origin}
+            onChangeText={(t) => {
+              setOrigin(t);
+              setOriginGeo(null);
+            }}
+            placeholder="Marcá en el mapa"
+            placeholderTextColor="#9ca3af"
+          />
+          <Text style={styles.label}>Destino</Text>
+          <TextInput
+            style={styles.input}
+            value={destination}
+            onChangeText={(t) => {
+              setDestination(t);
+              setDestGeo(null);
+            }}
+            placeholder="Marcá en el mapa"
             placeholderTextColor="#9ca3af"
           />
         </>
       ) : null}
-      <Text style={styles.label}>Origen</Text>
-      <TextInput
-        style={styles.input}
-        value={origin}
-        onChangeText={(t) => {
-          setOrigin(t);
-          setOriginGeo(null);
-        }}
-        placeholder="Marcá en el mapa"
-        placeholderTextColor="#9ca3af"
-      />
-      <Text style={styles.label}>Destino</Text>
-      <TextInput
-        style={styles.input}
-        value={destination}
-        onChangeText={(t) => {
-          setDestination(t);
-          setDestGeo(null);
-        }}
-        placeholder="Marcá en el mapa"
-        placeholderTextColor="#9ca3af"
-      />
 
       {!isFavoriteMode ? (
         <>
@@ -845,6 +850,7 @@ export function SearchPublishedRidesScreen() {
       originGeo,
       destGeo,
       rideKind,
+      shareCodeQuery,
       load,
       saveFavorite,
       favoriteSlot,
@@ -853,11 +859,13 @@ export function SearchPublishedRidesScreen() {
       scheduleDaily,
       scheduleWeekdayMask,
       rideKind,
+      shareCodeQuery,
       estimatedArrival,
       estimatedPickup,
       favoriteArrivalFirstUx,
       favoriteArrivalCopy,
       arrivalTimeHm,
+      advancedFiltersExpanded,
       goCreateTripRequestFromSearch,
       savingFavorite,
     ]
@@ -876,12 +884,18 @@ export function SearchPublishedRidesScreen() {
             <ActivityIndicator style={styles.listSpinner} size="large" color="#166534" />
           ) : favoriteSlot ? null : searchLeadError ? (
             <View style={styles.emptyBlock}>
-              <Text style={styles.emptyTitle}>Anticipación mínima</Text>
-              <Text style={styles.emptyLead}>{searchLeadError}</Text>
+              <Text style={styles.emptyTitle}>Elegí fecha y hora</Text>
+              <Text style={styles.emptyLead}>Elegí fecha y hora para que te aparezca los viajes en ese horario.</Text>
+            </View>
+          ) : normalizeShareCodeInput(shareCodeQuery) ? (
+            <View style={styles.emptyBlock}>
+              <Text style={styles.emptyTitle}>No se encontró viaje con ese código</Text>
+              <Text style={styles.emptyLead}>
+                Revisá el código compartido por el conductor (formato esperado: XH-ABC123) e intentá de nuevo.
+              </Text>
             </View>
           ) : (
             <SearchEmptyResults
-              navigation={navigation}
               onCreateTripRequest={goCreateTripRequestFromSearch}
             />
           )
@@ -936,6 +950,20 @@ const styles = StyleSheet.create({
   pickerRowReadOnly: {
     backgroundColor: '#f9fafb',
   },
+  advancedToggle: {
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    backgroundColor: '#f9fafb',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  advancedToggleText: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  advancedToggleArrow: { fontSize: 12, color: '#6b7280' },
   dailyRow: {
     borderWidth: 1,
     borderColor: '#d1d5db',

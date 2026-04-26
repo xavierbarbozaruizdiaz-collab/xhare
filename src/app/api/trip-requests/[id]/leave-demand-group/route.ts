@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@/lib/api-auth';
 import { createServiceClient } from '@/lib/supabase/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import { detachTripRequestFromDemandGroup } from '@/lib/trip-request-favorite-ungroup';
 import { sendDriverDemandPassengerLeftPush } from '@/lib/push/sendDriverDemandPassengerLeftPush';
+const LEAVE_DEMAND_GROUP_WINDOW_MS = 60_000;
+const LEAVE_DEMAND_GROUP_MAX_PER_WINDOW = 20;
 
 /**
  * POST /api/trip-requests/[id]/leave-demand-group
@@ -17,6 +20,13 @@ export async function POST(
   try {
     const auth = await getAuth(request);
     if (auth instanceof NextResponse) return auth;
+    const clientId = getClientId(request, auth.user.id);
+    if (!checkRateLimit(`leave-demand-group:${clientId}`, LEAVE_DEMAND_GROUP_WINDOW_MS, LEAVE_DEMAND_GROUP_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
+    }
 
     const { id: tripRequestId } = await params;
     if (!tripRequestId?.trim()) {
@@ -46,7 +56,7 @@ export async function POST(
 
     return NextResponse.json({ ok: true });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Error interno';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error('[trip-requests/leave-demand-group] unexpected:', e);
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 });
   }
 }

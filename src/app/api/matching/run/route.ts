@@ -36,8 +36,9 @@ export async function POST(request: NextRequest) {
       .order('created_at', { ascending: true });
 
     if (requestsError) {
+      console.error('[matching/run] requests query error:', requestsError.message);
       return NextResponse.json(
-        { error: requestsError.message },
+        { error: 'No se pudieron obtener las solicitudes para matching.' },
         { status: 400 }
       );
     }

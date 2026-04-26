@@ -1,18 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-demand-groups-list';
+const ADMIN_DEMAND_GROUPS_WINDOW_MS = 60_000;
+const ADMIN_DEMAND_GROUPS_MAX_PER_WINDOW = 40;
 
 /**
  * GET /api/admin/demand-groups?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=300
  * Listado de `demand_route_groups` para el panel (service role tras admin).
  */
 export async function GET(request: NextRequest) {
-  return withAdminAuth(request, async (req) => {
+  return withAdminAuth(request, async (req, user) => {
     try {
+      const clientId = getClientId(request, user.id);
+      if (!checkRateLimit(`admin-demand-groups:${clientId}`, ADMIN_DEMAND_GROUPS_WINDOW_MS, ADMIN_DEMAND_GROUPS_MAX_PER_WINDOW)) {
+        return NextResponse.json(
+          { error: 'Demasiadas solicitudes. Esperá un momento.' },
+          { status: 429 }
+        );
+      }
       const service = createServiceClient();
       const { searchParams } = new URL(req.url);
       const today = new Date().toISOString().slice(0, 10);
@@ -39,7 +49,7 @@ export async function GET(request: NextRequest) {
 
       if (error) {
         logBlockError(BLOCK, error.message, error);
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudieron obtener los grupos de demanda.' }, { status: 400 });
       }
 
       logBlockOk(BLOCK);

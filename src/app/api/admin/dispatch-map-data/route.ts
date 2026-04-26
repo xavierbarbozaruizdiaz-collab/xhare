@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { withAdminAuth, logBlockError, logBlockOk } from '@/lib/admin-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'dispatch-map-data';
+const DISPATCH_MAP_DATA_WINDOW_MS = 60_000;
+const DISPATCH_MAP_DATA_MAX_PER_WINDOW = 40;
 
 /** Estados de demanda visibles en el mapa de despacho (no viaje ya cerrado al pasajero). */
 const DEMAND_STATUSES = ['pending', 'grouping', 'grouped', 'group_linked_pending'] as const;
@@ -14,8 +17,15 @@ const DEMAND_STATUSES = ['pending', 'grouping', 'grouped', 'group_linked_pending
  * Pedidos de pasajeros con coordenadas, grupos de demanda y rides generados por sistema.
  */
 export async function GET(request: NextRequest) {
-  return withAdminAuth(request, async () => {
+  return withAdminAuth(request, async (_req, user) => {
     try {
+      const clientId = getClientId(request, user.id);
+      if (!checkRateLimit(`admin-dispatch-map-data:${clientId}`, DISPATCH_MAP_DATA_WINDOW_MS, DISPATCH_MAP_DATA_MAX_PER_WINDOW)) {
+        return NextResponse.json(
+          { error: 'Demasiadas solicitudes. Esperá un momento.' },
+          { status: 429 }
+        );
+      }
       const service = createServiceClient();
       const { searchParams } = new URL(request.url);
       const today = new Date().toISOString().slice(0, 10);
@@ -80,22 +90,22 @@ export async function GET(request: NextRequest) {
 
       if (tripErr) {
         logBlockError(BLOCK, tripErr.message, tripErr);
-        return NextResponse.json({ error: tripErr.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudieron obtener solicitudes para el mapa de despacho.' }, { status: 400 });
       }
       if (rideErr) {
         logBlockError(BLOCK, rideErr.message, rideErr);
-        return NextResponse.json({ error: rideErr.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudieron obtener viajes para el mapa de despacho.' }, { status: 400 });
       }
       if (groupErr) {
         logBlockError(BLOCK, groupErr.message, groupErr);
-        return NextResponse.json({ error: groupErr.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudieron obtener grupos de demanda para el mapa de despacho.' }, { status: 400 });
       }
       let passengerHomeShortcuts: unknown[] = [];
       let passengerHomeShortcutsError: string | null = null;
       if (shortcutErr) {
         logBlockError(BLOCK, `passenger_home_map_shortcuts (se omite): ${shortcutErr.message}`, shortcutErr);
         passengerHomeShortcuts = [];
-        passengerHomeShortcutsError = shortcutErr.message;
+        passengerHomeShortcutsError = 'No se pudieron obtener atajos de pasajero.';
       } else {
         /** Atajos: misma ventana de fechas que pedidos (`scheduled_date` = fecha que confirmó el pasajero al activar). */
         passengerHomeShortcuts = shortcutRowsRaw ?? [];

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOsrmBaseUrl, getOsrmRequestTimeoutMs } from '@/lib/osrm-routing';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 type Point = { lat: number; lng: number };
+const SEGMENT_STATS_WINDOW_MS = 60_000;
+const SEGMENT_STATS_MAX_PER_WINDOW = 90;
 
 function haversineKm(a: Point, b: Point): number {
   const R = 6371;
@@ -31,12 +34,19 @@ function estimateFallback(origin: Point, destination: Point, waypoints: Point[])
  */
 export async function POST(request: NextRequest) {
   try {
+    const clientId = getClientId(request);
+    if (!checkRateLimit(`segment-stats:${clientId}`, SEGMENT_STATS_WINDOW_MS, SEGMENT_STATS_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
+    }
     const body = await request.json();
     const origin = body.origin as Point;
     const destination = body.destination as Point;
     const waypoints = Array.isArray(body.waypoints) ? (body.waypoints as Point[]) : [];
 
-    if (!origin?.lat || !origin?.lng || !destination?.lat || !destination?.lng) {
+    if (origin?.lat == null || origin?.lng == null || destination?.lat == null || destination?.lng == null) {
       return NextResponse.json(
         { error: 'origin and destination with lat/lng required' },
         { status: 400 }

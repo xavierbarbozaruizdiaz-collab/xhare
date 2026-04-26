@@ -69,6 +69,8 @@ import {
   saveTripRequest,
   cancelTripRequestsForPassengerFavoriteSlot,
   findEnRouteRideIdForFavorite,
+  findPassengerActiveRideShortcut,
+  fetchMyRides,
 } from '../rides/api';
 
 type IonName = ComponentProps<typeof Ionicons>['name'];
@@ -234,6 +236,7 @@ export function HomeScreen() {
   const isPassengerFlavor = flavor !== 'driver';
   const parentNav = navigation.getParent() as ParentNav | undefined;
   const userId = session?.id ?? '';
+  const [activeHomeRideId, setActiveHomeRideId] = useState<string | null>(null);
 
   const [favorites, setFavorites] = useState<Partial<Record<PassengerFavoriteSlot, PassengerFavoriteSnapshot>>>({});
   const [addFavoriteOpen, setAddFavoriteOpen] = useState(false);
@@ -293,6 +296,40 @@ export function HomeScreen() {
     useCallback(() => {
       refreshFavorites();
     }, [refreshFavorites])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const run = async () => {
+        if (!session?.id) {
+          if (!cancelled) setActiveHomeRideId(null);
+          return;
+        }
+        if (!isPassengerFlavor) {
+          try {
+            const rides = await fetchMyRides(session.id);
+            const enRoute = rides.find((r: { status?: unknown; id?: unknown }) => String(r.status ?? '') === 'en_route');
+            if (!cancelled) setActiveHomeRideId(enRoute ? String(enRoute.id ?? '').trim() || null : null);
+          } catch {
+            if (!cancelled) setActiveHomeRideId(null);
+          }
+          return;
+        }
+        const favoriteSlots = Object.entries(favorites)
+          .filter(([, snap]) => favoriteHasConfig(snap) && isFavoriteEnabled(snap))
+          .map(([slot]) => String(slot));
+        const rideId = await findPassengerActiveRideShortcut({
+          userId: session.id,
+          favoriteSlots,
+        });
+        if (!cancelled) setActiveHomeRideId(rideId);
+      };
+      void run();
+      return () => {
+        cancelled = true;
+      };
+    }, [session?.id, isPassengerFlavor, favorites])
   );
 
   useEffect(() => {
@@ -770,6 +807,17 @@ export function HomeScreen() {
               {favoritesTitle}
             </Text>
             <Text style={styles.subLead}>{favoritesSubtitle}</Text>
+            {activeHomeRideId ? (
+              <TouchableOpacity
+                style={styles.activeRideShortcutBtn}
+                onPress={() => parentNav?.navigate('RideDetail', { rideId: activeHomeRideId })}
+                accessibilityRole="button"
+                accessibilityLabel="Abrir viaje actual"
+              >
+                <Ionicons name="navigate-circle-outline" size={20} color="#fff" />
+                <Text style={styles.activeRideShortcutBtnText}>Ir a mi viaje actual</Text>
+              </TouchableOpacity>
+            ) : null}
 
             <View style={styles.favoritesBox}>
               <TouchableOpacity
@@ -1149,6 +1197,17 @@ export function HomeScreen() {
             <Text style={styles.subLead}>
               Gestiona tus viajes publicados y responde solicitudes desde este panel rapido.
             </Text>
+            {activeHomeRideId ? (
+              <TouchableOpacity
+                style={styles.activeRideShortcutBtn}
+                onPress={() => parentNav?.navigate('RideDetail', { rideId: activeHomeRideId })}
+                accessibilityRole="button"
+                accessibilityLabel="Abrir viaje en curso"
+              >
+                <Ionicons name="navigate-circle-outline" size={20} color="#fff" />
+                <Text style={styles.activeRideShortcutBtnText}>Ir al viaje en curso</Text>
+              </TouchableOpacity>
+            ) : null}
 
             <View style={styles.driverQuickBox}>
               <TouchableOpacity
@@ -1416,6 +1475,18 @@ const styles = StyleSheet.create({
   },
   driverPrimaryIcon: { marginRight: 8 },
   driverPrimaryBtnText: { color: '#fff', fontWeight: '800', fontSize: 13, letterSpacing: 0.3 },
+  activeRideShortcutBtn: {
+    marginBottom: 12,
+    backgroundColor: '#1d4ed8',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  activeRideShortcutBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
   activateModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',

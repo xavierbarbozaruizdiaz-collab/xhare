@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'admin-corridors-import-central';
+const ADMIN_IMPORT_CENTRAL_WINDOW_MS = 60_000;
+const ADMIN_IMPORT_CENTRAL_MAX_PER_WINDOW = 10;
 
 const CENTRAL_CITIES = [
   'Lambare',
@@ -299,7 +302,7 @@ async function fetchAsuncionSplit(): Promise<CityPolygonRecord[] | null> {
  * Body: { kind: 'origin' | 'destination' }
  */
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
-  return withAdminAuth(request, async () => {
+  return withAdminAuth(request, async (_req, user) => {
     const id = params.id?.trim();
     if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
       return NextResponse.json({ error: 'id inválido' }, { status: 400 });
@@ -316,13 +319,20 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
 
     try {
+      const clientId = getClientId(request, user.id);
+      if (!checkRateLimit(`admin-corridors-import-central:${clientId}`, ADMIN_IMPORT_CENTRAL_WINDOW_MS, ADMIN_IMPORT_CENTRAL_MAX_PER_WINDOW)) {
+        return NextResponse.json({ error: 'Demasiadas solicitudes. Esperá un momento.' }, { status: 429 });
+      }
       const svc = createServiceClient();
       const { data: row, error: fetchErr } = await svc
         .from('corridors')
         .select('id, origin_zone, destination_zone')
         .eq('id', id)
         .maybeSingle();
-      if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 400 });
+      if (fetchErr) {
+        logBlockError(BLOCK, fetchErr.message, fetchErr);
+        return NextResponse.json({ error: 'No se pudo leer el corredor solicitado.' }, { status: 400 });
+      }
       if (!row) return NextResponse.json({ error: 'Corredor no encontrado' }, { status: 404 });
 
       const imported: CityPolygonRecord[] = [];
@@ -395,7 +405,10 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         .eq('id', id)
         .select('id, name, slug, origin_zone, destination_zone, sort_priority, is_active, created_at')
         .single();
-      if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
+      if (upErr) {
+        logBlockError(BLOCK, upErr.message, upErr);
+        return NextResponse.json({ error: 'No se pudo guardar la importación de ciudades en el corredor.' }, { status: 400 });
+      }
 
       logBlockOk(BLOCK);
       return NextResponse.json({ corridor: updated, imported: imported.length, missing });

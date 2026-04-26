@@ -4,6 +4,7 @@ import { cookies, headers } from 'next/headers';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder-anon-key';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'placeholder-service-key';
+let warnedMissingServiceRoleKey = false;
 
 /** Optional request: when provided (e.g. in Route Handlers), auth is read from that request's headers. */
 export function createServerClient(incomingRequest?: Request) {
@@ -59,6 +60,16 @@ export async function authGetUser(
 }
 
 export function createServiceClient() {
+  if (
+    process.env.NODE_ENV === 'production' &&
+    supabaseServiceKey === 'placeholder-service-key' &&
+    !warnedMissingServiceRoleKey
+  ) {
+    warnedMissingServiceRoleKey = true;
+    console.error(
+      '[createServiceClient] SUPABASE_SERVICE_ROLE_KEY missing in production (using placeholder).'
+    );
+  }
   return createClient(supabaseUrl, supabaseServiceKey, {
     auth: {
       autoRefreshToken: false,

@@ -43,7 +43,8 @@ export async function POST(
       .eq('id', requestId);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      console.error('[requests/confirm] update error:', error.message);
+      return NextResponse.json({ error: 'No se pudo confirmar la solicitud.' }, { status: 400 });
     }
 
     // Log audit event

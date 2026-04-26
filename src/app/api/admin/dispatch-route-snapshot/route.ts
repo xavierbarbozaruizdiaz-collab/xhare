@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { logBlockError, logBlockOk, withAdminAuth } from '@/lib/admin-auth';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 const BLOCK = 'dispatch-route-snapshot';
+const DISPATCH_ROUTE_SNAPSHOT_WINDOW_MS = 60_000;
+const DISPATCH_ROUTE_SNAPSHOT_MAX_PER_WINDOW = 25;
 
 const MAX_POLYLINE_POINTS = 50_000;
 const MAX_STOPS = 200;
@@ -67,6 +70,13 @@ function sanitizeStops(raw: unknown): unknown[] | null {
  */
 export async function POST(request: NextRequest) {
   return withAdminAuth(request, async (_req, user) => {
+    const clientId = getClientId(request, user.id);
+    if (!checkRateLimit(`admin-dispatch-route-snapshot:${clientId}`, DISPATCH_ROUTE_SNAPSHOT_WINDOW_MS, DISPATCH_ROUTE_SNAPSHOT_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
+    }
     let body: unknown;
     try {
       body = await request.json();
@@ -110,7 +120,7 @@ export async function POST(request: NextRequest) {
 
       if (error) {
         logBlockError(BLOCK, error.message, error);
-        return NextResponse.json({ error: error.message }, { status: 400 });
+        return NextResponse.json({ error: 'No se pudo guardar el snapshot de ruta.' }, { status: 400 });
       }
       logBlockOk(BLOCK);
       return NextResponse.json({ ok: true, id: data?.id as string });

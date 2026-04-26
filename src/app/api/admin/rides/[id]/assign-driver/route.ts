@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const assignDriverSchema = z.object({
   driver_id: z.string().uuid(),
 });
+const ADMIN_ASSIGN_DRIVER_WINDOW_MS = 60_000;
+const ADMIN_ASSIGN_DRIVER_MAX_PER_WINDOW = 20;
 
 function getJwtFromRequest(request: NextRequest): string | null {
   const auth = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
@@ -35,6 +38,13 @@ export async function POST(
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const clientId = getClientId(request, user.id);
+    if (!checkRateLimit(`admin-assign-driver:${clientId}`, ADMIN_ASSIGN_DRIVER_WINDOW_MS, ADMIN_ASSIGN_DRIVER_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
     }
 
     const service = createServiceClient();
@@ -100,8 +110,9 @@ export async function POST(
       .maybeSingle();
 
     if (updateError) {
+      console.error('[admin/rides/assign-driver] update error:', updateError.message);
       return NextResponse.json(
-        { error: updateError.message },
+        { error: 'No se pudo asignar el conductor al viaje.' },
         { status: 400 }
       );
     }
@@ -126,6 +137,7 @@ export async function POST(
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 });
     }
+    console.error('[admin/rides/assign-driver] unexpected:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

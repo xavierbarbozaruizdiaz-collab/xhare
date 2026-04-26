@@ -12,6 +12,7 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Share,
   Platform,
   Pressable,
 } from 'react-native';
@@ -1059,17 +1060,64 @@ export function PublishRideScreen() {
       }
       if (stopsError) throw stopsError;
 
+      const { data: shareRow } = await supabase
+        .from('rides')
+        .select('share_code')
+        .eq('id', rideId)
+        .maybeSingle();
+      const rideShareCode = String((shareRow as { share_code?: unknown } | null)?.share_code ?? '').trim();
+      const shareMsg = rideShareCode
+        ? `Tu viaje quedó publicado.\n\nCódigo para compartir: ${rideShareCode}`
+        : 'Tu viaje quedó publicado.';
+
       if (isGroupedPublishFlow) {
-        Alert.alert('Listo', 'Tu viaje quedó publicado.', [
+        Alert.alert('Listo', shareMsg, [
+          ...(rideShareCode
+            ? [
+                {
+                  text: 'Compartir código',
+                  onPress: () => {
+                    void Share.share({
+                      message: `Código de viaje: ${rideShareCode}`,
+                    });
+                  },
+                } as const,
+              ]
+            : []),
+          {
+            text: 'Ir a inicio',
+            style: 'cancel',
+            onPress: () => navigation.replace('MainTabs'),
+          },
           {
             text: 'Ver viaje',
             onPress: () => navigation.replace('RideDetail', { rideId }),
           },
         ]);
       } else {
-        Alert.alert('Listo', 'Tu viaje quedó publicado. También lo encontrás en Conductor → Mis viajes publicados o Inicio.', [
-          { text: 'Ver viaje', onPress: () => navigation.navigate('RideDetail', { rideId }) },
-          { text: 'Cerrar', style: 'cancel', onPress: () => navigation.goBack() },
+        Alert.alert('Listo', `${shareMsg}\n\nTambién lo encontrás en Conductor → Mis viajes publicados o Inicio.`, [
+          ...(rideShareCode
+            ? [
+                {
+                  text: 'Compartir código',
+                  onPress: () => {
+                    void Share.share({
+                      message: `Código de viaje: ${rideShareCode}`,
+                    });
+                  },
+                } as const,
+              ]
+            : []),
+          {
+            text: 'Ir a inicio',
+            style: 'cancel',
+            onPress: () => navigation.replace('MainTabs'),
+          },
+          {
+            text: 'Ver viaje',
+            // `replace` saca esta pantalla del stack: al volver desde el detalle no se vuelve al formulario de publicar.
+            onPress: () => navigation.replace('RideDetail', { rideId }),
+          },
         ]);
       }
     } catch (e) {

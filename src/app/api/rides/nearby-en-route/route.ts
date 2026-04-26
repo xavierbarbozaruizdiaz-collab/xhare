@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     console.error('[nearby-en-route]', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'No se pudieron obtener viajes cercanos en curso.' }, { status: 500 });
   }
 
   const passenger: Point = { lat, lng };

@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { createClient } from '@supabase/supabase-js';
+import { createServiceClient } from '@/lib/supabase/server';
+import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import { z } from 'zod';
 
 const bodySchema = z.object({
   awaiting: z.boolean(),
   access_token: z.string().optional(),
 });
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://placeholder.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholder-anon-key';
+const AWAITING_CONFIRMATION_WINDOW_MS = 60_000;
+const AWAITING_CONFIRMATION_MAX_PER_WINDOW = 40;
 
 export async function POST(
   request: NextRequest,
@@ -21,27 +28,46 @@ export async function POST(
     const tokenFromBody = parsed.success ? parsed.data.access_token : undefined;
 
     const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
-    const token = authHeader.replace(/^\s*Bearer\s+/i, '').trim() || tokenFromBody || '';
-
-    if (!token) {
+    const tokenFromHeader = authHeader.replace(/^\s*Bearer\s+/i, '').trim();
+    const tokenFromBodyClean = String(tokenFromBody ?? '').trim();
+    const tokenCandidates = [tokenFromHeader, tokenFromBodyClean].filter(Boolean);
+    if (tokenCandidates.length === 0) {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
 
-    const authClient = createServerClient(request);
-    const {
-      data: { user },
-      error: authError,
-    } = await authClient.auth.getUser(token);
-    if (authError || !user) {
+    let userId = '';
+    let authenticated = false;
+    for (const token of tokenCandidates) {
+      const jwtClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false },
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const {
+        data: { user },
+        error: authError,
+      } = await jwtClient.auth.getUser();
+      if (!authError && user?.id) {
+        userId = String(user.id);
+        authenticated = true;
+        break;
+      }
+    }
+    if (!authenticated || !userId) {
       return NextResponse.json(
         { error: 'Sesión expirada o no válida. Volvé a iniciar sesión.' },
         { status: 401 }
       );
     }
-    const userId = user.id;
+    const clientId = getClientId(request, userId);
+    if (!checkRateLimit(`set-awaiting-confirmation:${rideId}:${clientId}`, AWAITING_CONFIRMATION_WINDOW_MS, AWAITING_CONFIRMATION_MAX_PER_WINDOW)) {
+      return NextResponse.json(
+        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { status: 429 }
+      );
+    }
 
     const { data: ride } = await service
       .from('rides')
@@ -70,7 +96,8 @@ export async function POST(
       .eq('id', rideId);
 
     if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 400 });
+      console.error('[set-awaiting-confirmation] update error:', updateError.message);
+      return NextResponse.json({ error: 'No se pudo actualizar la confirmación de parada.' }, { status: 400 });
     }
 
     return NextResponse.json({ success: true });
