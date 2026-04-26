@@ -57,6 +57,14 @@ export default function AdminSettingsPage() {
   const [passengerVersion, setPassengerVersion] = useState<string>(DEFAULT_DOWNLOAD_VALUES.passengerVersion);
   const [driverVersion, setDriverVersion] = useState<string>(DEFAULT_DOWNLOAD_VALUES.driverVersion);
   const [installGuideUrl, setInstallGuideUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.installGuideUrl);
+  const [whatsappSupportUrl, setWhatsappSupportUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.whatsappSupportUrl);
+  const [playStoreUrl, setPlayStoreUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.playStoreUrl);
+  const [appStoreUrl, setAppStoreUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.appStoreUrl);
+  const [heroImageUrl, setHeroImageUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.heroImageUrl);
+  const [screenshot1Url, setScreenshot1Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot1Url);
+  const [screenshot2Url, setScreenshot2Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot2Url);
+  const [screenshot3Url, setScreenshot3Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot3Url);
+  const [screenshot4Url, setScreenshot4Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot4Url);
 
   useEffect(() => {
     (async () => {
@@ -69,20 +77,49 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     (async () => {
-      const [passengerApkRes, driverApkRes, passengerVerRes, driverVerRes, guideRes] =
-        await Promise.all([
-          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.passengerApkUrl).maybeSingle(),
-          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.driverApkUrl).maybeSingle(),
-          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.passengerVersion).maybeSingle(),
-          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.driverVersion).maybeSingle(),
-          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.installGuideUrl).maybeSingle(),
-        ]);
+      const [
+        passengerApkRes,
+        driverApkRes,
+        passengerVerRes,
+        driverVerRes,
+        guideRes,
+        whatsappRes,
+        playRes,
+        appRes,
+        heroImageRes,
+        screenshot1Res,
+        screenshot2Res,
+        screenshot3Res,
+        screenshot4Res,
+      ] = await Promise.all([
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.passengerApkUrl).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.driverApkUrl).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.passengerVersion).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.driverVersion).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.installGuideUrl).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.whatsappSupportUrl).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.playStoreUrl).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.appStoreUrl).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.heroImageUrl).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot1Url).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot2Url).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot3Url).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot4Url).maybeSingle(),
+      ]);
 
       setPassengerApkUrl(typeof passengerApkRes.data?.value === 'string' ? passengerApkRes.data.value : '');
       setDriverApkUrl(typeof driverApkRes.data?.value === 'string' ? driverApkRes.data.value : '');
       setPassengerVersion(typeof passengerVerRes.data?.value === 'string' ? passengerVerRes.data.value : '');
       setDriverVersion(typeof driverVerRes.data?.value === 'string' ? driverVerRes.data.value : '');
       setInstallGuideUrl(typeof guideRes.data?.value === 'string' ? guideRes.data.value : '');
+      setWhatsappSupportUrl(typeof whatsappRes.data?.value === 'string' ? whatsappRes.data.value : '');
+      setPlayStoreUrl(typeof playRes.data?.value === 'string' ? playRes.data.value : '');
+      setAppStoreUrl(typeof appRes.data?.value === 'string' ? appRes.data.value : '');
+      setHeroImageUrl(typeof heroImageRes.data?.value === 'string' ? heroImageRes.data.value : '');
+      setScreenshot1Url(typeof screenshot1Res.data?.value === 'string' ? screenshot1Res.data.value : '');
+      setScreenshot2Url(typeof screenshot2Res.data?.value === 'string' ? screenshot2Res.data.value : '');
+      setScreenshot3Url(typeof screenshot3Res.data?.value === 'string' ? screenshot3Res.data.value : '');
+      setScreenshot4Url(typeof screenshot4Res.data?.value === 'string' ? screenshot4Res.data.value : '');
     })().finally(() => setDownloadLoading(false));
   }, []);
 
@@ -277,6 +314,14 @@ export default function AdminSettingsPage() {
       { key: DOWNLOAD_SETTINGS_KEYS.passengerVersion, value: passengerVersion.trim(), updated_at: nowIso },
       { key: DOWNLOAD_SETTINGS_KEYS.driverVersion, value: driverVersion.trim(), updated_at: nowIso },
       { key: DOWNLOAD_SETTINGS_KEYS.installGuideUrl, value: installGuideUrl.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.whatsappSupportUrl, value: whatsappSupportUrl.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.playStoreUrl, value: playStoreUrl.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.appStoreUrl, value: appStoreUrl.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.heroImageUrl, value: heroImageUrl.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.screenshot1Url, value: screenshot1Url.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.screenshot2Url, value: screenshot2Url.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.screenshot3Url, value: screenshot3Url.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.screenshot4Url, value: screenshot4Url.trim(), updated_at: nowIso },
     ];
 
     let { error } = await supabase.from('settings').upsert(rows, { onConflict: 'key' });
@@ -576,6 +621,97 @@ export default function AdminSettingsPage() {
                 placeholder="https://..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               />
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">WhatsApp soporte (FAB en /descargar)</label>
+              <input
+                type="url"
+                value={whatsappSupportUrl}
+                onChange={(e) => setWhatsappSupportUrl(e.target.value)}
+                placeholder="https://wa.me/5959XXXXXXXX"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Si queda vacío, se intenta usar la variable de entorno{' '}
+                <code className="font-mono">NEXT_PUBLIC_DOWNLOAD_WHATSAPP_URL</code> en el deploy.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Google Play (opcional)</label>
+                <input
+                  type="url"
+                  value={playStoreUrl}
+                  onChange={(e) => setPlayStoreUrl(e.target.value)}
+                  placeholder="https://play.google.com/..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">App Store (opcional)</label>
+                <input
+                  type="url"
+                  value={appStoreUrl}
+                  onChange={(e) => setAppStoreUrl(e.target.value)}
+                  placeholder="https://apps.apple.com/..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Hero image URL (landing /descargar)</label>
+              <input
+                type="url"
+                value={heroImageUrl}
+                onChange={(e) => setHeroImageUrl(e.target.value)}
+                placeholder="https://.../hero.webp"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Recomendado 1600x1066 en WebP/AVIF. Si queda vacío, usa el placeholder local.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 1 URL</label>
+                <input
+                  type="url"
+                  value={screenshot1Url}
+                  onChange={(e) => setScreenshot1Url(e.target.value)}
+                  placeholder="https://.../s1.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 2 URL</label>
+                <input
+                  type="url"
+                  value={screenshot2Url}
+                  onChange={(e) => setScreenshot2Url(e.target.value)}
+                  placeholder="https://.../s2.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 3 URL</label>
+                <input
+                  type="url"
+                  value={screenshot3Url}
+                  onChange={(e) => setScreenshot3Url(e.target.value)}
+                  placeholder="https://.../s3.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 4 URL</label>
+                <input
+                  type="url"
+                  value={screenshot4Url}
+                  onChange={(e) => setScreenshot4Url(e.target.value)}
+                  placeholder="https://.../s4.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
             </div>
             <button
               type="submit"

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640" role="img" aria-label="Ilustración: ruta en Central con minibús">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1f2937"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="960" height="640" fill="url(#sky)"/>
+  <path d="M0 420 C180 360 360 520 520 440 S820 360 960 400 L960 640 L0 640 Z" fill="#0b1324" opacity="0.85"/>
+  <path d="M40 460 C220 400 360 520 520 460 S780 380 920 420" fill="none" stroke="url(#road)" stroke-width="46" stroke-linecap="round" opacity="0.55"/>
+  <path d="M40 460 C220 400 360 520 520 460 S780 380 920 420" fill="none" stroke="#38b000" stroke-width="6" stroke-linecap="round" stroke-dasharray="18 22" filter="url(#glow)" opacity="0.9"/>
+  <circle cx="180" cy="430" r="10" fill="#38b000" opacity="0.85"/>
+  <circle cx="520" cy="452" r="10" fill="#38b000" opacity="0.85"/>
+  <circle cx="820" cy="408" r="10" fill="#38b000" opacity="0.85"/>
+  <g transform="translate(600 360)">
+    <rect x="-120" y="-44" rx="18" width="240" height="88" fill="#111827" stroke="#38b000" stroke-width="3"/>
+    <rect x="-92" y="-28" rx="10" width="176" height="44" fill="#0b1220" stroke="#334155" stroke-width="2"/>
+    <circle cx="-70" cy="52" r="18" fill="#0f172a" stroke="#38b000" stroke-width="2"/>
+    <circle cx="70" cy="52" r="18" fill="#0f172a" stroke="#38b000" stroke-width="2"/>
+    <path d="M-40 -44 L-40 -78 C-40 -92 -28 -102 -12 -102 L40 -102 C56 -102 68 -92 68 -78 L68 -44" fill="#1f2937" stroke="#38b000" stroke-width="2"/>
+  </g>
+  <text x="48" y="86" fill="#e5e7eb" font-family="ui-sans-serif, system-ui, Segoe UI, Roboto, Arial" font-size="34" font-weight="700">Central, Paraguay</text>
+  <text x="48" y="124" fill="#94a3b8" font-family="ui-sans-serif, system-ui, Segoe UI, Roboto, Arial" font-size="18">Ruta inteligente · Menos vueltas · Más claridad</text>
+</svg>
