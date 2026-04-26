@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { InstallStepper } from './InstallStepper';
 
@@ -210,12 +210,7 @@ export function DescargarLanding(props: DescargarLandingProps) {
     props.defaultTheme === 'system'
       ? props.defaultTheme
       : 'system';
-  const [themePref, setThemePref] = useState<ThemePref>(adminDefaultTheme);
-
-  useEffect(() => {
-    // Keep admin-selected default as source of truth on page load/refresh.
-    setThemePref(adminDefaultTheme);
-  }, [adminDefaultTheme]);
+  const themePref = adminDefaultTheme;
 
   const { isDark, highContrast } = useMemo(() => {
     if (themePref === 'highContrast') return { isDark: true, highContrast: true };
@@ -235,7 +230,6 @@ export function DescargarLanding(props: DescargarLandingProps) {
   const muted = isDark ? 'text-white/70' : 'text-slate-600';
   const topBar = isDark ? 'border-white/10 bg-black/30' : 'border-slate-200 bg-white/70';
 
-  const setTheme = useCallback((next: ThemePref) => setThemePref(next), []);
   const [heroIndex, setHeroIndex] = useState(0);
   const previewScrollerRef = useRef<HTMLDivElement | null>(null);
   const normalizedHeroImages = props.heroImageUrls.filter((url) => !!url.trim());
@@ -284,25 +278,9 @@ export function DescargarLanding(props: DescargarLandingProps) {
           <Link href="/" className="text-sm font-bold tracking-tight text-[#38b000]">
             Xhare
           </Link>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`hidden text-xs sm:inline ${muted}`}>Tema</span>
-            {(['system', 'dark', 'light', 'highContrast'] as const).map((k) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setTheme(k)}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 transition ${
-                  themePref === k
-                    ? 'bg-[#38b000]/20 text-white ring-[#38b000]/45'
-                    : isDark
-                      ? 'bg-white/5 text-white/75 ring-white/10 hover:bg-white/10'
-                      : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                {k === 'system' ? 'Auto' : k === 'dark' ? 'Oscuro' : k === 'light' ? 'Claro' : 'Alto contraste'}
-              </button>
-            ))}
-          </div>
+          <span className={`text-xs ${muted}`}>
+            Tema definido por admin
+          </span>
         </div>
 
         <div className="mt-10 grid items-center gap-10 lg:grid-cols-2">
