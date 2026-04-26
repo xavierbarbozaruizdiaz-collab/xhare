@@ -79,7 +79,11 @@ export default async function DownloadPage() {
     String(values.get(DOWNLOAD_SETTINGS_KEYS.screenshot2Url) ?? DEFAULT_DOWNLOAD_VALUES.screenshot2Url).trim(),
     String(values.get(DOWNLOAD_SETTINGS_KEYS.screenshot3Url) ?? DEFAULT_DOWNLOAD_VALUES.screenshot3Url).trim(),
     String(values.get(DOWNLOAD_SETTINGS_KEYS.screenshot4Url) ?? DEFAULT_DOWNLOAD_VALUES.screenshot4Url).trim(),
+    String(values.get(DOWNLOAD_SETTINGS_KEYS.screenshot5Url) ?? DEFAULT_DOWNLOAD_VALUES.screenshot5Url).trim(),
   ];
+  const defaultTheme = String(
+    values.get(DOWNLOAD_SETTINGS_KEYS.defaultTheme) ?? DEFAULT_DOWNLOAD_VALUES.defaultTheme
+  ).trim();
 
   const whatsappFromDb = String(
     values.get(DOWNLOAD_SETTINGS_KEYS.whatsappSupportUrl) ?? DEFAULT_DOWNLOAD_VALUES.whatsappSupportUrl
@@ -99,6 +103,7 @@ export default async function DownloadPage() {
       appStoreUrl={appStoreUrl}
       heroImageUrl={heroImageUrl}
       screenshotUrls={screenshotUrls}
+      defaultTheme={defaultTheme}
     />
   );
 }

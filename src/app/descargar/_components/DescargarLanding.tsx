@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { InstallStepper } from './InstallStepper';
 
@@ -18,13 +18,14 @@ export type DescargarLandingProps = {
   appStoreUrl: string;
   heroImageUrl: string;
   screenshotUrls: string[];
+  defaultTheme: string;
 };
 
 type ThemePref = 'system' | 'light' | 'dark' | 'highContrast';
 
 const THEME_STORAGE_KEY = 'xhare.descargar.themePref';
 
-function readInitialThemePref(): ThemePref {
+function readInitialThemePref(fallback: ThemePref): ThemePref {
   if (typeof window === 'undefined') return 'system';
   try {
     const raw = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -32,7 +33,7 @@ function readInitialThemePref(): ThemePref {
   } catch {
     // ignore
   }
-  return 'system';
+  return fallback;
 }
 
 function useSystemDark() {
@@ -209,12 +210,20 @@ const PREVIEW_ITEMS = [
   { k: '2', label: 'Buscar viaje', hint: 'public/descargar/screenshots/02.webp' },
   { k: '3', label: 'Detalle / mapa', hint: 'public/descargar/screenshots/03.webp' },
   { k: '4', label: 'Reserva', hint: 'public/descargar/screenshots/04.webp' },
+  { k: '5', label: 'Confirmación', hint: 'public/descargar/screenshots/05.webp' },
 ] as const;
 
 export function DescargarLanding(props: DescargarLandingProps) {
   const reduceMotion = useReducedMotion();
   const systemDark = useSystemDark();
-  const [themePref, setThemePref] = useState<ThemePref>(() => readInitialThemePref());
+  const adminDefaultTheme: ThemePref =
+    props.defaultTheme === 'light' ||
+    props.defaultTheme === 'dark' ||
+    props.defaultTheme === 'highContrast' ||
+    props.defaultTheme === 'system'
+      ? props.defaultTheme
+      : 'system';
+  const [themePref, setThemePref] = useState<ThemePref>(() => readInitialThemePref(adminDefaultTheme));
 
   useEffect(() => {
     try {
@@ -244,10 +253,30 @@ export function DescargarLanding(props: DescargarLandingProps) {
 
   const setTheme = useCallback((next: ThemePref) => setThemePref(next), []);
   const heroSrc = props.heroImageUrl || '/descargar/hero-route.svg';
+  const previewScrollerRef = useRef<HTMLDivElement | null>(null);
   const normalizedScreenshots = PREVIEW_ITEMS.map((item, idx) => ({
     ...item,
     src: props.screenshotUrls[idx] ?? '',
   }));
+
+  useEffect(() => {
+    if (reduceMotion) return;
+    const scroller = previewScrollerRef.current;
+    if (!scroller) return;
+
+    const stepPx = 156;
+    const timer = window.setInterval(() => {
+      const maxScroll = scroller.scrollWidth - scroller.clientWidth;
+      if (maxScroll <= 0) return;
+      if (scroller.scrollLeft + stepPx >= maxScroll - 2) {
+        scroller.scrollTo({ left: 0, behavior: 'smooth' });
+      } else {
+        scroller.scrollBy({ left: stepPx, behavior: 'smooth' });
+      }
+    }, 2800);
+
+    return () => window.clearInterval(timer);
+  }, [reduceMotion, normalizedScreenshots.length]);
 
   return (
     <div className={`min-h-screen ${shell}`}>
@@ -370,7 +399,10 @@ export function DescargarLanding(props: DescargarLandingProps) {
             </div>
           </div>
 
-          <div className="mt-4 -mx-4 flex gap-4 overflow-x-auto px-4 pb-2 [scrollbar-width:thin]">
+          <div
+            ref={previewScrollerRef}
+            className="mt-4 -mx-4 flex gap-4 overflow-x-auto px-4 pb-2 [scrollbar-width:thin]"
+          >
             {normalizedScreenshots.map((it) => (
               <div
                 key={it.k}

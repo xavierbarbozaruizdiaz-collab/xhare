@@ -13,6 +13,9 @@ export const DOWNLOAD_SETTINGS_KEYS = {
   screenshot2Url: 'download_screenshot_2_url',
   screenshot3Url: 'download_screenshot_3_url',
   screenshot4Url: 'download_screenshot_4_url',
+  screenshot5Url: 'download_screenshot_5_url',
+  defaultTheme: 'download_default_theme',
+  mediaBucket: 'download_media_bucket',
 } as const;
 
 export const DEFAULT_DOWNLOAD_VALUES = {
@@ -29,4 +32,7 @@ export const DEFAULT_DOWNLOAD_VALUES = {
   screenshot2Url: '',
   screenshot3Url: '',
   screenshot4Url: '',
+  screenshot5Url: '',
+  defaultTheme: 'system',
+  mediaBucket: 'app-releases',
 } as const;

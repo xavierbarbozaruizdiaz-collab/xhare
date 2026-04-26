@@ -65,6 +65,10 @@ export default function AdminSettingsPage() {
   const [screenshot2Url, setScreenshot2Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot2Url);
   const [screenshot3Url, setScreenshot3Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot3Url);
   const [screenshot4Url, setScreenshot4Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot4Url);
+  const [screenshot5Url, setScreenshot5Url] = useState<string>(DEFAULT_DOWNLOAD_VALUES.screenshot5Url);
+  const [defaultTheme, setDefaultTheme] = useState<string>(DEFAULT_DOWNLOAD_VALUES.defaultTheme);
+  const [mediaBucket, setMediaBucket] = useState<string>(DEFAULT_DOWNLOAD_VALUES.mediaBucket);
+  const [uploadingField, setUploadingField] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -91,6 +95,9 @@ export default function AdminSettingsPage() {
         screenshot2Res,
         screenshot3Res,
         screenshot4Res,
+        screenshot5Res,
+        defaultThemeRes,
+        mediaBucketRes,
       ] = await Promise.all([
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.passengerApkUrl).maybeSingle(),
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.driverApkUrl).maybeSingle(),
@@ -105,6 +112,9 @@ export default function AdminSettingsPage() {
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot2Url).maybeSingle(),
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot3Url).maybeSingle(),
         supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot4Url).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.screenshot5Url).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.defaultTheme).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.mediaBucket).maybeSingle(),
       ]);
 
       setPassengerApkUrl(typeof passengerApkRes.data?.value === 'string' ? passengerApkRes.data.value : '');
@@ -120,6 +130,9 @@ export default function AdminSettingsPage() {
       setScreenshot2Url(typeof screenshot2Res.data?.value === 'string' ? screenshot2Res.data.value : '');
       setScreenshot3Url(typeof screenshot3Res.data?.value === 'string' ? screenshot3Res.data.value : '');
       setScreenshot4Url(typeof screenshot4Res.data?.value === 'string' ? screenshot4Res.data.value : '');
+      setScreenshot5Url(typeof screenshot5Res.data?.value === 'string' ? screenshot5Res.data.value : '');
+      setDefaultTheme(typeof defaultThemeRes.data?.value === 'string' ? defaultThemeRes.data.value : 'system');
+      setMediaBucket(typeof mediaBucketRes.data?.value === 'string' ? mediaBucketRes.data.value : 'app-releases');
     })().finally(() => setDownloadLoading(false));
   }, []);
 
@@ -322,6 +335,9 @@ export default function AdminSettingsPage() {
       { key: DOWNLOAD_SETTINGS_KEYS.screenshot2Url, value: screenshot2Url.trim(), updated_at: nowIso },
       { key: DOWNLOAD_SETTINGS_KEYS.screenshot3Url, value: screenshot3Url.trim(), updated_at: nowIso },
       { key: DOWNLOAD_SETTINGS_KEYS.screenshot4Url, value: screenshot4Url.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.screenshot5Url, value: screenshot5Url.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.defaultTheme, value: defaultTheme.trim() || 'system', updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.mediaBucket, value: mediaBucket.trim() || 'app-releases', updated_at: nowIso },
     ];
 
     let { error } = await supabase.from('settings').upsert(rows, { onConflict: 'key' });
@@ -341,6 +357,47 @@ export default function AdminSettingsPage() {
     }
     setDownloadDone(true);
     window.setTimeout(() => setDownloadDone(false), 2500);
+  }
+
+  async function handleImageUpload(
+    e: React.ChangeEvent<HTMLInputElement>,
+    field:
+      | 'hero'
+      | 's1'
+      | 's2'
+      | 's3'
+      | 's4'
+      | 's5'
+  ) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const bucket = mediaBucket.trim() || 'app-releases';
+    const ext = (file.name.split('.').pop() || 'webp').toLowerCase();
+    const safeExt = ext.replace(/[^a-z0-9]/g, '') || 'webp';
+    const stamp = Date.now();
+    const path = `download-landing/${field}-${stamp}.${safeExt}`;
+
+    setUploadingField(field);
+    const uploadRes = await supabase.storage.from(bucket).upload(path, file, {
+      cacheControl: '31536000',
+      upsert: true,
+      contentType: file.type || undefined,
+    });
+    setUploadingField(null);
+    e.target.value = '';
+
+    if (uploadRes.error) {
+      alert(`No se pudo subir imagen a bucket "${bucket}": ${uploadRes.error.message}`);
+      return;
+    }
+
+    const publicUrl = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+    if (field === 'hero') setHeroImageUrl(publicUrl);
+    if (field === 's1') setScreenshot1Url(publicUrl);
+    if (field === 's2') setScreenshot2Url(publicUrl);
+    if (field === 's3') setScreenshot3Url(publicUrl);
+    if (field === 's4') setScreenshot4Url(publicUrl);
+    if (field === 's5') setScreenshot5Url(publicUrl);
   }
 
   if (loading) {
@@ -658,6 +715,34 @@ export default function AdminSettingsPage() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tema por defecto en /descargar</label>
+                <select
+                  value={defaultTheme}
+                  onChange={(e) => setDefaultTheme(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white"
+                >
+                  <option value="system">Sistema (auto)</option>
+                  <option value="dark">Oscuro</option>
+                  <option value="light">Claro</option>
+                  <option value="highContrast">Alto contraste</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bucket media (Supabase Storage)</label>
+                <input
+                  type="text"
+                  value={mediaBucket}
+                  onChange={(e) => setMediaBucket(e.target.value)}
+                  placeholder="app-releases"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Debe ser bucket público para que se vea en landing.
+                </p>
+              </div>
+            </div>
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">Hero image URL (landing /descargar)</label>
               <input
@@ -670,6 +755,16 @@ export default function AdminSettingsPage() {
               <p className="text-xs text-gray-500 mt-1">
                 Recomendado 1600x1066 en WebP/AVIF. Si queda vacío, usa el placeholder local.
               </p>
+              <div className="mt-2">
+                <label className="block text-xs text-gray-600 mb-1">Subir archivo al bucket</label>
+                <input
+                  type="file"
+                  accept="image/webp,image/avif,image/png,image/jpeg"
+                  onChange={(e) => void handleImageUpload(e, 'hero')}
+                  className="text-sm"
+                />
+                {uploadingField === 'hero' ? <p className="text-xs text-gray-500 mt-1">Subiendo hero...</p> : null}
+              </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div>
@@ -681,6 +776,15 @@ export default function AdminSettingsPage() {
                   placeholder="https://.../s1.webp"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 />
+                <div className="mt-2">
+                  <input
+                    type="file"
+                    accept="image/webp,image/avif,image/png,image/jpeg"
+                    onChange={(e) => void handleImageUpload(e, 's1')}
+                    className="text-sm"
+                  />
+                  {uploadingField === 's1' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 1...</p> : null}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 2 URL</label>
@@ -691,6 +795,15 @@ export default function AdminSettingsPage() {
                   placeholder="https://.../s2.webp"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 />
+                <div className="mt-2">
+                  <input
+                    type="file"
+                    accept="image/webp,image/avif,image/png,image/jpeg"
+                    onChange={(e) => void handleImageUpload(e, 's2')}
+                    className="text-sm"
+                  />
+                  {uploadingField === 's2' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 2...</p> : null}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 3 URL</label>
@@ -701,6 +814,15 @@ export default function AdminSettingsPage() {
                   placeholder="https://.../s3.webp"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 />
+                <div className="mt-2">
+                  <input
+                    type="file"
+                    accept="image/webp,image/avif,image/png,image/jpeg"
+                    onChange={(e) => void handleImageUpload(e, 's3')}
+                    className="text-sm"
+                  />
+                  {uploadingField === 's3' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 3...</p> : null}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 4 URL</label>
@@ -711,6 +833,34 @@ export default function AdminSettingsPage() {
                   placeholder="https://.../s4.webp"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 />
+                <div className="mt-2">
+                  <input
+                    type="file"
+                    accept="image/webp,image/avif,image/png,image/jpeg"
+                    onChange={(e) => void handleImageUpload(e, 's4')}
+                    className="text-sm"
+                  />
+                  {uploadingField === 's4' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 4...</p> : null}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 5 URL</label>
+                <input
+                  type="url"
+                  value={screenshot5Url}
+                  onChange={(e) => setScreenshot5Url(e.target.value)}
+                  placeholder="https://.../s5.webp"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+                <div className="mt-2">
+                  <input
+                    type="file"
+                    accept="image/webp,image/avif,image/png,image/jpeg"
+                    onChange={(e) => void handleImageUpload(e, 's5')}
+                    className="text-sm"
+                  />
+                  {uploadingField === 's5' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 5...</p> : null}
+                </div>
               </div>
             </div>
             <button
