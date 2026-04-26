@@ -32,6 +32,7 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
     { href: '/admin/passengers', label: 'Pasajeros' },
     { href: '/admin/rides', label: 'Viajes' },
     { href: '/admin/users', label: 'Usuarios' },
+    { href: '/admin/legal-audit', label: 'Legal' },
     { href: '/admin/settings', label: 'Config' },
   ];
 

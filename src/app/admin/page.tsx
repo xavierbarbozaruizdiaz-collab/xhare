@@ -80,6 +80,12 @@ export default function AdminDashboardPage() {
               Usuarios
             </Link>
           </li>
+          <li>
+            <Link href="/admin/legal-audit" className="text-green-600 hover:underline">
+              Auditoría legal
+            </Link>
+            — Aceptaciones de TyC/Privacidad con IP, versión y fuente
+          </li>
         </ul>
       </div>
     </div>

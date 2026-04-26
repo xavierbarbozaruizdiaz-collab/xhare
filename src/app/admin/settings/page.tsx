@@ -2,6 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
+import {
+  DEFAULT_PRIVACY_CONTENT,
+  DEFAULT_PRIVACY_VERSION,
+  DEFAULT_TERMS_CONTENT,
+  DEFAULT_TERMS_VERSION,
+  interpolateLegalTemplate,
+  LEGAL_SETTINGS_KEYS,
+} from '@/lib/legal-documents';
+import { DEFAULT_DOWNLOAD_VALUES, DOWNLOAD_SETTINGS_KEYS } from '@/lib/download-links';
 
 const KEY = 'driver_pending_instructions';
 const SHORTCUTS_KEY = 'passenger_home_shortcuts_visible';
@@ -29,6 +38,25 @@ export default function AdminSettingsPage() {
   const [favoritesCopyLoading, setFavoritesCopyLoading] = useState(true);
   const [favoritesCopySaving, setFavoritesCopySaving] = useState(false);
   const [favoritesCopyDone, setFavoritesCopyDone] = useState(false);
+  const [legalLoading, setLegalLoading] = useState(true);
+  const [legalSaving, setLegalSaving] = useState(false);
+  const [legalDone, setLegalDone] = useState(false);
+  const [termsVersion, setTermsVersion] = useState(DEFAULT_TERMS_VERSION);
+  const [privacyVersion, setPrivacyVersion] = useState(DEFAULT_PRIVACY_VERSION);
+  const [termsContent, setTermsContent] = useState(
+    interpolateLegalTemplate(DEFAULT_TERMS_CONTENT, DEFAULT_TERMS_VERSION)
+  );
+  const [privacyContent, setPrivacyContent] = useState(
+    interpolateLegalTemplate(DEFAULT_PRIVACY_CONTENT, DEFAULT_PRIVACY_VERSION)
+  );
+  const [downloadLoading, setDownloadLoading] = useState(true);
+  const [downloadSaving, setDownloadSaving] = useState(false);
+  const [downloadDone, setDownloadDone] = useState(false);
+  const [passengerApkUrl, setPassengerApkUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.passengerApkUrl);
+  const [driverApkUrl, setDriverApkUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.driverApkUrl);
+  const [passengerVersion, setPassengerVersion] = useState<string>(DEFAULT_DOWNLOAD_VALUES.passengerVersion);
+  const [driverVersion, setDriverVersion] = useState<string>(DEFAULT_DOWNLOAD_VALUES.driverVersion);
+  const [installGuideUrl, setInstallGuideUrl] = useState<string>(DEFAULT_DOWNLOAD_VALUES.installGuideUrl);
 
   useEffect(() => {
     (async () => {
@@ -37,6 +65,25 @@ export default function AdminSettingsPage() {
       setEmail(typeof v.email === 'string' ? v.email : '');
       setMessage(typeof v.message === 'string' ? v.message : '');
     })().finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const [passengerApkRes, driverApkRes, passengerVerRes, driverVerRes, guideRes] =
+        await Promise.all([
+          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.passengerApkUrl).maybeSingle(),
+          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.driverApkUrl).maybeSingle(),
+          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.passengerVersion).maybeSingle(),
+          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.driverVersion).maybeSingle(),
+          supabase.from('settings').select('value').eq('key', DOWNLOAD_SETTINGS_KEYS.installGuideUrl).maybeSingle(),
+        ]);
+
+      setPassengerApkUrl(typeof passengerApkRes.data?.value === 'string' ? passengerApkRes.data.value : '');
+      setDriverApkUrl(typeof driverApkRes.data?.value === 'string' ? driverApkRes.data.value : '');
+      setPassengerVersion(typeof passengerVerRes.data?.value === 'string' ? passengerVerRes.data.value : '');
+      setDriverVersion(typeof driverVerRes.data?.value === 'string' ? driverVerRes.data.value : '');
+      setInstallGuideUrl(typeof guideRes.data?.value === 'string' ? guideRes.data.value : '');
+    })().finally(() => setDownloadLoading(false));
   }, []);
 
   useEffect(() => {
@@ -57,6 +104,50 @@ export default function AdminSettingsPage() {
       setFavoritesTitle(typeof titleRaw === 'string' ? titleRaw : '');
       setFavoritesSubtitle(typeof subtitleRaw === 'string' ? subtitleRaw : '');
     })().finally(() => setFavoritesCopyLoading(false));
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const {
+        termsContent,
+        termsVersion,
+        privacyContent,
+        privacyVersion,
+      } = LEGAL_SETTINGS_KEYS;
+      const [termsContentRes, termsVersionRes, privacyContentRes, privacyVersionRes] =
+        await Promise.all([
+          supabase.from('settings').select('value').eq('key', termsContent).maybeSingle(),
+          supabase.from('settings').select('value').eq('key', termsVersion).maybeSingle(),
+          supabase.from('settings').select('value').eq('key', privacyContent).maybeSingle(),
+          supabase.from('settings').select('value').eq('key', privacyVersion).maybeSingle(),
+        ]);
+
+      const termsVersionRaw = termsVersionRes.data?.value;
+      const privacyVersionRaw = privacyVersionRes.data?.value;
+      const nextTermsVersion =
+        typeof termsVersionRaw === 'string' && termsVersionRaw.trim()
+          ? termsVersionRaw.trim()
+          : DEFAULT_TERMS_VERSION;
+      const nextPrivacyVersion =
+        typeof privacyVersionRaw === 'string' && privacyVersionRaw.trim()
+          ? privacyVersionRaw.trim()
+          : DEFAULT_PRIVACY_VERSION;
+      setTermsVersion(nextTermsVersion);
+      setPrivacyVersion(nextPrivacyVersion);
+
+      const termsContentRaw = termsContentRes.data?.value;
+      const privacyContentRaw = privacyContentRes.data?.value;
+      setTermsContent(
+        typeof termsContentRaw === 'string' && termsContentRaw.trim()
+          ? termsContentRaw
+          : interpolateLegalTemplate(DEFAULT_TERMS_CONTENT, nextTermsVersion)
+      );
+      setPrivacyContent(
+        typeof privacyContentRaw === 'string' && privacyContentRaw.trim()
+          ? privacyContentRaw
+          : interpolateLegalTemplate(DEFAULT_PRIVACY_CONTENT, nextPrivacyVersion)
+      );
+    })().finally(() => setLegalLoading(false));
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -124,6 +215,87 @@ export default function AdminSettingsPage() {
     }
     setFavoritesCopyDone(true);
     window.setTimeout(() => setFavoritesCopyDone(false), 2500);
+  }
+
+  async function handleLegalSave(e: React.FormEvent) {
+    e.preventDefault();
+    setLegalSaving(true);
+    setLegalDone(false);
+    const nowIso = new Date().toISOString();
+    const rows = [
+      {
+        key: LEGAL_SETTINGS_KEYS.termsVersion,
+        value: termsVersion.trim() || DEFAULT_TERMS_VERSION,
+        updated_at: nowIso,
+      },
+      {
+        key: LEGAL_SETTINGS_KEYS.privacyVersion,
+        value: privacyVersion.trim() || DEFAULT_PRIVACY_VERSION,
+        updated_at: nowIso,
+      },
+      { key: LEGAL_SETTINGS_KEYS.termsContent, value: termsContent.trim(), updated_at: nowIso },
+      {
+        key: LEGAL_SETTINGS_KEYS.privacyContent,
+        value: privacyContent.trim(),
+        updated_at: nowIso,
+      },
+    ];
+
+    let { error } = await supabase
+      .from('settings')
+      .upsert(rows, { onConflict: 'key' });
+
+    if (error) {
+      const updates = await Promise.all(
+        rows.map((row) =>
+          supabase
+            .from('settings')
+            .update({ value: row.value, updated_at: nowIso })
+            .eq('key', row.key)
+        )
+      );
+      error = updates.map((r) => r.error).find(Boolean) ?? null;
+    }
+
+    setLegalSaving(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setLegalDone(true);
+    window.setTimeout(() => setLegalDone(false), 2500);
+  }
+
+  async function handleDownloadSave(e: React.FormEvent) {
+    e.preventDefault();
+    setDownloadSaving(true);
+    setDownloadDone(false);
+    const nowIso = new Date().toISOString();
+    const rows = [
+      { key: DOWNLOAD_SETTINGS_KEYS.passengerApkUrl, value: passengerApkUrl.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.driverApkUrl, value: driverApkUrl.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.passengerVersion, value: passengerVersion.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.driverVersion, value: driverVersion.trim(), updated_at: nowIso },
+      { key: DOWNLOAD_SETTINGS_KEYS.installGuideUrl, value: installGuideUrl.trim(), updated_at: nowIso },
+    ];
+
+    let { error } = await supabase.from('settings').upsert(rows, { onConflict: 'key' });
+    if (error) {
+      const updates = await Promise.all(
+        rows.map((row) =>
+          supabase.from('settings').update({ value: row.value, updated_at: nowIso }).eq('key', row.key)
+        )
+      );
+      error = updates.map((r) => r.error).find(Boolean) ?? null;
+    }
+
+    setDownloadSaving(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setDownloadDone(true);
+    window.setTimeout(() => setDownloadDone(false), 2500);
   }
 
   if (loading) {
@@ -256,6 +428,165 @@ export default function AdminSettingsPage() {
               {favoritesCopySaving ? 'Guardando...' : 'Guardar textos'}
             </button>
             {favoritesCopyDone && <span className="ml-3 text-sm text-green-600">Guardado en Supabase.</span>}
+          </>
+        )}
+      </form>
+
+      <form
+        onSubmit={handleLegalSave}
+        className="bg-white rounded-xl border border-gray-200 p-6 max-w-3xl mt-10"
+      >
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">
+          Legal (TyC y Privacidad)
+        </h2>
+        <p className="text-sm text-gray-600 mb-5">
+          Editá el texto oficial para landing y app. Se publica en{' '}
+          <code>/legal/terms</code> y <code>/legal/privacy</code>.
+        </p>
+        {legalLoading ? (
+          <div className="flex justify-center py-6">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600" />
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Versión TyC
+                </label>
+                <input
+                  type="text"
+                  value={termsVersion}
+                  onChange={(e) => setTermsVersion(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  placeholder="v1.0"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Versión Privacidad
+                </label>
+                <input
+                  type="text"
+                  value={privacyVersion}
+                  onChange={(e) => setPrivacyVersion(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  placeholder="v1.0"
+                />
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Términos y Condiciones
+              </label>
+              <textarea
+                value={termsContent}
+                onChange={(e) => setTermsContent(e.target.value)}
+                rows={16}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-xs"
+              />
+            </div>
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Política de Privacidad
+              </label>
+              <textarea
+                value={privacyContent}
+                onChange={(e) => setPrivacyContent(e.target.value)}
+                rows={16}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-xs"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={legalSaving}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+            >
+              {legalSaving ? 'Guardando...' : 'Guardar legal'}
+            </button>
+            {legalDone && (
+              <span className="ml-3 text-sm text-green-600">Guardado en Supabase.</span>
+            )}
+          </>
+        )}
+      </form>
+
+      <form
+        onSubmit={handleDownloadSave}
+        className="bg-white rounded-xl border border-gray-200 p-6 max-w-3xl mt-10"
+      >
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Descarga APK (landing / ads)</h2>
+        <p className="text-sm text-gray-600 mb-5">
+          Configurá links públicos para <code>/descargar</code> (flyers, Meta Ads, landing).
+        </p>
+        {downloadLoading ? (
+          <div className="flex justify-center py-6">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600" />
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Versión pasajero</label>
+                <input
+                  type="text"
+                  value={passengerVersion}
+                  onChange={(e) => setPassengerVersion(e.target.value)}
+                  placeholder="v1.0.0"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Versión conductor</label>
+                <input
+                  type="text"
+                  value={driverVersion}
+                  onChange={(e) => setDriverVersion(e.target.value)}
+                  placeholder="v1.0.0"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">URL APK pasajero</label>
+              <input
+                type="url"
+                value={passengerApkUrl}
+                onChange={(e) => setPassengerApkUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">URL APK conductor</label>
+              <input
+                type="url"
+                value={driverApkUrl}
+                onChange={(e) => setDriverApkUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-1">URL guía de instalación (opcional)</label>
+              <input
+                type="url"
+                value={installGuideUrl}
+                onChange={(e) => setInstallGuideUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={downloadSaving}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+            >
+              {downloadSaving ? 'Guardando...' : 'Guardar descargas'}
+            </button>
+            {downloadDone && (
+              <span className="ml-3 text-sm text-green-600">Guardado en Supabase.</span>
+            )}
           </>
         )}
       </form>

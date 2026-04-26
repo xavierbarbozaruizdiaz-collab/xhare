@@ -180,6 +180,9 @@ export default function Home() {
             <Link href="/login?signup=1" className="btn-secondary">
               Crear cuenta
             </Link>
+            <Link href="/descargar" className="btn-secondary">
+              Descargar APK
+            </Link>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="app-mobile-card p-5 bg-white">

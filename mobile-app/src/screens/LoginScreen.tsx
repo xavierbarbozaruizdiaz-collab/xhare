@@ -14,9 +14,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Linking,
 } from 'react-native';
 import { supabase, isEnvConfigured } from '../backend/supabase';
 import { useAuth } from '../auth/AuthContext';
+import { env } from '../core/env';
 
 export function LoginScreen() {
   const { refreshSession } = useAuth();
@@ -26,6 +28,9 @@ export function LoginScreen() {
   const [message, setMessage] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  const [acceptLegal, setAcceptLegal] = useState(false);
+  const termsUrl = `${env.apiBaseUrl?.trim().replace(/\/$/, '') || ''}/legal/terms`;
+  const privacyUrl = `${env.apiBaseUrl?.trim().replace(/\/$/, '') || ''}/legal/privacy`;
 
   async function handleSubmit() {
     if (!isEnvConfigured()) {
@@ -47,10 +52,18 @@ export function LoginScreen() {
       });
 
       if (isSignUp) {
+        if (!acceptLegal) {
+          setMessage('Tenés que aceptar TyC y Privacidad para crear la cuenta.');
+          setLoading(false);
+          return;
+        }
         if (typeof (authAny?.signUp) !== 'function') {
           throw new Error('Supabase auth no tiene signUp');
         }
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
         console.log('MOBILE signUp result:', !!data?.session, error);
         if (error) throw error;
         setMessage('Revisá tu correo para confirmar la cuenta.');
@@ -187,6 +200,31 @@ export function LoginScreen() {
             <Text style={styles.forgotLinkText}>¿Olvidaste tu contraseña?</Text>
           </TouchableOpacity>
         )}
+        {isSignUp && (
+          <View style={styles.legalWrap}>
+            <TouchableOpacity
+              style={styles.checkboxRow}
+              onPress={() => setAcceptLegal((v) => !v)}
+              disabled={loading}
+            >
+              <View style={[styles.checkbox, acceptLegal && styles.checkboxChecked]}>
+                {acceptLegal ? <Text style={styles.checkboxTick}>✓</Text> : null}
+              </View>
+              <Text style={styles.legalText}>
+                Acepto TyC y Política de Privacidad.
+              </Text>
+            </TouchableOpacity>
+            <View style={styles.legalLinksRow}>
+              <TouchableOpacity onPress={() => { if (env.apiBaseUrl) void Linking.openURL(termsUrl); }}>
+                <Text style={styles.legalLink}>Ver TyC</Text>
+              </TouchableOpacity>
+              <Text style={styles.legalSeparator}>•</Text>
+              <TouchableOpacity onPress={() => { if (env.apiBaseUrl) void Linking.openURL(privacyUrl); }}>
+                <Text style={styles.legalLink}>Ver Privacidad</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         <TouchableOpacity
           style={styles.switch}
@@ -284,5 +322,51 @@ const styles = StyleSheet.create({
   switchText: {
     color: '#666',
     fontSize: 14,
+  },
+  legalWrap: {
+    marginTop: 12,
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#9ca3af',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: '#166534',
+    borderColor: '#166534',
+  },
+  checkboxTick: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  legalText: {
+    color: '#374151',
+    fontSize: 13,
+    flex: 1,
+    marginLeft: 8,
+  },
+  legalLinksRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  legalLink: {
+    color: '#166534',
+    fontSize: 13,
+    fontWeight: '600',
+    marginHorizontal: 6,
+  },
+  legalSeparator: {
+    color: '#9ca3af',
   },
 });

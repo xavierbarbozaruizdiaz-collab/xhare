@@ -21,6 +21,8 @@ export default function LoginPage() {
   const [message, setMessage] = useState('');
   const [isSignUp, setIsSignUp] = useState(searchParams.get('signup') === '1');
   const [checkingSession, setCheckingSession] = useState(true);
+  const [acceptLegal, setAcceptLegal] = useState(false);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -31,8 +33,17 @@ export default function LoginPage() {
         if (!cancelled) setCheckingSession(false);
         return;
       }
-      const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).maybeSingle();
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role, terms_accepted_at, privacy_accepted_at')
+        .eq('id', session.user.id)
+        .maybeSingle();
       if (cancelled) return;
+      if (!profile?.terms_accepted_at || !profile?.privacy_accepted_at) {
+        didRedirect = true;
+        router.replace('/legal/accept');
+        return;
+      }
       const role = profile?.role;
       if (role === 'admin') {
         didRedirect = true;
@@ -74,13 +85,22 @@ export default function LoginPage() {
     setMessage('');
     try {
       if (isSignUp) {
+        if (!acceptLegal) {
+          setMessage('Tenés que aceptar TyC y Privacidad para crear la cuenta.');
+          setLoading(false);
+          return;
+        }
         const fullName = [firstName.trim(), lastName.trim()].filter(Boolean).join(' ') || undefined;
         const { data: signUpData, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: asDriver
-              ? { role: 'driver', full_name: fullName, phone: phone.trim() || undefined }
+              ? {
+                  role: 'driver',
+                  full_name: fullName,
+                  phone: phone.trim() || undefined,
+                }
               : {},
           },
         });
@@ -106,7 +126,7 @@ export default function LoginPage() {
               await new Promise((r) => setTimeout(r, 500));
             }
           }
-          router.push('/driver/setup');
+          router.push('/legal/accept');
           router.refresh();
           return;
         }
@@ -118,12 +138,17 @@ export default function LoginPage() {
         if (userId) {
           const { data: profile, error: profileError } = await supabase
             .from('profiles')
-            .select('role')
+            .select('role, terms_accepted_at, privacy_accepted_at')
             .eq('id', userId)
             .maybeSingle();
           if (profileError) {
             setMessage(profileError.message || 'Error al cargar perfil');
             setLoading(false);
+            return;
+          }
+          if (!profile?.terms_accepted_at || !profile?.privacy_accepted_at) {
+            router.push('/legal/accept');
+            router.refresh();
             return;
           }
           if (profile?.role === 'admin') {
@@ -284,6 +309,25 @@ export default function LoginPage() {
                   </div>
                 </div>
               )}
+              <label className="flex items-start gap-2 pt-2 border-t border-gray-200">
+                <input
+                  type="checkbox"
+                  checked={acceptLegal}
+                  onChange={(e) => setAcceptLegal(e.target.checked)}
+                  className="mt-0.5 rounded border-gray-300"
+                />
+                <span className="text-sm text-gray-700">
+                  Acepto los{' '}
+                  <Link href="/legal/terms" target="_blank" className="text-green-700 underline">
+                    TyC
+                  </Link>{' '}
+                  y la{' '}
+                  <Link href="/legal/privacy" target="_blank" className="text-green-700 underline">
+                    Política de Privacidad
+                  </Link>
+                  .
+                </span>
+              </label>
             </>
           )}
           {message && <p className="text-sm text-red-600">{message}</p>}

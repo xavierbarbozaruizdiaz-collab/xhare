@@ -35,6 +35,7 @@ import { JoinGroupMapScreen } from '../screens/JoinGroupMapScreen';
 import { MessagesScreen } from '../screens/MessagesScreen';
 import { ChatScreen } from '../screens/ChatScreen';
 import { SaveTripRequestScreen } from '../screens/SaveTripRequestScreen';
+import { LegalAcceptanceScreen } from '../screens/LegalAcceptanceScreen';
 import type { RootStackParamList } from './types';
 import type { MainStackParamList } from './types';
 import type { MainTabParamList } from './types';
@@ -243,6 +244,11 @@ export function RootNavigator() {
     return () => sub.remove();
   }, [session]);
 
+  const legalAccepted =
+    !!session &&
+    !!session.terms_accepted_at &&
+    !!session.privacy_accepted_at;
+
   if (loading) {
     return <LoadingScreen />;
   }
@@ -252,6 +258,8 @@ export function RootNavigator() {
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {!session ? (
           <RootStack.Screen name="Auth" component={LoginScreen} />
+        ) : !legalAccepted ? (
+          <RootStack.Screen name="Auth" component={LegalAcceptanceScreen} />
         ) : (
           <RootStack.Screen name="Main" component={MainStackNavigator} />
         )}
