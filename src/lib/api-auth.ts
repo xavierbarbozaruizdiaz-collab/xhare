@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authGetUser, createServerClient } from '@/lib/supabase/server';
+import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
 import type { User } from '@supabase/supabase-js';
 
 type AuthResult =
@@ -10,6 +10,14 @@ type DriverRideResult =
   | { user: User; supabase: ReturnType<typeof createServerClient>; ride: { id: string; driver_id: string; [k: string]: unknown } }
   | NextResponse;
 
+function extractBearerToken(req?: Request): string | null {
+  if (!req) return null;
+  const header = req.headers.get('authorization') ?? req.headers.get('Authorization');
+  if (!header) return null;
+  const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
+  return m?.[1] ?? null;
+}
+
 /**
  * Obtiene el usuario autenticado. Usar en todas las rutas API que requieran login.
  * @param req Request opcional (Route Handlers): se usa para leer Authorization del request entrante.
@@ -17,10 +25,28 @@ type DriverRideResult =
  */
 export async function getAuth(req?: Request): Promise<AuthResult> {
   const supabase = createServerClient(req);
-  const {
+  let {
     data: { user },
     error: authError,
   } = await authGetUser(supabase, req);
+
+  // Respaldo de consistencia: en algunos clientes móviles puede fallar getUser con anon client
+  // pese a venir un Bearer válido; verificamos JWT con service client para evitar 401 falsos.
+  if ((!user || authError) && req) {
+    const jwt = extractBearerToken(req);
+    if (jwt) {
+      try {
+        const service = createServiceClient();
+        const serviceAuth = await service.auth.getUser(jwt);
+        if (serviceAuth.data.user) {
+          user = serviceAuth.data.user;
+          authError = null;
+        }
+      } catch {
+        // Si falla fallback, mantenemos el resultado original (401).
+      }
+    }
+  }
 
   if (authError || !user) {
     if (process.env.NODE_ENV === 'development') {
