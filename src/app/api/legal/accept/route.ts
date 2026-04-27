@@ -58,18 +58,43 @@ export async function POST(request: NextRequest) {
         : DEFAULT_PRIVACY_VERSION;
     const acceptedAt = new Date().toISOString();
 
+    const { data: existingProfile } = await service
+      .from('profiles')
+      .select('id')
+      .eq('id', auth.user.id)
+      .maybeSingle();
+
+    if (!existingProfile) {
+      const userMeta = (auth.user.user_metadata ?? {}) as Record<string, unknown>;
+      const metaRoleRaw = typeof userMeta.role === 'string' ? userMeta.role.trim() : '';
+      const role =
+        metaRoleRaw === 'admin' || metaRoleRaw === 'driver' || metaRoleRaw === 'driver_pending'
+          ? metaRoleRaw
+          : 'passenger';
+      const fullName = typeof userMeta.full_name === 'string' ? userMeta.full_name.trim() : null;
+      const phone = typeof userMeta.phone === 'string' ? userMeta.phone.trim() : null;
+
+      const { error: insertProfileError } = await service.from('profiles').insert({
+        id: auth.user.id,
+        role,
+        full_name: fullName || null,
+        phone: phone || null,
+      });
+      if (insertProfileError) {
+        console.error('[legal/accept] profile insert error:', insertProfileError.message);
+        return NextResponse.json({ error: 'No se pudo registrar la aceptación legal.' }, { status: 400 });
+      }
+    }
+
     const { error: profileError } = await service
       .from('profiles')
-      .upsert(
-        {
-          id: auth.user.id,
-          terms_accepted_at: acceptedAt,
-          privacy_accepted_at: acceptedAt,
-          terms_version: termsVersion,
-          privacy_version: privacyVersion,
-        },
-        { onConflict: 'id' }
-      );
+      .update({
+        terms_accepted_at: acceptedAt,
+        privacy_accepted_at: acceptedAt,
+        terms_version: termsVersion,
+        privacy_version: privacyVersion,
+      })
+      .eq('id', auth.user.id);
     if (profileError) {
       console.error('[legal/accept] profile update error:', profileError.message);
       return NextResponse.json({ error: 'No se pudo registrar la aceptación legal.' }, { status: 400 });
