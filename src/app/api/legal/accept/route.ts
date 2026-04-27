@@ -60,13 +60,16 @@ export async function POST(request: NextRequest) {
 
     const { error: profileError } = await service
       .from('profiles')
-      .update({
-        terms_accepted_at: acceptedAt,
-        privacy_accepted_at: acceptedAt,
-        terms_version: termsVersion,
-        privacy_version: privacyVersion,
-      })
-      .eq('id', auth.user.id);
+      .upsert(
+        {
+          id: auth.user.id,
+          terms_accepted_at: acceptedAt,
+          privacy_accepted_at: acceptedAt,
+          terms_version: termsVersion,
+          privacy_version: privacyVersion,
+        },
+        { onConflict: 'id' }
+      );
     if (profileError) {
       console.error('[legal/accept] profile update error:', profileError.message);
       return NextResponse.json({ error: 'No se pudo registrar la aceptación legal.' }, { status: 400 });
