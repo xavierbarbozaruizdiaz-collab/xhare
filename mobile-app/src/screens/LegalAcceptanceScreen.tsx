@@ -24,6 +24,7 @@ async function fetchLegalVersion(type: 'terms' | 'privacy'): Promise<string> {
 export function LegalAcceptanceScreen() {
   const { refreshSession, signOut } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>('');
   const termsUrl = useMemo(() => {
     const base = env.apiBaseUrl?.trim().replace(/\/$/, '');
     return base ? `${base}/legal/terms` : '';
@@ -35,6 +36,7 @@ export function LegalAcceptanceScreen() {
 
   async function handleAccept() {
     setLoading(true);
+    setError('');
     try {
       const {
         data: { session },
@@ -64,8 +66,9 @@ export function LegalAcceptanceScreen() {
 
       await refreshSession();
     } catch (e) {
-      // Fallback robusto: si falla actualización, cerrar sesión evita uso sin aceptación.
-      await signOut();
+      const msg =
+        e instanceof Error && e.message ? e.message : 'No se pudo guardar la aceptación. Verificá conexión e intentá de nuevo.';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -108,6 +111,7 @@ export function LegalAcceptanceScreen() {
             <Text style={styles.acceptButtonText}>Acepto y continuar</Text>
           )}
         </TouchableOpacity>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
       </View>
     </View>
   );
@@ -171,5 +175,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
     fontSize: 15,
+  },
+  errorText: {
+    marginTop: 10,
+    color: '#b91c1c',
+    fontSize: 13,
+    textAlign: 'center',
   },
 });
