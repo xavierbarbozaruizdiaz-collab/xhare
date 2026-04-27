@@ -435,13 +435,25 @@ export default function AdminSettingsPage() {
     const bucket = mediaBucket.trim() || 'app-releases';
     setUploadingField('hero-batch');
 
-    const nextUrls = ['', '', '', '', ''];
+    const currentUrls = [
+      heroImageUrl.trim(),
+      heroImage2Url.trim(),
+      heroImage3Url.trim(),
+      heroImage4Url.trim(),
+      heroImage5Url.trim(),
+    ];
+    const firstEmpty = currentUrls.findIndex((url) => !url);
+    const startSlot = firstEmpty >= 0 ? firstEmpty : 0;
+
+    const nextUrls = [...currentUrls];
     for (let i = 0; i < files.length; i += 1) {
+      const slot = startSlot + i;
+      if (slot >= 5) break;
       const file = files[i];
       const ext = (file.name.split('.').pop() || 'webp').toLowerCase();
       const safeExt = ext.replace(/[^a-z0-9]/g, '') || 'webp';
-      const stamp = Date.now() + i;
-      const path = `download-landing/hero-${i + 1}-${stamp}.${safeExt}`;
+      const stamp = Date.now() + slot;
+      const path = `download-landing/hero-${slot + 1}-${stamp}.${safeExt}`;
 
       const uploadRes = await supabase.storage.from(bucket).upload(path, file, {
         cacheControl: '31536000',
@@ -452,11 +464,11 @@ export default function AdminSettingsPage() {
       if (uploadRes.error) {
         setUploadingField(null);
         e.target.value = '';
-        alert(`No se pudo subir hero ${i + 1}: ${uploadRes.error.message}`);
+        alert(`No se pudo subir hero ${slot + 1}: ${uploadRes.error.message}`);
         return;
       }
 
-      nextUrls[i] = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+      nextUrls[slot] = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
     }
 
     setUploadingField(null);

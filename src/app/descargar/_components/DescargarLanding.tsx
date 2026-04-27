@@ -278,9 +278,6 @@ export function DescargarLanding(props: DescargarLandingProps) {
           <Link href="/" className="text-sm font-bold tracking-tight text-[#38b000]">
             Xhare
           </Link>
-          <span className={`text-xs ${muted}`}>
-            Tema definido por admin
-          </span>
         </div>
 
         <div className="mt-10 grid items-center gap-10 lg:grid-cols-2">
