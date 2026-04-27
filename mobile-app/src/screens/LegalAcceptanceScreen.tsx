@@ -64,7 +64,39 @@ export function LegalAcceptanceScreen() {
         throw new Error(json.error || 'No se pudo registrar la aceptación legal.');
       }
 
-      await refreshSession();
+      const payload = (await res.json().catch(() => ({}))) as {
+        accepted_at?: string;
+        terms_version?: string;
+        privacy_version?: string;
+      };
+      const acceptedAt =
+        typeof payload.accepted_at === 'string' && payload.accepted_at.trim()
+          ? payload.accepted_at
+          : new Date().toISOString();
+      const termsVer =
+        typeof payload.terms_version === 'string' && payload.terms_version.trim()
+          ? payload.terms_version.trim()
+          : termsVersion;
+      const privacyVer =
+        typeof payload.privacy_version === 'string' && payload.privacy_version.trim()
+          ? payload.privacy_version.trim()
+          : privacyVersion;
+
+      const patchedSession = {
+        ...session,
+        user: {
+          ...session.user,
+          user_metadata: {
+            ...(session.user as any)?.user_metadata,
+            terms_accepted_at: acceptedAt,
+            privacy_accepted_at: acceptedAt,
+            terms_version: termsVer,
+            privacy_version: privacyVer,
+          },
+        },
+      } as any;
+
+      await refreshSession(patchedSession);
     } catch (e) {
       const msg =
         e instanceof Error && e.message ? e.message : 'No se pudo guardar la aceptación. Verificá conexión e intentá de nuevo.';

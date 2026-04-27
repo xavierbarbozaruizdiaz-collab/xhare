@@ -22,6 +22,16 @@ function pickAccessToken(session: Session | null): string {
   return (session as any)?.access_token ? String((session as any).access_token) : '';
 }
 
+function pickUserMetaDate(session: Session | null, key: string): string | null {
+  const raw = (session?.user as any)?.user_metadata?.[key];
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+function pickUserMetaVersion(session: Session | null, key: string): string | null {
+  const raw = (session?.user as any)?.user_metadata?.[key];
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
 export async function getSessionProfileFromSession(session: Session | null): Promise<SessionProfile | null> {
   try {
     const userId = session?.user?.id;
@@ -35,6 +45,10 @@ export async function getSessionProfileFromSession(session: Session | null): Pro
       access_token,
       email: session.user?.email ?? null,
       full_name: null,
+      terms_accepted_at: pickUserMetaDate(session, 'terms_accepted_at'),
+      privacy_accepted_at: pickUserMetaDate(session, 'privacy_accepted_at'),
+      terms_version: pickUserMetaVersion(session, 'terms_version'),
+      privacy_version: pickUserMetaVersion(session, 'privacy_version'),
     };
 
     const profileQuery = supabase
@@ -94,6 +108,10 @@ export async function getSessionProfileFromSession(session: Session | null): Pro
       access_token,
       email: session.user?.email ?? null,
       full_name: null,
+      terms_accepted_at: pickUserMetaDate(session, 'terms_accepted_at'),
+      privacy_accepted_at: pickUserMetaDate(session, 'privacy_accepted_at'),
+      terms_version: pickUserMetaVersion(session, 'terms_version'),
+      privacy_version: pickUserMetaVersion(session, 'privacy_version'),
     } as SessionProfile;
   }
 }

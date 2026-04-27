@@ -75,6 +75,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No se pudo registrar la aceptación legal.' }, { status: 400 });
     }
 
+    // Respaldo de consistencia: reflejar aceptación en metadata de auth para clientes
+    // que lean sesión antes de que el fetch de profile esté disponible.
+    try {
+      const userMeta = (auth.user.user_metadata ?? {}) as Record<string, unknown>;
+      const { error: authMetaError } = await service.auth.admin.updateUserById(auth.user.id, {
+        user_metadata: {
+          ...userMeta,
+          terms_accepted_at: acceptedAt,
+          privacy_accepted_at: acceptedAt,
+          terms_version: termsVersion,
+          privacy_version: privacyVersion,
+        },
+      });
+      if (authMetaError) {
+        console.error('[legal/accept] auth metadata update warning:', authMetaError.message);
+      }
+    } catch (metaErr) {
+      console.error('[legal/accept] auth metadata update exception:', metaErr);
+    }
+
     const userAgent = (request.headers.get('user-agent') ?? '').slice(0, 500) || null;
     const ip = getRequestIp(request);
     const { error: auditError } = await service.from('legal_acceptance_events').insert({
