@@ -38,9 +38,16 @@ export function LegalAcceptanceScreen() {
     setLoading(true);
     setError('');
     try {
+      // Solucion de fondo: en mobile puede existir "session" pero con access token vencido.
+      // Forzamos refresh antes de pegar a /api/legal/accept para evitar 401 intermitente.
       const {
-        data: { session },
+        data: { session: refreshedSession },
+      } = await supabase.auth.refreshSession();
+      const {
+        data: { session: fallbackSession },
       } = await supabase.auth.getSession();
+      const session = refreshedSession ?? fallbackSession ?? null;
+
       if (!session?.access_token) {
         await signOut();
         return;
@@ -61,7 +68,7 @@ export function LegalAcceptanceScreen() {
       });
       if (!res.ok) {
         const json = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(json.error || 'No se pudo registrar la aceptación legal.');
+        throw new Error(json.error || `No se pudo registrar la aceptación legal (${res.status}).`);
       }
 
       const payload = (await res.json().catch(() => ({}))) as {
