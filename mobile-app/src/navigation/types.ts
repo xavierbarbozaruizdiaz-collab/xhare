@@ -24,9 +24,15 @@ export type MainStackParamList = {
         groupId?: string;
           /** Hora objetivo de salida al primer punto para cumplir ventana del grupo. */
           groupSuggestedPickupTime?: string;
+        /** Plantilla guardada en el dispositivo (id opaco). */
+        driverTemplateId?: string;
+        /** Abrir publicar para crear una plantilla nueva al confirmar. */
+        createDriverTemplate?: boolean;
         publishKind?: 'internal' | 'long_distance';
         /** Prellenar precio manual (larga distancia). */
         suggestedSeatPriceGs?: number;
+        /** Desde Inicio: plantilla lista → publicar automáticamente al cargar el formulario. */
+        autoPublish?: boolean;
       }
     | undefined;
   /** `favoriteSlot`: mismo formulario que buscar, con acción principal “Guardar favorito”. */

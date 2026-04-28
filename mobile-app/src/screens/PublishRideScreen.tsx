@@ -15,11 +15,12 @@ import {
   Share,
   Platform,
   Pressable,
+  Switch,
 } from 'react-native';
 import MapView, { Polyline, Marker, type MapPressEvent } from 'react-native-maps';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { androidMapProvider } from '../lib/androidMapProvider';
-import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
@@ -27,10 +28,23 @@ import { searchAddresses, reverseGeocodeStructured, type GeocodeSuggestion } fro
 import { fetchRoute } from '../backend/routeApi';
 import { buildRideIdToDemandGroupMap, fetchDemandRouteDetail } from '../backend/demandRoutesApi';
 import { env } from '../core/env';
+import { getAppFlavor } from '../core/flavor';
 import { getPositionAlongPolyline, snapToPolyline, type Point as GeoPoint } from '../lib/geo';
 import { PublishRouteMapModal, type PublishMapMode } from '../components/PublishRouteMapModal';
 import type { MainStackParamList } from '../navigation/types';
 import { MAX_DRIVER_PUBLISH_WAYPOINTS } from '../core/publishRouteLimits';
+import {
+  loadDriverHomeTemplateRows,
+  getDriverHomeTemplateRow,
+  upsertDriverHomeTemplateRow,
+  newDriverTemplateId,
+} from '../lib/driverHomeTemplates';
+import {
+  coerceScheduleWeekdayMask,
+  SCHEDULE_WEEKDAY_MASK_ALL,
+  computeNextTriggerIso,
+} from '../lib/passengerFavorites';
+import { addDaysToYmd } from '../lib/bookingLead';
 
 /** Solo timing interno: reduce ráfagas a OSRM al ajustar paradas; imperceptible en uso normal. */
 const PUBLISH_ROUTE_DEBOUNCE_MS = 220;
@@ -57,6 +71,11 @@ type UserProfile = {
 };
 
 const GREEN = '#166534';
+
+const WEEKDAY_TOGGLE_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'] as const;
+
+/** Viajes adicionales (mismo tramo) cuando la plantilla es diaria + días de semana (solo interno). */
+const DRIVER_RECURRING_MAX_EXTRA = 14;
 
 function formatTimeHhMm(t: string | null | undefined): string {
   if (!t) return '08:00';
@@ -128,6 +147,13 @@ export function PublishRideScreen() {
   const groupIdParam = params.groupId;
   const groupSuggestedPickupTimeParam =
     typeof params.groupSuggestedPickupTime === 'string' ? params.groupSuggestedPickupTime : undefined;
+  const driverTemplateIdParam =
+    typeof params.driverTemplateId === 'string' && params.driverTemplateId.trim()
+      ? params.driverTemplateId.trim()
+      : undefined;
+  const createDriverTemplateParam = params.createDriverTemplate === true;
+  const autoPublishParam = params.autoPublish === true;
+  const isDriverApp = getAppFlavor() === 'driver';
   /**
    * Si entrás solo con `fromRideId` (viaje awaiting_driver) pero ese ride está ligado a un grupo en
    * `demand_route_groups`, el flujo real es el mismo que con `groupId` en ruta.
@@ -166,7 +192,14 @@ export function PublishRideScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [departureFlexibility, setDepartureFlexibility] = useState<'strict_5' | 'flexible_30'>('strict_5');
   const [routeName, setRouteName] = useState('');
-  const [description, setDescription] = useState('');
+  /** Cupos a publicar (ofertas): ≤ vehículo; el valor inicial real viene del perfil en `loadGate`. */
+  const [publishSeatCount, setPublishSeatCount] = useState(1);
+  /** Meta de recaudación total (Gs), referencia en plantilla y descripción. */
+  const [totalCollectGsInput, setTotalCollectGsInput] = useState('');
+  /** Reprogramación diaria (plantilla conductor). */
+  const [templateScheduleDaily, setTemplateScheduleDaily] = useState(false);
+  /** Días de la semana en que aplica la plantilla diaria (bits 0=dom … 6=sáb). */
+  const [templateWeekdayMask, setTemplateWeekdayMask] = useState(SCHEDULE_WEEKDAY_MASK_ALL);
   const [manualSeatPriceInput, setManualSeatPriceInput] = useState('');
   const [routePolyline, setRoutePolyline] = useState<Point[]>([]);
   const [durationMin, setDurationMin] = useState(60);
@@ -182,6 +215,18 @@ export function PublishRideScreen() {
   const [groupFirstPickupPoint, setGroupFirstPickupPoint] = useState<{ lat: number; lng: number } | null>(null);
   /** Ride de despacho ya existente para el grupo (p. ej. tras cancelación → awaiting_driver). */
   const [existingGroupRideId, setExistingGroupRideId] = useState<string | null>(null);
+
+  /** Auto-publicar desde Inicio (plantilla lista): una vez al cumplirse condiciones. */
+  const handlePublishRef = useRef<(() => Promise<void>) | null>(null);
+  const autoPublishOnceRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        autoPublishOnceRef.current = false;
+      };
+    }, [])
+  );
 
   /** Origen de tiempos para logs [perf][PublishRide] (solo __DEV__). */
   const publishPerfT0 = useRef(0);
@@ -270,14 +315,16 @@ export function PublishRideScreen() {
 
     setDriverSuspended(account?.account_status === 'suspended');
 
+    const seatCap = Math.max(1, Number(profile.vehicle_seat_count));
     setUserProfile({
       role: profile.role,
-      vehicle_seat_count: Math.max(1, Number(profile.vehicle_seat_count)),
+      vehicle_seat_count: seatCap,
       vehicle_model: String(profile.vehicle_model ?? ''),
       vehicle_year: profile.vehicle_year,
       vehicle_seat_layout: profile.vehicle_seat_layout ?? { rows: [Number(profile.vehicle_seat_count)] },
       driver_approved_at: profile.driver_approved_at,
     });
+    setPublishSeatCount(seatCap);
     if (__DEV__ && gateStartedAt) {
       const now = Date.now();
       console.log('[perf][PublishRide] loadGate total ms (queries+validation)', now - gateStartedAt);
@@ -291,6 +338,84 @@ export function PublishRideScreen() {
   useEffect(() => {
     loadGate();
   }, [loadGate]);
+
+  useEffect(() => {
+    if (!userProfile) return;
+    const cap = Math.max(1, userProfile.vehicle_seat_count);
+    setPublishSeatCount((c) => Math.min(Math.max(1, c), cap));
+  }, [userProfile]);
+
+  useEffect(() => {
+    if (!driverTemplateIdParam || !session?.id || !userProfile) return;
+    if (tripRequestIdParam || groupIdParam || fromRideIdParam) return;
+    let cancelled = false;
+    void (async () => {
+      const rows = await loadDriverHomeTemplateRows(session.id);
+      if (cancelled) return;
+      const row = getDriverHomeTemplateRow(rows, driverTemplateIdParam);
+      if (!row) {
+        if (paramPublishKind === 'long_distance') setPublishKindFree('long_distance');
+        return;
+      }
+      if (row.tripDisplayName.trim()) setRouteName(row.tripDisplayName.trim().slice(0, 100));
+      const cap = Math.max(1, userProfile.vehicle_seat_count);
+      setPublishSeatCount(Math.min(Math.max(1, row.publishSeatCount || cap), cap));
+      if (row.departureTimeHm) setDepartureTime(formatTimeHhMm(row.departureTimeHm));
+      if (row.departureDateYmd) setDepartureDate(row.departureDateYmd);
+      setTemplateScheduleDaily(Boolean(row.scheduleDaily));
+      setTemplateWeekdayMask(coerceScheduleWeekdayMask(row.scheduleWeekdayMask));
+      if (row.rideKind === 'long_distance') {
+        setPublishKindFree('long_distance');
+        if (row.totalCollectGs > 0) setTotalCollectGsInput(String(Math.round(row.totalCollectGs)));
+        else setTotalCollectGsInput('');
+      } else {
+        setPublishKindFree('internal');
+        setTotalCollectGsInput('');
+      }
+      if (row.originLat != null && row.originLng != null) {
+        setOrigin({ lat: row.originLat, lng: row.originLng, label: row.origin?.trim() || undefined });
+        setOriginInput(String(row.origin ?? ''));
+      }
+      if (row.destinationLat != null && row.destinationLng != null) {
+        setDestination({
+          lat: row.destinationLat,
+          lng: row.destinationLng,
+          label: row.destination?.trim() || undefined,
+        });
+        setDestinationInput(String(row.destination ?? ''));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    driverTemplateIdParam,
+    session?.id,
+    userProfile,
+    tripRequestIdParam,
+    groupIdParam,
+    fromRideIdParam,
+    paramPublishKind,
+  ]);
+
+  /** Con diario activo, la fecha de este viaje sigue la próxima instancia según máscara y hora. */
+  useEffect(() => {
+    if (!isDriverApp || isGroupedPublishFlow || !templateScheduleDaily) return;
+    const mask = coerceScheduleWeekdayMask(templateWeekdayMask);
+    if (mask === 0) return;
+    const anchor = toLocalYyyyMmDd(new Date());
+    const hm = formatTimeHhMm(departureTime);
+    const iso = computeNextTriggerIso(new Date(), anchor, hm, true, mask);
+    if (!iso) return;
+    const nextYmd = toLocalYyyyMmDd(new Date(iso));
+    setDepartureDate((prev) => (prev === nextYmd ? prev : nextYmd));
+  }, [
+    isDriverApp,
+    isGroupedPublishFlow,
+    templateScheduleDaily,
+    templateWeekdayMask,
+    departureTime,
+  ]);
 
   useEffect(() => {
     if (!env.apiBaseUrl?.trim()) return;
@@ -323,6 +448,7 @@ export function PublishRideScreen() {
     setPrefillLoading(true);
     setFormError(null);
     try {
+      if (!isLongDistance) setTotalCollectGsInput('');
       setPrefillResolvedGroupId(null);
 
       let activeGroupId: string | undefined =
@@ -855,7 +981,14 @@ export function PublishRideScreen() {
   }, []);
 
   const seats = userProfile?.vehicle_seat_count ?? 6;
-  const availableSeatsForPublish = Math.max(0, seats - linkedPassengerSeats);
+  const capSeats = Math.max(1, seats);
+  /** Viajes disponibles: cupos = capacidad del vehículo (perfil). Ofertas: el conductor elige cupos ≤ capacidad. */
+  const offerSeats = isGroupedPublishFlow
+    ? capSeats
+    : !isLongDistance
+      ? capSeats
+      : Math.min(Math.max(1, publishSeatCount), capSeats);
+  const availableSeatsForPublish = Math.max(0, offerSeats - linkedPassengerSeats);
 
   const handlePublish = async () => {
     if (!session?.id || !userProfile) return;
@@ -870,11 +1003,36 @@ export function PublishRideScreen() {
       Alert.alert('Ruta', 'Elegí origen y destino (escribí y tocá una sugerencia).');
       return;
     }
-    if (!departureDate || !departureTime) {
-      Alert.alert('Fecha', 'Completá fecha y hora de salida.');
+    if (!departureTime) {
+      Alert.alert('Fecha', 'Completá la hora de salida.');
       return;
     }
-    const departureDateTime = new Date(`${departureDate}T${departureTime}`);
+    const maskDaily = Boolean(isDriverApp && !isGroupedPublishFlow && templateScheduleDaily);
+    if (maskDaily && coerceScheduleWeekdayMask(templateWeekdayMask) === 0) {
+      Alert.alert('Días', 'Marcá al menos un día de la semana para el recorrido diario.');
+      return;
+    }
+    let publishDateYmd = departureDate.trim();
+    if (!publishDateYmd) {
+      if (maskDaily) {
+        const iso = computeNextTriggerIso(
+          new Date(),
+          toLocalYyyyMmDd(new Date()),
+          formatTimeHhMm(departureTime),
+          true,
+          coerceScheduleWeekdayMask(templateWeekdayMask)
+        );
+        if (!iso) {
+          Alert.alert('Fecha', 'No hay próxima fecha válida con los días y hora elegidos.');
+          return;
+        }
+        publishDateYmd = toLocalYyyyMmDd(new Date(iso));
+      } else {
+        Alert.alert('Fecha', 'Completá fecha y hora de salida.');
+        return;
+      }
+    }
+    const departureDateTime = new Date(`${publishDateYmd}T${formatTimeHhMm(departureTime)}`);
     if (Number.isNaN(departureDateTime.getTime())) {
       Alert.alert('Fecha', 'Fecha u hora inválida.');
       return;
@@ -883,17 +1041,35 @@ export function PublishRideScreen() {
       Alert.alert('Fecha', 'La salida debe ser en el futuro.');
       return;
     }
+    if (isDriverApp && !isGroupedPublishFlow && !routeName.trim()) {
+      Alert.alert('Nombre del viaje', 'Es obligatorio poner un nombre al viaje (se muestra en Inicio y a los pasajeros).');
+      return;
+    }
+    const totalGsParsed =
+      !isGroupedPublishFlow && isLongDistance
+        ? Math.max(0, parseInt(totalCollectGsInput.replace(/\D/g, ''), 10) || 0)
+        : 0;
+    const derivedSeatFromTotal =
+      isLongDistance && totalGsParsed > 0 && offerSeats > 0
+        ? Math.max(1000, Math.ceil(totalGsParsed / offerSeats))
+        : 0;
     const manualSeatPrice =
       isLongDistance
-        ? Math.max(0, parseInt(manualSeatPriceInput.replace(/\D/g, ''), 10) || 0)
+        ? derivedSeatFromTotal > 0
+          ? derivedSeatFromTotal
+          : Math.max(0, parseInt(manualSeatPriceInput.replace(/\D/g, ''), 10) || 0)
         : 0;
     if (isLongDistance && manualSeatPrice < 1000) {
-      Alert.alert('Precio por asiento', 'Para viaje larga distancia, definí un precio por asiento válido.');
+      Alert.alert(
+        'Precio por asiento',
+        'Definí precio por asiento o meta total a cobrar (Gs) para calcular el precio por cupo.'
+      );
       return;
     }
 
     setSubmitting(true);
     setFormError(null);
+    let recurringExtraPublished = 0;
     try {
       const dur = Math.max(15, Math.min(1440, durationMin));
       const newStart = departureDateTime.getTime();
@@ -917,6 +1093,17 @@ export function PublishRideScreen() {
 
       const baseRoute = routePolyline.length >= 2 ? routePolyline : null;
 
+      const collectMeta =
+        !isGroupedPublishFlow && isLongDistance && totalGsParsed > 0
+          ? `Meta recaudación total (conductor): ${totalGsParsed.toLocaleString('es-PY')} Gs.`
+          : '';
+      const fullDescription = collectMeta.trim() || null;
+
+      const driverTemplatePersistenceId =
+        isDriverApp && !isGroupedPublishFlow
+          ? driverTemplateIdParam ?? (createDriverTemplateParam ? newDriverTemplateId() : undefined)
+          : undefined;
+
       const ridePayload: Record<string, unknown> = {
         driver_id: session.id,
         origin_lat: origin.lat,
@@ -928,11 +1115,11 @@ export function PublishRideScreen() {
         departure_time: departureDateTime.toISOString(),
         estimated_duration_minutes: dur,
         price_per_seat: manualSeatPrice,
-        total_seats: userProfile.vehicle_seat_count,
+        total_seats: offerSeats,
         available_seats: availableSeatsForPublish,
-        capacity: userProfile.vehicle_seat_count,
+        capacity: offerSeats,
         route_name: routeName.trim().slice(0, 100) || null,
-        description: description.trim() || null,
+        description: fullDescription,
         vehicle_info: {
           model: userProfile.vehicle_model,
           year:
@@ -945,6 +1132,15 @@ export function PublishRideScreen() {
         departure_flexibility: isLongDistance ? departureFlexibility : 'strict_5',
         status: 'published',
         mode: 'free',
+        ...(isDriverApp && !isGroupedPublishFlow && driverTemplatePersistenceId
+          ? {
+              driver_home_template_slot: driverTemplatePersistenceId,
+              driver_home_schedule_daily: templateScheduleDaily,
+            }
+          : {
+              driver_home_template_slot: null,
+              driver_home_schedule_daily: null,
+            }),
       };
 
       let rideId: string;
@@ -1060,6 +1256,132 @@ export function PublishRideScreen() {
       }
       if (stopsError) throw stopsError;
 
+      if (
+        templateScheduleDaily &&
+        isDriverApp &&
+        !isGroupedPublishFlow &&
+        !isLongDistance &&
+        driverTemplatePersistenceId
+      ) {
+        const mask = coerceScheduleWeekdayMask(templateWeekdayMask);
+        const hm = formatTimeHhMm(departureTime);
+        const occupied: { start: number; end: number }[] = [];
+        for (const r of existingRides ?? []) {
+          if (existingGroupRideId && String((r as { id?: string }).id) === existingGroupRideId) continue;
+          const start = new Date(r.departure_time as string).getTime();
+          const span = (r.estimated_duration_minutes ?? 60) * 60 * 1000;
+          occupied.push({ start, end: start + span });
+        }
+        occupied.push({ start: newStart, end: newEnd });
+
+        const mkStopsForRide = (rid: string) => {
+          const base = [
+            { ride_id: rid, stop_order: 0, lat: origin.lat, lng: origin.lng, label: origin.label ?? null },
+            ...orderedWps.map((w, i) => ({
+              ride_id: rid,
+              stop_order: i + 1,
+              lat: w.lat,
+              lng: w.lng,
+              label: (w.label ?? null) as string | null,
+            })),
+            {
+              ride_id: rid,
+              stop_order: orderedWps.length + 1,
+              lat: destination.lat,
+              lng: destination.lng,
+              label: destination.label ?? null,
+            },
+          ];
+          return base;
+        };
+
+        let walkYmd = addDaysToYmd(publishDateYmd, 1);
+        for (let guard = 0; guard < 55 && recurringExtraPublished < DRIVER_RECURRING_MAX_EXTRA; guard++) {
+          const parts = walkYmd.split('-').map((x) => parseInt(x, 10));
+          if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) break;
+          const dow = new Date(parts[0]!, parts[1]! - 1, parts[2]!, 12, 0, 0, 0).getDay();
+          if ((mask & (1 << dow)) === 0) {
+            walkYmd = addDaysToYmd(walkYmd, 1);
+            continue;
+          }
+          const dep = new Date(`${walkYmd}T${hm}`);
+          if (Number.isNaN(dep.getTime()) || dep.getTime() <= Date.now()) {
+            walkYmd = addDaysToYmd(walkYmd, 1);
+            continue;
+          }
+          const sMs = dep.getTime();
+          const eMs = sMs + dur * 60 * 1000;
+          if (occupied.some(({ start, end }) => sMs < end && eMs > start)) {
+            walkYmd = addDaysToYmd(walkYmd, 1);
+            continue;
+          }
+
+          const extraPayload: Record<string, unknown> = {
+            ...ridePayload,
+            departure_time: dep.toISOString(),
+            driver_home_template_slot: driverTemplatePersistenceId,
+            driver_home_schedule_daily: templateScheduleDaily,
+          };
+
+          let ins = await supabase.from('rides').insert(extraPayload).select().single();
+          if (ins.error) {
+            const msg = String((ins.error as { message?: string }).message ?? '');
+            if (msg.includes('driver_ride_overlap') || msg.includes('solapen')) {
+              walkYmd = addDaysToYmd(walkYmd, 1);
+              continue;
+            }
+            const { departure_flexibility: _xf, ...payloadSinFlex } = extraPayload;
+            ins = await supabase.from('rides').insert(payloadSinFlex).select().single();
+          }
+          if (ins.error || !ins.data?.id) break;
+          const extraRideId = String((ins.data as { id: string }).id);
+          occupied.push({ start: sMs, end: eMs });
+
+          if (baseRoute) {
+            const { error: upPoly } = await supabase
+              .from('rides')
+              .update({ base_route_polyline: baseRoute, max_deviation_km: 1.0 })
+              .eq('id', extraRideId);
+            if (upPoly) console.warn('base_route_polyline recurring:', upPoly);
+          }
+          const sb = mkStopsForRide(extraRideId);
+          const sbWith = sb.map((s, i) => ({ ...s, is_base_stop: i === 0 || i === sb.length - 1 }));
+          const { error: es1 } = await supabase.from('ride_stops').insert(sbWith);
+          if (es1 && String(es1.message).includes('is_base_stop')) {
+            const { error: es2 } = await supabase.from('ride_stops').insert(sb);
+            if (es2) console.warn('ride_stops recurring:', es2);
+          } else if (es1) {
+            console.warn('ride_stops recurring:', es1);
+          }
+          recurringExtraPublished++;
+          walkYmd = addDaysToYmd(walkYmd, 1);
+        }
+      }
+
+      if (!isGroupedPublishFlow && driverTemplatePersistenceId && isDriverApp) {
+        const weekdayMaskForTemplate = templateScheduleDaily
+          ? coerceScheduleWeekdayMask(templateWeekdayMask)
+          : 1 << (departureDateTime.getDay() & 7);
+        await upsertDriverHomeTemplateRow(session.id, driverTemplatePersistenceId, {
+          tripDisplayName: routeName.trim().slice(0, 100),
+          publishSeatCount: offerSeats,
+          totalCollectGs: totalGsParsed,
+          departureTimeHm: departureTime,
+          departureDateYmd: publishDateYmd,
+          scheduleDaily: templateScheduleDaily,
+          scheduleWeekdayMask: coerceScheduleWeekdayMask(weekdayMaskForTemplate),
+          enabled: true,
+          rideKind: publishKind,
+          origin: originInput.trim(),
+          destination: destinationInput.trim(),
+          originLat: origin.lat,
+          originLng: origin.lng,
+          destinationLat: destination.lat,
+          destinationLng: destination.lng,
+          homeActiveRideId: rideId,
+        });
+      }
+
       const { data: shareRow } = await supabase
         .from('rides')
         .select('share_code')
@@ -1095,7 +1417,14 @@ export function PublishRideScreen() {
           },
         ]);
       } else {
-        Alert.alert('Listo', `${shareMsg}\n\nTambién lo encontrás en Conductor → Mis viajes publicados o Inicio.`, [
+        const recurringLine =
+          recurringExtraPublished > 0
+            ? `\n\nSe publicaron ${recurringExtraPublished} fecha(s) más con el mismo tramo (días de la plantilla). Los pasajeros pueden unirse con anticipación.`
+            : '';
+        Alert.alert(
+          'Listo',
+          `${shareMsg}\n\nTambién lo encontrás en Conductor → Mis viajes publicados o Inicio.${recurringLine}`,
+          [
           ...(rideShareCode
             ? [
                 {
@@ -1126,6 +1455,36 @@ export function PublishRideScreen() {
       setSubmitting(false);
     }
   };
+
+  handlePublishRef.current = () => handlePublish();
+
+  useEffect(() => {
+    if (!autoPublishParam) return;
+    if (autoPublishOnceRef.current) return;
+    if (gateLoading || !userProfile || prefillLoading) return;
+    if (!isDriverApp || isGroupedPublishFlow) return;
+    if (!driverTemplateIdParam) return;
+    if (!origin || !destination) return;
+    if (!departureTime.trim()) return;
+    if (!routeName.trim()) return;
+    autoPublishOnceRef.current = true;
+    const t = setTimeout(() => {
+      void handlePublishRef.current?.();
+    }, 650);
+    return () => clearTimeout(t);
+  }, [
+    autoPublishParam,
+    gateLoading,
+    userProfile,
+    prefillLoading,
+    isDriverApp,
+    isGroupedPublishFlow,
+    driverTemplateIdParam,
+    origin,
+    destination,
+    departureTime,
+    routeName,
+  ]);
 
   if (gateLoading || !userProfile) {
     return (
@@ -1160,6 +1519,7 @@ export function PublishRideScreen() {
               onPress={() => {
                 setPublishKindFree('internal');
                 setManualSeatPriceInput('');
+                setTotalCollectGsInput('');
               }}
               accessibilityRole="button"
               accessibilityLabel="Viajes disponibles"
@@ -1209,29 +1569,7 @@ export function PublishRideScreen() {
       ) : null}
 
       {!isGroupedPublishFlow ? (
-        <Text style={styles.mapHelp}>
-          Vista previa de la ruta (OSRM cuando hay origen y destino). Tocá el mapa o un botón para abrir el editor a
-          pantalla completa y marcar puntos.
-        </Text>
-      ) : null}
-      {!isGroupedPublishFlow ? (
-        <View style={styles.mapModeRow}>
-        <TouchableOpacity style={styles.mapModeBtn} onPress={() => openMapPicker('origin')}>
-          <Text style={styles.mapModeText}>Origen</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.mapModeBtn, (!origin || !destination || isGroupedPublishFlow) && styles.mapModeBtnDisabled]}
-          onPress={() => openMapPicker('waypoint')}
-          disabled={!origin || !destination || isGroupedPublishFlow}
-        >
-          <Text style={[styles.mapModeText, (!origin || !destination || isGroupedPublishFlow) && styles.mapModeTextDisabled]}>
-            + Parada ({waypoints.length}/{MAX_DRIVER_PUBLISH_WAYPOINTS})
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.mapModeBtn} onPress={() => openMapPicker('destination')}>
-          <Text style={styles.mapModeText}>Destino</Text>
-        </TouchableOpacity>
-        </View>
+        <Text style={styles.mapHelp}>Presiona el mapa para marcar tu ruta</Text>
       ) : null}
       {waypoints.length > 0 && !isGroupedPublishFlow ? (
         <TouchableOpacity onPress={() => setWaypoints([])}>
@@ -1382,11 +1720,75 @@ export function PublishRideScreen() {
         </View>
       )}
 
+      {isDriverApp && !isGroupedPublishFlow ? (
+        <>
+          <Text style={styles.label}>¿Desea reprogramar diario este viaje?</Text>
+          <View style={styles.driverDailySwitchWrap}>
+            <Switch
+              value={templateScheduleDaily}
+              onValueChange={(v) => {
+                setTemplateScheduleDaily(v);
+                if (v) {
+                  setTemplateWeekdayMask((m) => {
+                    const c = coerceScheduleWeekdayMask(m);
+                    return c === 0 ? SCHEDULE_WEEKDAY_MASK_ALL : c;
+                  });
+                }
+              }}
+              trackColor={{ false: '#d1d5db', true: '#86efac' }}
+              thumbColor={templateScheduleDaily ? '#166534' : '#f3f4f6'}
+            />
+          </View>
+          {templateScheduleDaily ? (
+            <View style={styles.weekdayBlock}>
+              <Text style={styles.weekdayBlockTitle}>Días que hacés este recorrido</Text>
+              <View style={styles.weekdayChipsRow}>
+                {WEEKDAY_TOGGLE_LABELS.map((label, i) => {
+                  const on = ((templateWeekdayMask >> i) & 1) === 1;
+                  return (
+                    <TouchableOpacity
+                      key={label}
+                      style={[styles.weekdayChip, on && styles.weekdayChipOn]}
+                      onPress={() => {
+                        setTemplateWeekdayMask((m) => {
+                          const next = (m ^ (1 << i)) & 127;
+                          if (next === 0) return m;
+                          return next;
+                        });
+                      }}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={`${label}, ${on ? 'activo' : 'inactivo'}`}
+                    >
+                      <Text style={[styles.weekdayChipText, on && styles.weekdayChipTextOn]}>{label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              {!isLongDistance ? (
+                <Text style={styles.weekdayBatchHint}>
+                  Al publicar (viaje interno), se generan varias publicaciones en fechas futuras según estos días, para
+                  que los pasajeros puedan unirse con anticipación.
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+        </>
+      ) : null}
+
       <Text style={styles.label}>Fecha del viaje</Text>
       {isGroupedPublishFlow ? (
         <View style={[styles.input, styles.inputReadonly]}>
           <Text style={departureDate ? styles.dateFieldText : styles.dateFieldPlaceholder}>
             {departureDate || '—'}
+          </Text>
+        </View>
+      ) : isDriverApp && !isGroupedPublishFlow && templateScheduleDaily ? (
+        <View style={[styles.input, styles.inputReadonly]}>
+          <Text style={departureDate ? styles.dateFieldText : styles.dateFieldPlaceholder}>
+            {departureDate
+              ? `Próxima salida: ${departureDate} · ${formatTimeHhMm(departureTime)}`
+              : 'Calculando próxima fecha según los días marcados…'}
           </Text>
         </View>
       ) : (
@@ -1402,7 +1804,7 @@ export function PublishRideScreen() {
           </Text>
         </TouchableOpacity>
       )}
-      {showDatePicker && !isGroupedPublishFlow ? (
+      {showDatePicker && !isGroupedPublishFlow && !(isDriverApp && templateScheduleDaily) ? (
         <>
           <DateTimePicker
             value={
@@ -1481,6 +1883,23 @@ export function PublishRideScreen() {
         </>
       ) : null}
 
+      {isDriverApp && !isGroupedPublishFlow && isLongDistance ? (
+        <>
+          <Text style={styles.label}>Meta total a cobrar (Gs, referencia)</Text>
+          <TextInput
+            style={styles.input}
+            value={totalCollectGsInput}
+            onChangeText={(t) => setTotalCollectGsInput(t.replace(/[^\d]/g, ''))}
+            keyboardType="number-pad"
+            placeholder="Ej. 200000 (opcional)"
+            placeholderTextColor="#9ca3af"
+          />
+          <Text style={styles.priceNote}>
+            Referencia tuya. Si completás meta y cupos, el precio por cupo se calcula al publicar.
+          </Text>
+        </>
+      ) : null}
+
       {isLongDistance ? (
         <>
           <Text style={styles.label}>Flexibilidad de salida</Text>
@@ -1513,33 +1932,60 @@ export function PublishRideScreen() {
         </>
       ) : null}
 
-      <Text style={styles.label}>Asientos</Text>
-      <Text style={styles.seatsReadonly}>
-        {availableSeatsForPublish}/{seats} asientos
-      </Text>
+      {!isGroupedPublishFlow && isLongDistance ? (
+        <>
+          <Text style={styles.label}>Cupos a publicar (pasajeros)</Text>
+          <TextInput
+            style={styles.input}
+            value={String(publishSeatCount)}
+            onChangeText={(t) => {
+              const digits = t.replace(/\D/g, '');
+              if (!digits) {
+                setPublishSeatCount(1);
+                return;
+              }
+              const n = parseInt(digits, 10);
+              setPublishSeatCount(Math.min(Math.max(1, n), capSeats));
+            }}
+            keyboardType="number-pad"
+            placeholder={`1–${capSeats}`}
+            placeholderTextColor="#9ca3af"
+          />
+        </>
+      ) : null}
+      {isGroupedPublishFlow || isLongDistance ? (
+        <>
+          <Text style={styles.label}>Asientos</Text>
+          <Text style={styles.seatsReadonly}>
+            {isGroupedPublishFlow
+              ? `${availableSeatsForPublish}/${seats} asientos`
+              : `Vehículo: ${seats} asientos · este viaje: ${offerSeats} cupo(s) publicados · disponibles ${availableSeatsForPublish}.`}
+          </Text>
+        </>
+      ) : null}
 
       {isLongDistance ? (
         <>
-          <Text style={styles.label}>Precio por asiento (larga distancia)</Text>
+          <Text style={styles.label}>Precio por asiento</Text>
           <TextInput
             style={styles.input}
             value={manualSeatPriceInput}
             onChangeText={(t) => setManualSeatPriceInput(t.replace(/[^\d]/g, ''))}
             keyboardType="number-pad"
-            placeholder="Ej. 25000"
+            placeholder={totalCollectGsInput.replace(/\D/g, '') ? 'Opcional si usás meta total arriba' : 'Ej. 25000'}
             placeholderTextColor="#9ca3af"
           />
           <Text style={styles.priceNote}>
-            Este valor lo define el conductor y se usa como precio por asiento para la reserva.
+            {totalCollectGsInput.replace(/\D/g, '')
+              ? 'Si completaste meta total y cupos, se usa el precio por cupo calculado (redondeo hacia arriba). Si no, vale el número que ingreses acá.'
+              : 'Este valor lo define el conductor y se usa como precio por asiento para la reserva.'}
           </Text>
         </>
-      ) : !isGroupedPublishFlow ? (
-        <Text style={styles.priceNote}>
-          Viaje interno: el precio lo define el tramo del pasajero (origen–destino o paradas).
-        </Text>
       ) : null}
 
-      <Text style={styles.label}>Nombre del viaje (opcional)</Text>
+      <Text style={styles.label}>
+        {isDriverApp && !isGroupedPublishFlow ? 'Nombre del viaje (obligatorio)' : 'Nombre del viaje (opcional)'}
+      </Text>
       <TextInput
         style={styles.input}
         value={routeName}
@@ -1548,21 +1994,11 @@ export function PublishRideScreen() {
         placeholderTextColor="#9ca3af"
         maxLength={100}
       />
-      <Text style={styles.priceNote}>Lo ven los pasajeros al buscar y en el listado de viajes disponibles.</Text>
-
-      {!isGroupedPublishFlow ? (
-        <>
-          <Text style={styles.label}>Descripción (opcional)</Text>
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Detalles del viaje"
-            placeholderTextColor="#9ca3af"
-            multiline
-          />
-        </>
-      ) : null}
+      <Text style={styles.priceNote}>
+        {isDriverApp && !isGroupedPublishFlow
+          ? 'Se muestra en tu Inicio (plantilla) y lo ven los pasajeros en el listado.'
+          : 'Lo ven los pasajeros al buscar y en el listado de viajes disponibles.'}
+      </Text>
 
       {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
 
@@ -1575,11 +2011,7 @@ export function PublishRideScreen() {
           <ActivityIndicator color="#fff" />
         ) : (
           <Text style={styles.primaryBtnText}>
-            {isLongDistance
-              ? 'Publicar viaje larga distancia'
-              : isGroupedPublishFlow
-                ? 'Publicar viaje para esta ruta'
-                : 'Publicar viaje interno'}
+            {isGroupedPublishFlow ? 'Publicar viaje para esta ruta' : 'Publicar viaje'}
           </Text>
         )}
       </TouchableOpacity>
@@ -1642,6 +2074,38 @@ const styles = StyleSheet.create({
   },
   mapPreviewOverlayText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   label: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 6 },
+  driverDailySwitchWrap: { marginBottom: 12, alignSelf: 'flex-start' },
+  weekdayBlock: {
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    backgroundColor: '#f0fdf4',
+  },
+  weekdayBlockTitle: { fontSize: 14, fontWeight: '700', color: '#14532d' },
+  weekdayBatchHint: { fontSize: 12, color: '#4b5563', marginTop: 10, lineHeight: 17 },
+  weekdayChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  weekdayChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+  },
+  weekdayChipOn: {
+    borderColor: '#166534',
+    backgroundColor: '#166534',
+  },
+  weekdayChipText: { fontSize: 12, fontWeight: '700', color: '#374151' },
+  weekdayChipTextOn: { color: '#fff' },
   wpFormSection: { marginBottom: 2 },
   wpFormBlock: { marginBottom: 0 },
   wpFormSubLabel: { fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 4 },
@@ -1675,7 +2139,6 @@ const styles = StyleSheet.create({
   inputReadonly: {
     backgroundColor: '#f3f4f6',
   },
-  textArea: { minHeight: 88, textAlignVertical: 'top' },
   suggestions: {
     borderWidth: 1,
     borderColor: '#e5e7eb',
@@ -1717,18 +2180,6 @@ const styles = StyleSheet.create({
   cancelBtnText: { color: '#6b7280', fontSize: 15 },
   mapHelp: { fontSize: 13, color: '#6b7280', marginBottom: 10, lineHeight: 18 },
   groupFlowHint: { fontSize: 14, color: '#166534', fontWeight: '700', marginBottom: 10 },
-  mapModeRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 },
-  mapModeBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: '#e5e7eb',
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  mapModeBtnDisabled: { opacity: 0.45 },
-  mapModeText: { fontSize: 13, fontWeight: '600', color: '#374151' },
-  mapModeTextDisabled: { color: '#9ca3af' },
   clearWp: { fontSize: 13, color: '#2563eb', fontWeight: '600', marginBottom: 8 },
   kindPickerRow: { flexDirection: 'row', gap: 10, marginBottom: 14, flexWrap: 'wrap' },
   kindChip: {

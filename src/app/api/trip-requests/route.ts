@@ -18,7 +18,7 @@ const TRIP_REQUEST_MAX_PER_WINDOW = 12;
 
 /**
  * Cuerpo alineado a `trip_requests` (sin user_id: lo toma del JWT).
- * La app móvil usa esta ruta cuando EXPO_PUBLIC_API_BASE_URL apunta al Next local,
+ * La app m?vil usa esta ruta cuando EXPO_PUBLIC_API_BASE_URL apunta al Next local,
  * evitando inserts directos a Supabase que en emulador/red a veces no completan.
  */
 const insertBodySchema = z
@@ -60,6 +60,11 @@ const insertBodySchema = z
     passenger_favorite_slot: z.string().max(120).optional(),
     /** Si ya hay una solicitud agrupada con el mismo slot/fecha/hora, el pasajero debe confirmar salida del grupo. */
     confirm_leave_group: z.boolean().optional(),
+    /**
+     * Mismas coords/hora/slot: solicitudes `pending` adicionales en otras fechas (favorito diario, demanda con anticipacion).
+     * Requiere `passenger_favorite_slot`. El servidor ignora duplicados de `requested_date` principal.
+     */
+    extra_requested_dates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(18).optional(),
   })
   .superRefine((data, ctx) => {
     const olat = data.origin_lat;
@@ -73,7 +78,7 @@ const insertBodySchema = z
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Coordenadas inválidas',
+        message: 'Coordenadas inv?lidas',
         path: ['origin_lat'],
       });
     }
@@ -89,7 +94,7 @@ const insertBodySchema = z
     if (hasStart !== hasEnd) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Enviá requested_time_start y requested_time_end juntos, o ninguno.',
+        message: 'Envi? requested_time_start y requested_time_end juntos, o ninguno.',
         path: ['requested_time_start'],
       });
     }
@@ -99,7 +104,7 @@ const insertBodySchema = z
       if (!Number.isFinite(a) || !Number.isFinite(b)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Ventana horaria: usá fechas ISO válidas.',
+          message: 'Ventana horaria: us? fechas ISO v?lidas.',
           path: ['requested_time_start'],
         });
       } else if (b < a) {
@@ -110,6 +115,14 @@ const insertBodySchema = z
         });
       }
     }
+    const ex = data.extra_requested_dates;
+    if (ex && ex.length > 0 && !data.passenger_favorite_slot?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Las fechas extra requieren passenger_favorite_slot (favorito de Inicio).',
+        path: ['extra_requested_dates'],
+      });
+    }
   });
 
 export async function POST(request: NextRequest) {
@@ -119,7 +132,7 @@ export async function POST(request: NextRequest) {
     const clientId = getClientId(request, auth.user.id);
     if (!checkRateLimit(`trip-requests:${clientId}`, TRIP_REQUEST_WINDOW_MS, TRIP_REQUEST_MAX_PER_WINDOW)) {
       return NextResponse.json(
-        { error: 'Demasiadas solicitudes. Esperá un momento.' },
+        { error: 'Demasiadas solicitudes. Esper? un momento.' },
         { status: 429 }
       );
     }
@@ -137,7 +150,7 @@ export async function POST(request: NextRequest) {
       }
       if (!hint && flat.formErrors[0]) hint = flat.formErrors[0];
       return NextResponse.json(
-        { error: hint || 'Datos inválidos', details: flat },
+        { error: hint || 'Datos inv?lidos', details: flat },
         { status: 400 }
       );
     }
@@ -151,7 +164,7 @@ export async function POST(request: NextRequest) {
         p.passenger_desired_price_per_seat_gs < 1)
     ) {
       return NextResponse.json(
-        { error: 'Larga distancia: indicá precio por asiento (guaraníes).' },
+        { error: 'Larga distancia: indic? precio por asiento (guaran?es).' },
         { status: 400 }
       );
     }
@@ -214,7 +227,7 @@ export async function POST(request: NextRequest) {
           {
             code: 'GROUPED_FAVORITE_EXISTS',
             error:
-              'Esta solicitud del favorito ya está en un grupo de demanda. Si guardás de nuevo, saldrás de ese grupo y se registrará una solicitud nueva para buscar otro grupo.',
+              'Esta solicitud del favorito ya est? en un grupo de demanda. Si guard?s de nuevo, saldr?s de ese grupo y se registrar? una solicitud nueva para buscar otro grupo.',
           },
           { status: 409 }
         );
@@ -308,6 +321,29 @@ export async function POST(request: NextRequest) {
       inserted = ins as InsertedTripSummary;
     }
 
+    const primaryDate = p.requested_date.trim();
+    const reqTime = p.requested_time.trim();
+    const extraRaw = p.extra_requested_dates ?? [];
+    const extraUnique = Array.from(new Set(extraRaw.map((x) => x.trim()))).filter((d) => d && d !== primaryDate);
+    const extraTripRequestIds: string[] = [];
+    if (favSlot && extraUnique.length > 0) {
+      for (const reqD of extraUnique) {
+        const { data: gHit, error: gHitErr } = await auth.supabase
+          .from('trip_requests')
+          .select('id')
+          .eq('user_id', auth.user.id)
+          .eq('passenger_favorite_slot', favSlot.slice(0, 120))
+          .eq('requested_date', reqD)
+          .eq('requested_time', reqTime)
+          .in('status', ['grouping', 'grouped', 'group_linked_pending']);
+        if (gHitErr || (gHit?.length ?? 0) > 0) continue;
+
+        const rowX: Record<string, unknown> = { ...row, requested_date: reqD };
+        const upx = await insertOrUpdatePendingTripRequestFromFavorite(auth.supabase, rowX);
+        if (upx.ok) extraTripRequestIds.push(upx.id);
+      }
+    }
+
     console.info('[api/trip-requests] insert ok', {
       userId: auth.user.id,
       tripRequestId: inserted?.id,
@@ -328,7 +364,11 @@ export async function POST(request: NextRequest) {
       console.error('[api/trip-requests] drain push queue', err);
     });
 
-    return NextResponse.json({ ok: true, id: inserted?.id });
+    return NextResponse.json({
+      ok: true,
+      id: inserted?.id,
+      extra_trip_request_ids: extraTripRequestIds.length ? extraTripRequestIds : undefined,
+    });
   } catch (e) {
     console.error('[api/trip-requests] unexpected', e);
     return NextResponse.json(

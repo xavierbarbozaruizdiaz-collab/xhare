@@ -574,6 +574,7 @@ export async function fetchRideForReserve(rideId: string): Promise<{
       route_name,
       departure_time, base_route_polyline, max_deviation_km,
       description, estimated_duration_minutes, flexible_departure, started_at, vehicle_info,
+      driver_home_template_slot, driver_home_schedule_daily,
       driver_lat, driver_lng, driver_location_updated_at,
       current_stop_index, awaiting_stop_confirmation,
       driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, vehicle_photo_url, rating_average, rating_count),
@@ -802,6 +803,8 @@ export async function saveTripRequest(params: {
   passengerFavoriteSlot?: string | null;
   /** Solo vía API Next: desvincular solicitud agrupada previa del mismo favorito/fecha/hora. */
   confirmLeaveGroupedFavorite?: boolean;
+  /** Favorito diario: otras fechas YYYY-MM-DD (misma hora/slot) para agrupar demanda con anticipación. */
+  extraRequestedDates?: string[];
 }): Promise<{ ok: boolean; error?: string; code?: string }> {
   const row = buildTripRequestRow(params);
   const base = env.apiBaseUrl?.trim().replace(/\/$/, '');
@@ -831,6 +834,14 @@ export async function saveTripRequest(params: {
     }
     if (params.confirmLeaveGroupedFavorite === true) {
       apiBody.confirm_leave_group = true;
+    }
+    const primaryYmd = String(params.requestedDate ?? '').trim();
+    const extraDates = (params.extraRequestedDates ?? [])
+      .map((x) => String(x ?? '').trim())
+      .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x) && x !== primaryYmd);
+    const extraUnique = [...new Set(extraDates)].slice(0, 18);
+    if (extraUnique.length > 0 && String(row.passenger_favorite_slot ?? '').trim()) {
+      apiBody.extra_requested_dates = extraUnique;
     }
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), SAVE_TRIP_REQUEST_API_TIMEOUT_MS);
@@ -929,6 +940,28 @@ export async function saveTripRequest(params: {
           return { ok: false, error: 'Sin respuesta. Reintentá.' };
         }
         return { ok: false, error: humanizeTripRequestInsertError(up.error) };
+      }
+      const primaryYmd = String(row.requested_date ?? '').trim();
+      const extraLoop = (params.extraRequestedDates ?? [])
+        .map((x) => String(x ?? '').trim())
+        .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x) && x !== primaryYmd);
+      for (const d of [...new Set(extraLoop)].slice(0, 18)) {
+        const { data: groupedExtra, error: gExErr } = await supabase
+          .from('trip_requests')
+          .select('id')
+          .eq('user_id', params.userId)
+          .eq('passenger_favorite_slot', String(row.passenger_favorite_slot))
+          .eq('requested_date', d)
+          .eq('requested_time', String(row.requested_time))
+          .in('status', ['grouping', 'grouped', 'group_linked_pending']);
+        if (gExErr || (groupedExtra?.length ?? 0) > 0) continue;
+        const rowX = { ...row, requested_date: d };
+        const upx = await raceWithTimeout(
+          insertOrUpdatePendingTripRequestFromFavorite(supabase, rowX),
+          SAVE_TRIP_REQUEST_INSERT_TIMEOUT_MS,
+          (): { ok: false; error: string } => ({ ok: false, error: 'SUPABASE_INSERT_TIMEOUT' })
+        );
+        if (!upx.ok) continue;
       }
       return { ok: true };
     }

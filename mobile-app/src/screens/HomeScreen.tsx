@@ -72,6 +72,17 @@ import {
   findPassengerActiveRideShortcut,
   fetchMyRides,
 } from '../rides/api';
+import { supabase } from '../backend/supabase';
+import { updateRideStatus } from '../backend/rideStatus';
+import {
+  loadDriverHomeTemplateRows,
+  upsertDriverHomeTemplateRow,
+  removeDriverHomeTemplateRow,
+  driverTemplateHasConfig,
+  driverScheduleLabel,
+  getDriverHomeTemplateRow,
+  type DriverHomeTemplateRow,
+} from '../lib/driverHomeTemplates';
 
 type IonName = ComponentProps<typeof Ionicons>['name'];
 
@@ -138,6 +149,10 @@ function listHomeFavoriteSlotsToShow(
     if (favoriteHasConfig(favorites[id])) slots.push(id);
   }
   return slots;
+}
+
+function driverCardReady(row: DriverHomeTemplateRow | undefined): boolean {
+  return driverTemplateHasConfig(row) && Boolean(row?.tripDisplayName?.trim());
 }
 
 function favoriteHasConfig(snap: PassengerFavoriteSnapshot | undefined): boolean {
@@ -218,6 +233,31 @@ function normalizeHmForTripRequest(hm: string): string {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
+/** Solicitudes `pending` adicionales (misma hora) para agrupar demanda con anticipación. */
+const PASSENGER_RECURRING_MAX_EXTRA = 14;
+
+function buildPassengerRecurringExtraYmds(
+  anchorYmd: string,
+  pickupHm: string,
+  weekdayMask: number | undefined,
+  maxExtra: number
+): string[] {
+  const mask = coerceScheduleWeekdayMask(weekdayMask);
+  const hm = pickupHm.trim();
+  const out: string[] = [];
+  let ymd = addDaysToYmd(anchorYmd, 1);
+  for (let i = 0; i < 60 && out.length < maxExtra; i++) {
+    const parts = ymd.split('-').map((x) => parseInt(x, 10));
+    if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) break;
+    const dow = new Date(parts[0]!, parts[1]! - 1, parts[2]!, 12, 0, 0, 0).getDay();
+    if ((mask & (1 << dow)) !== 0 && isPickupAtLeastLeadAhead(ymd, hm)) {
+      out.push(ymd);
+    }
+    ymd = addDaysToYmd(ymd, 1);
+  }
+  return out;
+}
+
 const HOME_FALLBACK_PRICING: EffectivePricing = {
   minFarePyg: 7140,
   pygPerKm: 2780,
@@ -263,10 +303,12 @@ export function HomeScreen() {
   const activateModalSessionRef = useRef(false);
   /** Evita doble envío de “Activar” mientras corre guardado + red. */
   const confirmActivateBusyRef = useRef(false);
+  const passengerQuickActivateBusyRef = useRef(false);
   const [activateSubmitting, setActivateSubmitting] = useState(false);
   const [favoriteCostBySlot, setFavoriteCostBySlot] = useState<
     Partial<Record<PassengerFavoriteSlot, { perSeatGs: number; distanceKm: number } | null>>
   >({});
+  const [driverTemplateRows, setDriverTemplateRows] = useState<DriverHomeTemplateRow[]>([]);
 
   const homeFavoriteSlots = useMemo(() => listHomeFavoriteSlotsToShow(favorites), [favorites]);
   const selectedFromIcon = (MODAL_ORIGIN_ICONS[fromIconIndex] ?? MODAL_ORIGIN_ICONS[0]) as string;
@@ -283,19 +325,32 @@ export function HomeScreen() {
     });
   }, [userId]);
 
+  const refreshDriverTemplates = useCallback(() => {
+    if (!userId || isPassengerFlavor) return;
+    void loadDriverHomeTemplateRows(userId).then(setDriverTemplateRows);
+  }, [userId, isPassengerFlavor]);
+
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
-      if (next === 'active' && userId && isPassengerFlavor) {
-        refreshFavorites();
+      if (next === 'active' && userId) {
+        if (isPassengerFlavor) refreshFavorites();
+        else refreshDriverTemplates();
       }
     });
     return () => sub.remove();
-  }, [userId, isPassengerFlavor, refreshFavorites]);
+  }, [userId, isPassengerFlavor, refreshFavorites, refreshDriverTemplates]);
 
   useFocusEffect(
     useCallback(() => {
       refreshFavorites();
     }, [refreshFavorites])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isPassengerFlavor) return;
+      refreshDriverTemplates();
+    }, [isPassengerFlavor, refreshDriverTemplates])
   );
 
   useFocusEffect(
@@ -474,6 +529,28 @@ export function HomeScreen() {
     );
   }, [goFavorite, selectedFromIcon, selectedToIcon]);
 
+  const deleteDriverTemplate = useCallback(
+    (id: string, displayName: string) => {
+      if (!session || !userId) return;
+      const label = displayName.trim() || 'esta plantilla';
+      Alert.alert('Eliminar plantilla', `Se borrará «${label}» solo en este dispositivo.`, [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              await removeDriverHomeTemplateRow(userId, id);
+              const rows = await loadDriverHomeTemplateRows(userId);
+              setDriverTemplateRows(rows);
+            })();
+          },
+        },
+      ]);
+    },
+    [session, userId]
+  );
+
   const cancelActivateFavorite = useCallback(() => {
     activateRouteRequestIdRef.current += 1;
     activateModalSessionRef.current = false;
@@ -619,6 +696,140 @@ export function HomeScreen() {
     [session, userId, goFavorite]
   );
 
+  /**
+   * Con trayecto guardado en modo recogida (sin hora de llegada) y coords: activar y registrar
+   * `trip_request` sin abrir el modal, misma regla de 4 h que `openActivateFavoriteModal`.
+   * Larga distancia, llegada al destino o sin coords → se mantiene el modal.
+   */
+  const quickActivatePassengerFavoriteOrOpenModal = useCallback(
+    async (slot: PassengerFavoriteSlot) => {
+      if (!session || !userId) return;
+      if (passengerQuickActivateBusyRef.current) return;
+      const snap = await getPassengerFavorite(userId, slot);
+      if (!snap || !favoriteHasConfig(snap)) {
+        Alert.alert('Primero configuralo', `Completa ${favoritePairLabel(slot)} y luego activa el switch.`);
+        goFavorite(slot);
+        return;
+      }
+
+      const hasCoords =
+        snap.originLat != null &&
+        snap.originLng != null &&
+        snap.destinationLat != null &&
+        snap.destinationLng != null;
+      const arrivalConfigured = Boolean(snap.scheduledArrivalTimeHm?.trim());
+
+      if (snap.rideKind === 'long_distance' || arrivalConfigured || !hasCoords) {
+        void openActivateFavoriteModal(slot);
+        return;
+      }
+
+      passengerQuickActivateBusyRef.current = true;
+      try {
+        const pickupHm = (snap.scheduledTimeHm ?? snap.fromTime ?? '08:00').trim() || '08:00';
+        let d = (snap.scheduledDateYmd ?? snap.date ?? toYmdLocal(new Date())).trim();
+        for (let i = 0; i < 400; i++) {
+          if (isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) break;
+          d = addDaysToYmd(d, 1);
+        }
+        if (!isPickupAtLeastLeadAhead(d, pickupHm, MIN_BOOKING_LEAD_MS)) {
+          Alert.alert(
+            'Anticipación mínima',
+            'No se encontró una fecha con al menos 4 horas de anticipación. Elegí fecha y hora en el resumen.'
+          );
+          void openActivateFavoriteModal(slot);
+          return;
+        }
+
+        const token = session.access_token?.trim();
+        if (!token) {
+          Alert.alert('Solicitud de viaje', 'No se pudo registrar la solicitud: sesión inválida.');
+          return;
+        }
+
+        const route = await fetchRoute(
+          { lat: snap.originLat!, lng: snap.originLng! },
+          { lat: snap.destinationLat!, lng: snap.destinationLng! },
+          []
+        );
+        const poly = route.polyline && route.polyline.length >= 2 ? route.polyline : null;
+
+        await upsertPassengerFavorite(userId, slot, {
+          date: d,
+          fromTime: pickupHm,
+          routeNameQuery: snap.routeNameQuery,
+          origin: snap.origin,
+          destination: snap.destination,
+          originLat: snap.originLat,
+          originLng: snap.originLng,
+          destinationLat: snap.destinationLat,
+          destinationLng: snap.destinationLng,
+          rideKind: snap.rideKind,
+          enabled: true,
+          scheduleDaily: Boolean(snap.scheduleDaily),
+          scheduleWeekdayMask: snap.scheduleWeekdayMask,
+          scheduledDateYmd: d,
+          scheduledTimeHm: pickupHm,
+          scheduledArrivalTimeHm: undefined,
+          nextTriggerAtIso:
+            computeNextTriggerIso(new Date(), d, pickupHm, Boolean(snap.scheduleDaily), snap.scheduleWeekdayMask) ??
+            undefined,
+        });
+
+        const recurringExtra = isScheduleDailySnap(snap)
+          ? buildPassengerRecurringExtraYmds(d, pickupHm, snap.scheduleWeekdayMask, PASSENGER_RECURRING_MAX_EXTRA)
+          : [];
+        const baseTripArgs = {
+          accessToken: token,
+          userId,
+          originLat: snap.originLat!,
+          originLng: snap.originLng!,
+          originLabel: (String(snap.origin ?? '').trim() || 'Origen').slice(0, 500),
+          destinationLat: snap.destinationLat!,
+          destinationLng: snap.destinationLng!,
+          destinationLabel: (String(snap.destination ?? '').trim() || 'Destino').slice(0, 500),
+          requestedDate: d,
+          requestedTime: normalizeHmForTripRequest(pickupHm),
+          seats: 1,
+          routePolyline: poly,
+          routeLengthKm: route.distanceKm ?? null,
+          pricingKind: 'internal' as const,
+          internalQuoteAcknowledged: true,
+          passengerFavoriteSlot: slot,
+          ...(recurringExtra.length > 0 ? { extraRequestedDates: recurringExtra } : {}),
+        };
+        let tripRes = await saveTripRequest(baseTripArgs);
+        if (!tripRes.ok && tripRes.code === 'GROUPED_FAVORITE_EXISTS') {
+          const leaveGroup = await new Promise<boolean>((resolve) => {
+            Alert.alert(
+              'Ya está en un grupo',
+              tripRes.error ??
+                'Esta solicitud ya figuraba en un grupo de demanda. Si continuás, salís de ese grupo y se registra una solicitud nueva.',
+              [
+                { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+                { text: 'Salir del grupo y registrar', onPress: () => resolve(true) },
+              ],
+              { cancelable: true, onDismiss: () => resolve(false) }
+            );
+          });
+          if (leaveGroup) {
+            tripRes = await saveTripRequest({ ...baseTripArgs, confirmLeaveGroupedFavorite: true });
+          }
+        }
+        if (!tripRes.ok) {
+          Alert.alert('Solicitud de viaje', tripRes.error || 'No se pudo registrar la solicitud pendiente.');
+        }
+
+        const all = await loadPassengerFavorites(userId);
+        setFavorites(all);
+        void pushPassengerHomeMapShortcuts(all);
+      } finally {
+        passengerQuickActivateBusyRef.current = false;
+      }
+    },
+    [session, userId, goFavorite, openActivateFavoriteModal]
+  );
+
   const confirmActivateFavorite = useCallback(async () => {
     if (!session || !userId || !activateSlot || !activateSnap) return;
     if (confirmActivateBusyRef.current) return;
@@ -701,6 +912,9 @@ export function HomeScreen() {
             []
           );
           const poly = route.polyline && route.polyline.length >= 2 ? route.polyline : null;
+          const recurringExtra = isScheduleDailySnap(snap)
+            ? buildPassengerRecurringExtraYmds(d, pickupHm, snap.scheduleWeekdayMask, PASSENGER_RECURRING_MAX_EXTRA)
+            : [];
           const baseTripArgs = {
             accessToken: token,
             userId,
@@ -718,6 +932,7 @@ export function HomeScreen() {
             pricingKind: 'internal' as const,
             internalQuoteAcknowledged: true,
             passengerFavoriteSlot: activateSlot,
+            ...(recurringExtra.length > 0 ? { extraRequestedDates: recurringExtra } : {}),
           };
           let tripRes = await saveTripRequest(baseTripArgs);
           if (!tripRes.ok && tripRes.code === 'GROUPED_FAVORITE_EXISTS') {
@@ -891,7 +1106,7 @@ export function HomeScreen() {
                               void setFavoriteDisabled(slot);
                               return;
                             }
-                            void openActivateFavoriteModal(slot);
+                            void quickActivatePassengerFavoriteOrOpenModal(slot);
                           }}
                           trackColor={{ false: '#d1d5db', true: '#86efac' }}
                           thumbColor={switchShowsOn ? '#166534' : '#f3f4f6'}
@@ -1160,7 +1375,7 @@ export function HomeScreen() {
                   accessibilityLabel="Buscar viajes"
                 >
                   <Ionicons name="search" size={20} color="#9ca3af" style={styles.fakeSearchIcon} />
-                  <Text style={styles.fakeSearchPlaceholder}>A donde queres ir hoy? (Rutas populares, lineas...)</Text>
+                  <Text style={styles.fakeSearchPlaceholder}>Ingrese codigo de ruta</Text>
                 </TouchableOpacity>
 
                 <View style={styles.rowTwo}>
@@ -1212,13 +1427,158 @@ export function HomeScreen() {
             <View style={styles.driverQuickBox}>
               <TouchableOpacity
                 style={styles.driverPrimaryBtn}
-                onPress={() => parentNav?.navigate('PublishRide')}
+                onPress={() =>
+                  parentNav?.navigate('PublishRide', {
+                    createDriverTemplate: true,
+                    publishKind: 'internal',
+                  })
+                }
                 accessibilityRole="button"
                 accessibilityLabel="Publicar viaje"
               >
                 <Ionicons name="car-sport-outline" size={20} color="#fff" style={styles.driverPrimaryIcon} />
                 <Text style={styles.driverPrimaryBtnText}>PUBLICAR VIAJE</Text>
               </TouchableOpacity>
+
+              <Text style={styles.driverTemplateHint}>
+                Al prender: se corrige la fecha si ya pasó (siguiente día o próximo día marcado si es diario) y se
+                publica el viaje con esa plantilla. Al apagar: se intenta cancelar el viaje en la plataforma; si había
+                pasajeros agrupados, puede volver a “De sistema” para reasignación.
+              </Text>
+              <Text style={styles.driverTemplateHintSecond}>
+                {driverTemplateRows.length === 0
+                  ? 'Todavía no guardaste plantillas en este equipo. Completá origen, destino y nombre del viaje en la publicación; al confirmar queda guardado para reutilizar la próxima vez.'
+                  : 'Tocá una fila para editar la plantilla. El interruptor prende/apaga y publica o cancela según el texto de arriba.'}
+              </Text>
+
+              {driverTemplateRows.length > 0 ? (
+                <ScrollView
+                  style={styles.driverTemplateScroll}
+                  contentContainerStyle={styles.favoriteStackContent}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                >
+                  {driverTemplateRows.map((row) => {
+                    const switchOn = Boolean(row.enabled && driverCardReady(row));
+                    const title = row.tripDisplayName?.trim() || 'Sin nombre — tocá para configurar';
+                    const metaSeats = row.publishSeatCount != null ? `${row.publishSeatCount} cupo(s)` : '—';
+                    const metaGs =
+                      row.totalCollectGs > 0 ? `${Math.round(row.totalCollectGs).toLocaleString('es-PY')} Gs` : '—';
+                    return (
+                      <TouchableOpacity
+                        key={row.id}
+                        style={styles.favoriteRow}
+                        onPress={() =>
+                          parentNav?.navigate('PublishRide', {
+                            driverTemplateId: row.id,
+                            publishKind: row.rideKind === 'long_distance' ? 'long_distance' : 'internal',
+                          })
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel={`Plantilla ${title}`}
+                      >
+                        <TouchableOpacity
+                          style={styles.favoriteDeleteBtn}
+                          onPress={() => deleteDriverTemplate(row.id, row.tripDisplayName)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Eliminar plantilla ${title}`}
+                        >
+                          <Ionicons name="close" size={12} color="#b91c1c" />
+                        </TouchableOpacity>
+                        <View style={styles.favoriteRowLeft}>
+                          <View style={styles.favoriteRowTitleRow}>
+                            {driverTemplateHasConfig(row) && switchOn ? (
+                              <View style={styles.favoriteActiveBadge}>
+                                <Text style={styles.favoriteActiveBadgeText}>Activo</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                          <Text style={styles.favoriteRowLabel}>{title}</Text>
+                          <Text style={styles.favoriteRowTime}>
+                            {driverTemplateHasConfig(row) ? driverScheduleLabel(row) : 'Sin configurar'}
+                          </Text>
+                          <Text style={styles.favoriteRowCostMuted}>
+                            Cupos: {metaSeats} · Meta total: {metaGs}
+                          </Text>
+                        </View>
+                        <View
+                          style={styles.favoriteRowRight}
+                          onStartShouldSetResponder={() => true}
+                          onTouchEnd={(e) => e.stopPropagation()}
+                        >
+                          <Switch
+                            value={switchOn}
+                            onValueChange={(v) => {
+                              if (!userId) return;
+                              if (!v) {
+                                void (async () => {
+                                  const token = session?.access_token?.trim() ?? '';
+                                  const { data: hits } = await supabase
+                                    .from('rides')
+                                    .select('id')
+                                    .eq('driver_id', userId)
+                                    .eq('driver_home_template_slot', row.id)
+                                    .in('status', ['published', 'booked'])
+                                    .order('departure_time', { ascending: true });
+                                  const ids = (hits ?? [])
+                                    .map((h) => String((h as { id?: string }).id ?? '').trim())
+                                    .filter(Boolean);
+                                  if (ids.length > 0 && !token) {
+                                    Alert.alert('Sesión', 'No pudimos cancelar los viajes: iniciá sesión de nuevo.');
+                                    return;
+                                  }
+                                  for (const rideId of ids) {
+                                    const res = await updateRideStatus(rideId, 'cancelled', token);
+                                    if (!res.ok) {
+                                      Alert.alert(
+                                        'Cancelar viaje',
+                                        res.details ??
+                                          res.error ??
+                                          'No se pudo cancelar un viaje ligado a esta plantilla.'
+                                      );
+                                      return;
+                                    }
+                                  }
+                                  await upsertDriverHomeTemplateRow(userId, row.id, {
+                                    enabled: false,
+                                    homeActiveRideId: null,
+                                  });
+                                  const rows = await loadDriverHomeTemplateRows(userId);
+                                  setDriverTemplateRows(rows);
+                                })();
+                                return;
+                              }
+                              if (!driverCardReady(row)) {
+                                parentNav?.navigate('PublishRide', {
+                                  driverTemplateId: row.id,
+                                  publishKind: row.rideKind === 'long_distance' ? 'long_distance' : 'internal',
+                                });
+                                return;
+                              }
+                              void (async () => {
+                                await upsertDriverHomeTemplateRow(userId, row.id, { bumpScheduleAnchor: true });
+                                const rows = await loadDriverHomeTemplateRows(userId);
+                                setDriverTemplateRows(rows);
+                                const fresh = getDriverHomeTemplateRow(rows, row.id);
+                                parentNav?.navigate('PublishRide', {
+                                  driverTemplateId: row.id,
+                                  publishKind:
+                                    (fresh?.rideKind ?? row.rideKind) === 'long_distance'
+                                      ? 'long_distance'
+                                      : 'internal',
+                                  autoPublish: true,
+                                });
+                              })();
+                            }}
+                            trackColor={{ false: '#d1d5db', true: '#86efac' }}
+                            thumbColor={switchOn ? '#166534' : '#f3f4f6'}
+                          />
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              ) : null}
 
               <View style={styles.rowTwo}>
                 <TouchableOpacity
@@ -1357,6 +1717,9 @@ const styles = StyleSheet.create({
   favoriteRowTime: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   favoriteRowCost: { fontSize: 12, color: '#166534', marginTop: 2, fontWeight: '700' },
   favoriteRowCostMuted: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  driverTemplateHint: { fontSize: 12, color: '#4b5563', lineHeight: 18, marginBottom: 6 },
+  driverTemplateHintSecond: { fontSize: 12, color: '#4b5563', lineHeight: 18, marginBottom: 12 },
+  driverTemplateScroll: { maxHeight: 360, marginBottom: 4 },
   modalRoot: { flex: 1, justifyContent: 'flex-end' },
   modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
   modalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '60%', paddingBottom: 8 },
