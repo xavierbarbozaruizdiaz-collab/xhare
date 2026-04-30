@@ -12,8 +12,6 @@ const ADMIN_DEMAND_GROUP_DETAIL_MAX_PER_WINDOW = 50;
 const ADMIN_DEMAND_GROUP_DELETE_WINDOW_MS = 60_000;
 const ADMIN_DEMAND_GROUP_DELETE_MAX_PER_WINDOW = 20;
 
-const ACTIVE_RIDE_STATUSES = ['published', 'booked', 'en_route'] as const;
-
 /**
  * GET /api/admin/demand-groups/[id]
  * Mismo payload que GET /api/demand-routes/[id] pero con `withAdminAuth` (evita 401 en panel cuando el JWT
@@ -52,8 +50,7 @@ export async function GET(
 
 /**
  * DELETE /api/admin/demand-groups/[id]
- * Disuelve el agrupamiento: cancela ride de sistema (awaiting_driver/draft), libera pedidos a `pending`,
- * borra members y el grupo. Bloquea si el viaje asociado está activo.
+ * Disuelve el agrupamiento de forma atómica vía RPC en DB.
  */
 export async function DELETE(
   request: NextRequest,
@@ -74,30 +71,19 @@ export async function DELETE(
       }
 
       const service = createServiceClient();
-      const { data: group, error: gErr } = await service
-        .from('demand_route_groups')
-        .select('id, ride_id')
-        .eq('id', groupId)
-        .maybeSingle();
-
-      if (gErr || !group) {
-        return NextResponse.json({ error: 'Grupo no encontrado' }, { status: 404 });
-      }
-
-      const rideId = group.ride_id != null ? String(group.ride_id).trim() : '';
-
-      if (rideId) {
-        const { data: ride, error: rErr } = await service
-          .from('rides')
-          .select('id, status')
-          .eq('id', rideId)
-          .maybeSingle();
-        if (rErr) {
-          logBlockError(BLOCK, rErr.message, rErr);
-          return NextResponse.json({ error: 'No se pudo consultar el viaje asociado al grupo.' }, { status: 400 });
+      const { data, error } = await service.rpc('dissolve_demand_group', {
+        p_group_id: groupId,
+      });
+      if (error) {
+        const normalized = [error.code, error.message, error.details, error.hint]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        logBlockError(BLOCK, `dissolve_demand_group: ${error.message}`, error);
+        if (normalized.includes('group_not_found')) {
+          return NextResponse.json({ error: 'Grupo no encontrado' }, { status: 404 });
         }
-        const st = String(ride?.status ?? '');
-        if (ACTIVE_RIDE_STATUSES.includes(st as (typeof ACTIVE_RIDE_STATUSES)[number])) {
+        if (normalized.includes('group_has_active_ride')) {
           return NextResponse.json(
             {
               error:
@@ -106,133 +92,14 @@ export async function DELETE(
             { status: 409 }
           );
         }
-        if (st === 'awaiting_driver' || st === 'draft') {
-          const nowIso = new Date().toISOString();
-          const { error: bErr } = await service
-            .from('bookings')
-            .update({ status: 'cancelled', updated_at: nowIso })
-            .eq('ride_id', rideId)
-            .neq('status', 'cancelled');
-          if (bErr) {
-            logBlockError(BLOCK, `bookings: ${bErr.message}`, bErr);
-            return NextResponse.json({ error: 'No se pudieron cancelar las reservas del viaje de sistema.' }, { status: 400 });
-          }
-          const { error: rideUpdErr } = await service
-            .from('rides')
-            .update({
-              status: 'cancelled',
-              driver_id: null,
-              started_at: null,
-              current_stop_index: 0,
-              awaiting_stop_confirmation: false,
-              driver_lat: null,
-              driver_lng: null,
-              driver_location_updated_at: null,
-            })
-            .eq('id', rideId);
-          if (rideUpdErr) {
-            logBlockError(BLOCK, `rides: ${rideUpdErr.message}`, rideUpdErr);
-            return NextResponse.json({ error: 'No se pudo cancelar el viaje de sistema asociado.' }, { status: 400 });
-          }
-        }
-      }
-
-      const { data: members, error: mErr } = await service
-        .from('demand_route_members')
-        .select('trip_request_id')
-        .eq('group_id', groupId);
-      if (mErr) {
-        logBlockError(BLOCK, mErr.message, mErr);
-        return NextResponse.json({ error: 'No se pudieron obtener los miembros del grupo.' }, { status: 400 });
-      }
-      const memberTripIds = Array.from(
-        new Set(
-          (members ?? [])
-            .map((m) => String((m as { trip_request_id?: string }).trip_request_id ?? '').trim())
-            .filter((x) => x.length > 0)
-        )
-      );
-
-      const nowIso = new Date().toISOString();
-
-      const { error: uPool } = await service
-        .from('trip_requests')
-        .update({
-          status: 'pending',
-          demand_group_id: null,
-          ride_id: null,
-          updated_at: nowIso,
-        })
-        .eq('demand_group_id', groupId)
-        .in('status', ['grouping', 'grouped', 'group_linked_pending']);
-      if (uPool) {
-        logBlockError(BLOCK, `trip_requests pool: ${uPool.message}`, uPool);
-        return NextResponse.json({ error: 'No se pudieron restablecer solicitudes agrupadas del grupo.' }, { status: 400 });
-      }
-
-      if (rideId) {
-        const { error: uAcc } = await service
-          .from('trip_requests')
-          .update({
-            status: 'pending',
-            demand_group_id: null,
-            ride_id: null,
-            updated_at: nowIso,
-          })
-          .eq('demand_group_id', groupId)
-          .eq('status', 'accepted')
-          .eq('ride_id', rideId);
-        if (uAcc) {
-          logBlockError(BLOCK, `trip_requests accepted/dispatch: ${uAcc.message}`, uAcc);
-          return NextResponse.json({ error: 'No se pudieron restablecer solicitudes aceptadas del grupo.' }, { status: 400 });
-        }
-      }
-
-      const { error: uClear } = await service
-        .from('trip_requests')
-        .update({ demand_group_id: null, updated_at: nowIso })
-        .eq('demand_group_id', groupId);
-      if (uClear) {
-        logBlockError(BLOCK, `trip_requests clear demand_group_id: ${uClear.message}`, uClear);
-        return NextResponse.json({ error: 'No se pudo limpiar la referencia al grupo en solicitudes.' }, { status: 400 });
-      }
-
-      if (memberTripIds.length > 0) {
-        const { error: uOrphan } = await service
-          .from('trip_requests')
-          .update({
-            status: 'pending',
-            demand_group_id: null,
-            ride_id: null,
-            updated_at: nowIso,
-          })
-          .in('id', memberTripIds)
-          .in('status', ['grouping', 'grouped', 'group_linked_pending']);
-        if (uOrphan) {
-          logBlockError(BLOCK, `trip_requests members orphan: ${uOrphan.message}`, uOrphan);
-          return NextResponse.json({ error: 'No se pudieron restablecer solicitudes huérfanas del grupo.' }, { status: 400 });
-        }
-      }
-
-      const { error: delM } = await service.from('demand_route_members').delete().eq('group_id', groupId);
-      if (delM) {
-        logBlockError(BLOCK, `demand_route_members: ${delM.message}`, delM);
-        return NextResponse.json({ error: 'No se pudieron eliminar los miembros del grupo.' }, { status: 400 });
-      }
-
-      const { error: delG } = await service.from('demand_route_groups').delete().eq('id', groupId);
-      if (delG) {
-        logBlockError(BLOCK, `demand_route_groups: ${delG.message}`, delG);
-        return NextResponse.json({ error: 'No se pudo eliminar el grupo de demanda.' }, { status: 400 });
+        return NextResponse.json(
+          { error: 'No se pudo disolver el grupo de demanda.' },
+          { status: 400 }
+        );
       }
 
       logBlockOk(BLOCK);
-      return NextResponse.json({
-        ok: true,
-        dissolvedGroupId: groupId,
-        cancelledSystemRideId: rideId || null,
-        resetTripRequestIdsSample: memberTripIds.slice(0, 12),
-      });
+      return NextResponse.json(data ?? { ok: true, dissolved_group_id: groupId });
     } catch (e) {
       logBlockError(BLOCK, e instanceof Error ? e.message : 'unknown', e);
       return NextResponse.json({ error: 'Error interno' }, { status: 500 });
