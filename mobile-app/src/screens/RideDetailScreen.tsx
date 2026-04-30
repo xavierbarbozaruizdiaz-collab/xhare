@@ -48,7 +48,6 @@ import {
   stopDriverTrackingInBackground,
   isDriverTrackingActive,
 } from '../background/driverTrackingService';
-
 type Nav = NativeStackNavigationProp<MainStackParamList, 'RideDetail'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'RideDetail'>;
 
@@ -615,7 +614,7 @@ export function RideDetailScreen() {
     }
   }, [rideId, session?.id, ride]);
 
-  const load = useCallback(async (opts?: { quiet?: boolean }) => {
+  const load = useCallback(async (opts?: { quiet?: boolean }): Promise<Record<string, unknown> | null> => {
     const quiet = Boolean(opts?.quiet);
     if (!quiet) {
       setLoading(true);
@@ -631,7 +630,7 @@ export function RideDetailScreen() {
           setRide(null);
           setRideStops([]);
         }
-        return;
+        return null;
       }
       const nextRide = res.ride;
       const stops = res.ride_stops ?? [];
@@ -649,13 +648,15 @@ export function RideDetailScreen() {
         stopsSig,
       ].join('|');
       if (quiet && sig === rideVisualSigRef.current) {
-        return;
+        return nextRide as Record<string, unknown>;
       }
       rideVisualSigRef.current = sig;
       setRide(nextRide);
       setRideStops(stops);
+      return nextRide as Record<string, unknown>;
     } catch (e) {
       if (!quiet) setError(e instanceof Error ? e.message : 'Error al cargar');
+      return null;
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -813,7 +814,7 @@ export function RideDetailScreen() {
                   Alert.alert('No se pudo actualizar', friendlyStatusError(r.error, r.details));
                   return;
                 }
-                await load({ quiet: true });
+                const refreshed = await load({ quiet: true });
                 if (next === 'en_route') {
                   await startDriverTrackingInBackground(rideId);
                   Alert.alert('Listo', 'El viaje quedó en curso.');
@@ -836,7 +837,7 @@ export function RideDetailScreen() {
         },
       ]);
     },
-    [rideId, load, navigation]
+    [rideId, load, navigation, session?.id]
   );
 
   /**
@@ -1028,12 +1029,6 @@ export function RideDetailScreen() {
       : '';
   const stCfg = rideStatusConfig(status);
 
-  const canStart = isOwn && (status === 'published' || status === 'booked');
-  const canComplete = isOwn && status === 'en_route';
-  const canCancel = isOwn && (status === 'published' || status === 'booked' || status === 'draft');
-  const canEdit =
-    isOwn && status !== 'en_route' && status !== 'completed' && status !== 'cancelled';
-
   const awaitingStop = Boolean(ride.awaiting_stop_confirmation);
   const passengerEtaToPickupMin = (() => {
     if (isOwn || status !== 'en_route') return null;
@@ -1057,6 +1052,8 @@ export function RideDetailScreen() {
   const rawStopIdx = Number(ride.current_stop_index ?? 0);
   const rideLen = rideStops.length;
   const hasValidCurrentStop = rideLen > 0 && Number.isFinite(rawStopIdx) && rawStopIdx >= 0 && rawStopIdx < rideLen;
+  const passedLastStop = rideLen > 0 && Number.isFinite(rawStopIdx) && rawStopIdx >= rideLen;
+  const canCompleteByStops = rideLen === 0 ? true : passedLastStop;
   const currentNavStop = hasValidCurrentStop ? rideStops[rawStopIdx] : undefined;
   const currentStopOrder = currentNavStop != null ? Number(currentNavStop.stop_order) : 0;
   const stopIdxForActualBadge = hasValidCurrentStop ? rawStopIdx : -1;
@@ -1075,6 +1072,12 @@ export function RideDetailScreen() {
     });
     return hasPickupDecisions && hasDropoffDecisions;
   })();
+
+  const canStart = isOwn && (status === 'published' || status === 'booked');
+  const canComplete = isOwn && status === 'en_route' && canCompleteByStops && !awaitingStop;
+  const canCancel = isOwn && (status === 'published' || status === 'booked' || status === 'draft');
+  const canEdit =
+    isOwn && status !== 'en_route' && status !== 'completed' && status !== 'cancelled';
 
   const openExternalNavigation = async (lat: number, lng: number) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -1711,6 +1714,11 @@ export function RideDetailScreen() {
           {status === 'en_route' ? (
             <Text style={styles.hint}>
               Usá “Llegué” para confirmar subidas, bajadas y cobro en cada parada.
+            </Text>
+          ) : null}
+          {isOwn && status === 'en_route' && !canComplete ? (
+            <Text style={styles.hint}>
+              “Finalizar viaje” se habilita cuando confirmes la última parada o destino del recorrido.
             </Text>
           ) : null}
           {canEdit ? (
