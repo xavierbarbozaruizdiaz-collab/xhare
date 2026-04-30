@@ -28,7 +28,8 @@
     "build:android:release:passenger": "node scripts/run-android-release-flavor.cjs passenger",
     "build:android:release:driver": "node scripts/run-android-release-flavor.cjs driver",
     "build:android:cloud:apk:preview": "eas build --platform android --profile preview",
-    "build:android:cloud:apk:production": "eas build --platform android --profile production"
+    "build:android:cloud:aab:production": "eas build --platform android --profile production",
+    "build:android:cloud:apk:production": "npm run build:android:cloud:aab:production"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

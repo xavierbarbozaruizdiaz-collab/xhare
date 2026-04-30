@@ -79,6 +79,39 @@ export async function requireDriver(req?: Request): Promise<AuthResult> {
 }
 
 /**
+ * Exige que el usuario haya aceptado términos y privacidad.
+ * Usa `profiles` como fuente principal y `user_metadata` como respaldo de consistencia.
+ */
+export async function requireLegalAcceptance(req?: Request): Promise<AuthResult> {
+  const auth = await getAuth(req);
+  if (auth instanceof NextResponse) return auth;
+
+  const { data: profile } = await auth.supabase
+    .from('profiles')
+    .select('terms_accepted_at, privacy_accepted_at')
+    .eq('id', auth.user.id)
+    .maybeSingle();
+
+  const metadata = (auth.user.user_metadata ?? {}) as Record<string, unknown>;
+  const hasTerms =
+    profile?.terms_accepted_at != null || metadata.terms_accepted_at != null;
+  const hasPrivacy =
+    profile?.privacy_accepted_at != null || metadata.privacy_accepted_at != null;
+
+  if (!hasTerms || !hasPrivacy) {
+    return NextResponse.json(
+      {
+        code: 'LEGAL_ACCEPTANCE_REQUIRED',
+        error: 'Debes aceptar términos y privacidad para continuar.',
+      },
+      { status: 403 }
+    );
+  }
+
+  return auth;
+}
+
+/**
  * Exige que el usuario sea admin.
  * @returns { user, supabase } o NextResponse 401/403
  */

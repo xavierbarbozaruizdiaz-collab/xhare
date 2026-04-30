@@ -41,9 +41,9 @@ App móvil nativa (React Native vía Expo) para conductores y pasajeros. Backend
 - `npm run android` — abre en emulador/dispositivo Android
 - `npm run android:run` — compila y corre en dispositivo/emulador (requiere `npx expo prebuild --platform android` antes)
 - `npm run ios` — abre en simulador iOS (solo macOS)
-- `npm run build:android:release` — **APK release local (flujo oficial)**: clean + `expo run:android --variant release`
+- `npm run build:android:release` — **release local firmado (flujo oficial)**: clean + `expo run:android --variant release`
 - `npm run build:android:cloud:apk:preview` — Cloud build (bajo pedido): EAS preview APK
-- `npm run build:android:cloud:apk:production` — Cloud build (bajo pedido): EAS production APK
+- `npm run build:android:cloud:aab:production` — Cloud build (bajo pedido): EAS production AAB (Play Store)
 
 ## Si vuelve pantalla en blanco (Android dev)
 

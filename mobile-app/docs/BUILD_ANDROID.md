@@ -26,6 +26,17 @@ EXPO_PUBLIC_API_BASE_URL=https://tu-dominio.vercel.app
 - Reemplazá por la URL base de tu backend Next.js (donde está `POST /api/route/segment-stats`). Sin barra final.
 - Sin esta URL: en viajes con paradas no se calcula el precio por tramo y se usa la tarifa mínima; tampoco funcionan push, valoraciones, paradas extra, llegada a parada, etc.
 
+Para compilar **release local firmado**, además definí:
+
+```
+ANDROID_RELEASE_STORE_FILE=C:\ruta\tu-release.keystore
+ANDROID_RELEASE_STORE_PASSWORD=******
+ANDROID_RELEASE_KEY_ALIAS=tu_alias
+ANDROID_RELEASE_KEY_PASSWORD=******
+```
+
+- El build `release` falla si falta alguna de estas 4 variables (hardening para evitar firmas debug en producción).
+
 Sin `.env` la app arranca pero login con Supabase no funcionará hasta configurarlas.
 
 ---
@@ -75,9 +86,9 @@ npx expo run:android
 
 ---
 
-## 4. Generar APK RELEASE local (FORMA OFICIAL)
+## 4. Generar RELEASE local firmado (FORMA OFICIAL)
 
-Esta es la **única forma oficial** de generar una APK release local en este proyecto.
+Esta es la **única forma oficial** de generar un build release local firmado en este proyecto.
 
 ```bash
 cd C:\Users\PCera\transporte\mobile-app
@@ -92,7 +103,7 @@ Esto hace:
 - (1) Limpia el build Android (`gradlew clean`)
 - (2) Compila e instala el **variant `release`** en el dispositivo/emulador
 
-### Dónde queda el APK
+### Dónde queda el output local
 
 El archivo queda en:
 
@@ -105,7 +116,11 @@ El archivo queda en:
 Solo si se pide explícitamente usar EAS Build:
 
 - `npm run build:android:cloud:apk:preview`
-- `npm run build:android:cloud:apk:production`
+- `npm run build:android:cloud:aab:production` (**Play Store**)
+
+Notas:
+- `preview` mantiene `APK` para pruebas internas.
+- `production` genera `AAB` para publicación en Play Store.
 
 ---
 
@@ -123,8 +138,8 @@ Solo si se pide explícitamente usar EAS Build:
 |----------|---------|
 | Levantar en desarrollo (Expo Go) | `cd mobile-app` → `npx expo start` → en terminal `a` o escanear QR |
 | Levantar en dispositivo/emulador nativo | `npx expo prebuild --platform android` y luego `npx expo run:android` |
-| **APK release local (OFICIAL)** | `npm run build:android:release` |
-| Cloud build (bajo pedido) | `npm run build:android:cloud:apk:preview` / `npm run build:android:cloud:apk:production` |
+| Release local firmado (OFICIAL) | `npm run build:android:release` |
+| Cloud build (bajo pedido) | `npm run build:android:cloud:apk:preview` / `npm run build:android:cloud:aab:production` |
 
 ---
 

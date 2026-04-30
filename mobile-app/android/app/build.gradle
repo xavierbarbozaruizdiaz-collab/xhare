@@ -124,6 +124,13 @@ def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBu
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+def getSigningValue = { String envKey, String propKey = envKey ->
+    def envVal = (System.getenv(envKey) ?: '').trim()
+    if (envVal) return envVal
+    def propVal = (findProperty(propKey) ?: '').toString().trim()
+    return propVal
+}
+
 android {
     ndkVersion rootProject.ext.ndkVersion
 
@@ -188,15 +195,36 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            def releaseStoreFile = getSigningValue('ANDROID_RELEASE_STORE_FILE')
+            def releaseStorePassword = getSigningValue('ANDROID_RELEASE_STORE_PASSWORD')
+            def releaseKeyAlias = getSigningValue('ANDROID_RELEASE_KEY_ALIAS')
+            def releaseKeyPassword = getSigningValue('ANDROID_RELEASE_KEY_PASSWORD')
+
+            if (releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            def releaseStoreFile = getSigningValue('ANDROID_RELEASE_STORE_FILE')
+            def releaseStorePassword = getSigningValue('ANDROID_RELEASE_STORE_PASSWORD')
+            def releaseKeyAlias = getSigningValue('ANDROID_RELEASE_KEY_ALIAS')
+            def releaseKeyPassword = getSigningValue('ANDROID_RELEASE_KEY_PASSWORD')
+            if (!releaseStoreFile || !releaseStorePassword || !releaseKeyAlias || !releaseKeyPassword) {
+                throw new GradleException(
+                    'Faltan variables de firma release. Definí ANDROID_RELEASE_STORE_FILE, ' +
+                    'ANDROID_RELEASE_STORE_PASSWORD, ANDROID_RELEASE_KEY_ALIAS y ANDROID_RELEASE_KEY_PASSWORD.'
+                )
+            }
+            signingConfig signingConfigs.release
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getAuth } from '@/lib/api-auth';
+import { requireLegalAcceptance } from '@/lib/api-auth';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import { tripRequestSuperHexPair } from '@/lib/trip-request-h3';
 import { classificationLogFromRow } from '@/lib/trip-request-classification';
@@ -127,7 +127,7 @@ const insertBodySchema = z
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await getAuth(request);
+    const auth = await requireLegalAcceptance(request);
     if (auth instanceof NextResponse) return auth;
     const clientId = getClientId(request, auth.user.id);
     if (!checkRateLimit(`trip-requests:${clientId}`, TRIP_REQUEST_WINDOW_MS, TRIP_REQUEST_MAX_PER_WINDOW)) {
