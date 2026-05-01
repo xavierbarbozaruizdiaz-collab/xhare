@@ -3,18 +3,106 @@
  * or in EAS / local env. They are exposed to the app via extra.
  */
 const path = require('path');
-try {
+const fs = require('fs');
+
+/**
+ * Durante `eas build`, EAS mergea `eas.json` → `process.env` antes de evaluar este archivo, pero
+ * `dotenv` con `.env.local` (override) podía pisar APP_FLAVOR con `driver` de desarrollo y generar
+ * siempre el binario conductor aunque el perfil sea `production_passenger`.
+ */
+function easBuildContextLikely() {
+  const b = String(process.env.EAS_BUILD ?? '').trim().toLowerCase();
+  if (b === 'true' || b === '1') return true;
+  if (String(process.env.EAS_BUILD_PROFILE ?? '').trim()) return true;
+  const argv = process.argv;
+  for (let k = 0; k < argv.length; k++) {
+    const a = String(argv[k] ?? '');
+    if (a === '--profile' || a === '-e' || a.startsWith('--profile=')) return true;
+  }
+  return false;
+}
+
+function loadProjectEnv() {
   require('dotenv').config({ path: path.resolve(__dirname, '.env') });
-  // Overrides para tu máquina (gitignored); mismo patrón que Next.js.
-  require('dotenv').config({
-    path: path.resolve(__dirname, '.env.local'),
-    override: true,
-  });
+  const localPath = path.resolve(__dirname, '.env.local');
+  if (!fs.existsSync(localPath)) return;
+  if (easBuildContextLikely()) {
+    const dotenv = require('dotenv');
+    const parsed = dotenv.parse(fs.readFileSync(localPath, 'utf8'));
+    for (const key of Object.keys(parsed)) {
+      if (key === 'APP_FLAVOR' || key === 'EXPO_PUBLIC_APP_FLAVOR') continue;
+      const v = parsed[key];
+      if (v !== undefined) process.env[key] = String(v);
+    }
+  } else {
+    require('dotenv').config({ path: localPath, override: true });
+  }
+}
+
+try {
+  loadProjectEnv();
 } catch (_) {
   // .env optional; use env vars or EAS secrets
 }
 
-const flavor = process.env.APP_FLAVOR || process.env.EXPO_PUBLIC_APP_FLAVOR || 'passenger';
+/** Perfil activo de EAS (`eas build -e …` / `--profile …` / `EAS_BUILD_PROFILE`). */
+function resolveEasBuildProfileName() {
+  const fromEnv = String(process.env.EAS_BUILD_PROFILE ?? '').trim();
+  if (fromEnv) return fromEnv;
+  const argv = process.argv;
+  for (let k = 0; k < argv.length; k++) {
+    const a = String(argv[k] ?? '');
+    if (a.startsWith('--profile=')) return a.slice('--profile='.length).trim();
+    if (a === '--profile' || a === '-e') {
+      const next = String(argv[k + 1] ?? '').trim();
+      if (next && !next.startsWith('-')) return next;
+    }
+  }
+  return '';
+}
+
+/**
+ * Alinea APP_FLAVOR / EXPO_PUBLIC_APP_FLAVOR con `eas.json` para el perfil activo (refuerzo tras `loadProjectEnv`).
+ */
+function applyFlavorEnvFromEasJsonProfile(profileName) {
+  const p = profileName.trim();
+  if (!p) return;
+  try {
+    const easPath = path.join(__dirname, 'eas.json');
+    if (!fs.existsSync(easPath)) return;
+    const eas = JSON.parse(fs.readFileSync(easPath, 'utf8'));
+    const env = eas?.build?.[p]?.env;
+    if (!env || typeof env !== 'object') return;
+    if (env.APP_FLAVOR != null) process.env.APP_FLAVOR = String(env.APP_FLAVOR);
+    if (env.EXPO_PUBLIC_APP_FLAVOR != null) process.env.EXPO_PUBLIC_APP_FLAVOR = String(env.EXPO_PUBLIC_APP_FLAVOR);
+  } catch (_) {
+    // ignore
+  }
+}
+
+const activeEasProfile = resolveEasBuildProfileName();
+applyFlavorEnvFromEasJsonProfile(activeEasProfile);
+
+/**
+ * Flavor de app (pasajero vs conductor).
+ * En EAS, las variables del entorno "production" pueden pisar las del perfil en `eas.json`;
+ * `EAS_BUILD_PROFILE` / `--profile` + eas.json es la fuente más fiable.
+ */
+function resolveAppFlavor() {
+  const profile = activeEasProfile || String(process.env.EAS_BUILD_PROFILE ?? '').trim();
+  if (profile === 'production_driver' || profile === 'preview_driver') return 'driver';
+  if (profile === 'production_passenger' || profile === 'preview_passenger') return 'passenger';
+  // `production` / `preview` en eas.json llevan APP_FLAVOR pasajero; sin esto, un secret global
+  // EXPO_PUBLIC_APP_FLAVOR=driver en Expo podía hacer que todo pareciera "solo conductor".
+  if (profile === 'production' || profile === 'preview') return 'passenger';
+  const fromEnv =
+    String(process.env.APP_FLAVOR ?? '').trim() ||
+    String(process.env.EXPO_PUBLIC_APP_FLAVOR ?? '').trim();
+  if (fromEnv === 'driver' || fromEnv === 'passenger') return fromEnv;
+  return 'passenger';
+}
+
+const flavor = resolveAppFlavor();
 const isDriver = flavor === 'driver';
 
 module.exports = {

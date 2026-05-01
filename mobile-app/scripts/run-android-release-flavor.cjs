@@ -1,7 +1,9 @@
 /**
- * Release APK local: carga mobile-app/.env (p. ej. GOOGLE_MAPS_ANDROID_API_KEY) y ejecuta Gradle
- * con APP_FLAVOR (gradlew no lee .env). Solo `assembleRelease`: evita que `expo run:android` cuelgue
- * en Metro / instalación tras un build release ya exitoso.
+ * Release APK local: carga mobile-app/.env y .env.local (p. ej. GOOGLE_MAPS_ANDROID_API_KEY,
+ * opcionalmente ANDROID_RELEASE_* si tenés keystore local) y ejecuta Gradle con APP_FLAVOR (gradlew no lee .env).
+ * Sin keystore local, Gradle firma release con debug (smoke); APK firmado para tienda → EAS Build.
+ * Solo `assembleRelease`:
+ * evita que `expo run:android` cuelgue en Metro / instalación tras un build release ya exitoso.
  *
  * Uso:
  *   node scripts/run-android-release-flavor.cjs passenger
@@ -18,6 +20,15 @@ const apkRelease = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'rele
 const distDir = path.join(root, 'dist-apks');
 
 require('dotenv').config({ path: path.join(root, '.env') });
+require('dotenv').config({ path: path.join(root, '.env.local'), override: true });
+
+/** Si hay ANDROID_RELEASE_* en el entorno, normalizar ruta del keystore relativa a mobile-app/. */
+function normalizeReleaseStoreFileEnv() {
+  const file = (process.env.ANDROID_RELEASE_STORE_FILE || '').trim();
+  if (!file) return;
+  const abs = path.isAbsolute(file) ? file : path.join(root, file);
+  process.env.ANDROID_RELEASE_STORE_FILE = abs;
+}
 
 function needMapsKey() {
   const k = (process.env.GOOGLE_MAPS_ANDROID_API_KEY || '').trim();
@@ -79,6 +90,7 @@ function buildOne(flavor, copySuffix) {
 
 const mode = (process.argv[2] || 'both').toLowerCase();
 needMapsKey();
+normalizeReleaseStoreFileEnv();
 
 if (mode === 'both') {
   if (!buildOne('passenger', 'passenger')) process.exit(1);

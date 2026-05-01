@@ -27,8 +27,10 @@
     "build:android:release": "node scripts/run-android-release-flavor.cjs both",
     "build:android:release:passenger": "node scripts/run-android-release-flavor.cjs passenger",
     "build:android:release:driver": "node scripts/run-android-release-flavor.cjs driver",
-    "build:android:cloud:apk:preview": "eas build --platform android --profile preview",
-    "build:android:cloud:aab:production": "eas build --platform android --profile production",
+    "build:android:cloud:apk:preview": "npx eas-cli@18.9.1 build --platform android --profile preview --non-interactive",
+    "build:android:cloud:aab:production": "npx eas-cli@18.9.1 build --platform android --profile production --non-interactive",
+    "build:android:cloud:aab:production:passenger": "npx eas-cli@18.9.1 build --platform android --profile production_passenger --non-interactive",
+    "build:android:cloud:aab:production:driver": "npx eas-cli@18.9.1 build --platform android --profile production_driver --non-interactive",
     "build:android:cloud:apk:production": "npm run build:android:cloud:aab:production"
   },
   "dependencies": {

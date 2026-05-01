@@ -26,16 +26,20 @@ EXPO_PUBLIC_API_BASE_URL=https://tu-dominio.vercel.app
 - Reemplazá por la URL base de tu backend Next.js (donde está `POST /api/route/segment-stats`). Sin barra final.
 - Sin esta URL: en viajes con paradas no se calcula el precio por tramo y se usa la tarifa mínima; tampoco funcionan push, valoraciones, paradas extra, llegada a parada, etc.
 
-Para compilar **release local firmado**, además definí:
+**APK firmado para distribución (Play / testers “de verdad”)**: usá **EAS Build** (`npm run build:android:cloud:apk:preview` o `…:production` y perfiles en `eas.json`). Ahí van los secretos de firma y Maps; no hace falta keystore en la PC.
+
+**Release local** (`npm run build:android:release:*`): sin las cuatro variables de abajo, Gradle firma el `release` con **keystore debug** (solo smoke / CI interno; **no** es el flujo de tienda).
+
+Opcional, si querés APK `release` firmado con tu propio keystore en la máquina (el script carga `.env` y `.env.local`):
 
 ```
-ANDROID_RELEASE_STORE_FILE=C:\ruta\tu-release.keystore
+ANDROID_RELEASE_STORE_FILE=release.keystore
 ANDROID_RELEASE_STORE_PASSWORD=******
-ANDROID_RELEASE_KEY_ALIAS=tu_alias
+ANDROID_RELEASE_KEY_ALIAS=xhare_release
 ANDROID_RELEASE_KEY_PASSWORD=******
 ```
 
-- El build `release` falla si falta alguna de estas 4 variables (hardening para evitar firmas debug en producción).
+- `ANDROID_RELEASE_STORE_FILE`: ruta **absoluta** o **relativa a `mobile-app/`** (no a `android/`).
 
 Sin `.env` la app arranca pero login con Supabase no funcionará hasta configurarlas.
 
@@ -113,6 +117,8 @@ El archivo queda en:
 
 ## 5. Cloud build (bajo pedido)
 
+**Importante (EAS):** no versionar una carpeta `android/` **a medias** en git (solo unos pocos archivos). Eso hace que el worker detecte `android/`, ignore `android.package` de `app.config.js` y ejecute Gradle sobre un árbol incompleto → fallos en `Run gradlew`. La carpeta nativa completa debe generarse en el worker con **prebuild** (o estar el `android/` entero versionado, no recomendado aquí). En este monorepo, `mobile-app/android/` queda en `.gitignore`; no subas fragmentos bajo `mobile-app/android/`.
+
 Solo si se pide explícitamente usar EAS Build:
 
 - `npm run build:android:cloud:apk:preview`
@@ -120,7 +126,9 @@ Solo si se pide explícitamente usar EAS Build:
 
 Notas:
 - `preview` mantiene `APK` para pruebas internas.
-- `production` genera `AAB` para publicación en Play Store.
+- `production` genera `AAB` para publicación en Play Store (sabor **pasajero** `com.xhare.app`).
+- Conductor (`com.xhare.driver`): `npm run build:android:cloud:aab:production:driver` o `eas build --profile production_driver` (no uses variables globales `*_APP_FLAVOR=driver` para el perfil pasajero).
+- Si en **`.env.local`** tenés `EXPO_PUBLIC_APP_FLAVOR=driver` para desarrollo, no pasa nada: en contexto `eas build` / worker EAS, `app.config.js` **no aplica** esas dos claves desde `.env.local` para que no reemplace el perfil del build.
 
 ---
 

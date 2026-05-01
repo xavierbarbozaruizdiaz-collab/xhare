@@ -41,6 +41,18 @@ yarn-error.*
 # generated native folders (EAS runs prebuild when needed)
 /ios
 /android
+ios/
+android/
+/mobile-app/ios
+/mobile-app/android
+mobile-app/ios/
+mobile-app/android/
+
+# guardrail: never upload local Gradle/autolinking caches (can carry absolute Windows paths)
+**/android/build/
+**/android/.gradle/
+**/android/app/build/
+**/android/app/.cxx/
 
 # --- extra exclusions for EAS upload (smaller archive, fewer ECONNRESET) ---
 
