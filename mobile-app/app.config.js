@@ -112,7 +112,8 @@ module.exports = {
     scheme: 'xhare',
     version: '1.0.0',
     orientation: 'portrait',
-    icon: './assets/icon.png',
+    // Debe ser cuadrado (Expo doctor); icon.png era rectangular.
+    icon: './assets/android-icon-foreground.png',
     userInterfaceStyle: 'light',
     splash: {
       image: './assets/splash-icon.png',
@@ -153,8 +154,7 @@ module.exports = {
         'FOREGROUND_SERVICE',
         'FOREGROUND_SERVICE_LOCATION',
       ],
-      // Evita que herramientas intenten abrir placeholders literales (${mainActivityClass}).
-      mainActivity: '.MainActivity',
+      predictiveBackGestureEnabled: false,
       // Mapa en Reservar (react-native-maps): en Android hace falta API key de Google Maps
       // Crear en Google Cloud Console, activar "Maps SDK for Android", y poner la key en .env o EAS secrets.
       ...(process.env.GOOGLE_MAPS_ANDROID_API_KEY && {
