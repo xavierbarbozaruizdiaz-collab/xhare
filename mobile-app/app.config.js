@@ -6,37 +6,30 @@ const path = require('path');
 const fs = require('fs');
 
 /**
- * Durante `eas build`, EAS mergea `eas.json` → `process.env` antes de evaluar este archivo, pero
- * `dotenv` con `.env.local` (override) podía pisar APP_FLAVOR con `driver` de desarrollo y generar
- * siempre el binario conductor aunque el perfil sea `production_passenger`.
+ * `.env.local` no aplica APP_FLAVOR / EXPO_PUBLIC_APP_FLAVOR`: en EAS evitaba pisar el perfil;
+ * en local, `override: true` pisaba `cross-env` de `android:passenger:*` / `android:driver:*` y
+ * ambos APK compartían el mismo `extra.APP_FLAVOR`.
  */
-function easBuildContextLikely() {
-  const b = String(process.env.EAS_BUILD ?? '').trim().toLowerCase();
-  if (b === 'true' || b === '1') return true;
-  if (String(process.env.EAS_BUILD_PROFILE ?? '').trim()) return true;
-  const argv = process.argv;
-  for (let k = 0; k < argv.length; k++) {
-    const a = String(argv[k] ?? '');
-    if (a === '--profile' || a === '-e' || a.startsWith('--profile=')) return true;
+
+function applyEnvLocalWithoutFlavorOverrides(localPath) {
+  const dotenv = require('dotenv');
+  const parsed = dotenv.parse(fs.readFileSync(localPath, 'utf8'));
+  for (const key of Object.keys(parsed)) {
+    // Nunca aplicar sabor desde `.env.local`: `override: true` pisaba `APP_FLAVOR` que ya venía
+    // de `cross-env` en `android:passenger:*` / `android:driver:*`, y ambos APK quedaban con el
+    // mismo `extra.APP_FLAVOR` (p. ej. todo “conductor”). El sabor en local sale de `.env`,
+    // variables de entorno del proceso, o los scripts npm / EAS.
+    if (key === 'APP_FLAVOR' || key === 'EXPO_PUBLIC_APP_FLAVOR') continue;
+    const v = parsed[key];
+    if (v !== undefined) process.env[key] = String(v);
   }
-  return false;
 }
 
 function loadProjectEnv() {
   require('dotenv').config({ path: path.resolve(__dirname, '.env') });
   const localPath = path.resolve(__dirname, '.env.local');
   if (!fs.existsSync(localPath)) return;
-  if (easBuildContextLikely()) {
-    const dotenv = require('dotenv');
-    const parsed = dotenv.parse(fs.readFileSync(localPath, 'utf8'));
-    for (const key of Object.keys(parsed)) {
-      if (key === 'APP_FLAVOR' || key === 'EXPO_PUBLIC_APP_FLAVOR') continue;
-      const v = parsed[key];
-      if (v !== undefined) process.env[key] = String(v);
-    }
-  } else {
-    require('dotenv').config({ path: localPath, override: true });
-  }
+  applyEnvLocalWithoutFlavorOverrides(localPath);
 }
 
 try {
