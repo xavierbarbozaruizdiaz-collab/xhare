@@ -1434,22 +1434,11 @@ export function HomeScreen() {
                   })
                 }
                 accessibilityRole="button"
-                accessibilityLabel="Publicar viaje"
+                accessibilityLabel="Publicá tu primera ruta"
               >
                 <Ionicons name="car-sport-outline" size={20} color="#fff" style={styles.driverPrimaryIcon} />
-                <Text style={styles.driverPrimaryBtnText}>PUBLICAR VIAJE</Text>
+                <Text style={styles.driverPrimaryBtnText}>PUBLICA TU PRIMERA RUTA</Text>
               </TouchableOpacity>
-
-              <Text style={styles.driverTemplateHint}>
-                Al prender: se corrige la fecha si ya pasó (siguiente día o próximo día marcado si es diario) y se
-                publica el viaje con esa plantilla. Al apagar: se intenta cancelar el viaje en la plataforma; si había
-                pasajeros agrupados, puede volver a “De sistema” para reasignación.
-              </Text>
-              <Text style={styles.driverTemplateHintSecond}>
-                {driverTemplateRows.length === 0
-                  ? 'Todavía no guardaste plantillas en este equipo. Completá origen, destino y nombre del viaje en la publicación; al confirmar queda guardado para reutilizar la próxima vez.'
-                  : 'Tocá una fila para editar la plantilla. El interruptor prende/apaga y publica o cancela según el texto de arriba.'}
-              </Text>
 
               {driverTemplateRows.length > 0 ? (
                 <ScrollView
@@ -1717,8 +1706,6 @@ const styles = StyleSheet.create({
   favoriteRowTime: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   favoriteRowCost: { fontSize: 12, color: '#166534', marginTop: 2, fontWeight: '700' },
   favoriteRowCostMuted: { fontSize: 12, color: '#6b7280', marginTop: 2 },
-  driverTemplateHint: { fontSize: 12, color: '#4b5563', lineHeight: 18, marginBottom: 6 },
-  driverTemplateHintSecond: { fontSize: 12, color: '#4b5563', lineHeight: 18, marginBottom: 12 },
   driverTemplateScroll: { maxHeight: 360, marginBottom: 4 },
   modalRoot: { flex: 1, justifyContent: 'flex-end' },
   modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
@@ -1833,11 +1820,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#14532d',
     paddingVertical: 14,
+    paddingHorizontal: 10,
     borderRadius: 10,
     marginBottom: 12,
   },
   driverPrimaryIcon: { marginRight: 8 },
-  driverPrimaryBtnText: { color: '#fff', fontWeight: '800', fontSize: 13, letterSpacing: 0.3 },
+  driverPrimaryBtnText: { color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 0.2, textAlign: 'center' },
   activeRideShortcutBtn: {
     marginBottom: 12,
     backgroundColor: '#1d4ed8',
