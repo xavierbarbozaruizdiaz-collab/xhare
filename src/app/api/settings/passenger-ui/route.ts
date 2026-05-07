@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const DEFAULT = {
   shortcutsVisible: true,
   favoritesTitle: 'Hola. Configura tus favoritos para viajes rapidos.',
@@ -36,13 +39,28 @@ export async function GET() {
       service.from('settings').select('value').eq('key', 'passenger_pricing_polyline_visible').maybeSingle(),
     ]);
 
-    return NextResponse.json({
-      shortcutsVisible: asBoolean(shortcutsRes.data?.value, DEFAULT.shortcutsVisible),
-      favoritesTitle: asText(titleRes.data?.value, DEFAULT.favoritesTitle),
-      favoritesSubtitle: asText(subtitleRes.data?.value, DEFAULT.favoritesSubtitle),
-      pricingPolylineVisible: asBoolean(pricingPolylineRes.data?.value, DEFAULT.pricingPolylineVisible),
-    });
+    return NextResponse.json(
+      {
+        shortcutsVisible: asBoolean(shortcutsRes.data?.value, DEFAULT.shortcutsVisible),
+        favoritesTitle: asText(titleRes.data?.value, DEFAULT.favoritesTitle),
+        favoritesSubtitle: asText(subtitleRes.data?.value, DEFAULT.favoritesSubtitle),
+        pricingPolylineVisible: asBoolean(pricingPolylineRes.data?.value, DEFAULT.pricingPolylineVisible),
+      },
+      {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+          Pragma: 'no-cache',
+          Expires: '0',
+        },
+      }
+    );
   } catch {
-    return NextResponse.json(DEFAULT);
+    return NextResponse.json(DEFAULT, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        Pragma: 'no-cache',
+        Expires: '0',
+      },
+    });
   }
 }

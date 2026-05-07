@@ -14,7 +14,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
-import { CommonActions, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { CommonActions, useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
@@ -250,16 +250,18 @@ export function BookRideScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    void fetchPassengerPricingPolylineVisible().then((v) => {
-      if (cancelled) return;
-      setPricingRouteVisible(v);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void fetchPassengerPricingPolylineVisible().then((v) => {
+        if (cancelled) return;
+        setPricingRouteVisible(v);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [])
+  );
 
   const load = useCallback(async () => {
     if (!session?.id) {

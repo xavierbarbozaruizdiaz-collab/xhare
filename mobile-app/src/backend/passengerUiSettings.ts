@@ -62,9 +62,9 @@ type PassengerUiSettingsPayload = {
 async function fetchPassengerUiSettingsFromApi(): Promise<PassengerUiSettingsPayload | null> {
   const base = env.apiBaseUrl?.trim();
   if (!base) return null;
-  const url = `${base.replace(/\/$/, '')}/api/settings/passenger-ui`;
+  const url = `${base.replace(/\/$/, '')}/api/settings/passenger-ui?t=${Date.now()}`;
   try {
-    const res = await fetch(url, { method: 'GET' });
+    const res = await fetch(url, { method: 'GET', cache: 'no-store' });
     if (!res.ok) return null;
     const data = (await res.json()) as PassengerUiSettingsPayload;
     return data && typeof data === 'object' ? data : null;
