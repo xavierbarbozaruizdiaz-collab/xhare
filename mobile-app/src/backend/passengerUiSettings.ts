@@ -2,6 +2,7 @@
  * Flags de UI para pasajero leídos desde `settings` en Supabase (RLS: solo claves permitidas).
  */
 import { supabase, isEnvConfigured } from './supabase';
+import { env } from '../core/env';
 
 export const PASSENGER_HOME_SHORTCUTS_VISIBLE_KEY = 'passenger_home_shortcuts_visible';
 export const PASSENGER_HOME_FAVORITES_TITLE_KEY = 'passenger_home_favorites_title';
@@ -30,6 +31,8 @@ function parseBooleanSetting(value: unknown, fallback: boolean): boolean {
 
 /** Si falla la red o no hay fila, se asume visible (comportamiento anterior). */
 export async function fetchPassengerHomeShortcutsVisible(): Promise<boolean> {
+  const api = await fetchPassengerUiSettingsFromApi();
+  if (api && typeof api.shortcutsVisible === 'boolean') return api.shortcutsVisible;
   if (!isEnvConfigured()) return true;
   const { data, error } = await supabase
     .from('settings')
@@ -49,7 +52,41 @@ function parseTextValue(value: unknown, fallback: string): string {
   return fallback;
 }
 
+type PassengerUiSettingsPayload = {
+  shortcutsVisible?: boolean;
+  favoritesTitle?: string;
+  favoritesSubtitle?: string;
+  pricingPolylineVisible?: boolean;
+};
+
+async function fetchPassengerUiSettingsFromApi(): Promise<PassengerUiSettingsPayload | null> {
+  const base = env.apiBaseUrl?.trim();
+  if (!base) return null;
+  const url = `${base.replace(/\/$/, '')}/api/settings/passenger-ui`;
+  try {
+    const res = await fetch(url, { method: 'GET' });
+    if (!res.ok) return null;
+    const data = (await res.json()) as PassengerUiSettingsPayload;
+    return data && typeof data === 'object' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchPassengerHomeFavoritesCopy(): Promise<{ title: string; subtitle: string }> {
+  const api = await fetchPassengerUiSettingsFromApi();
+  if (api && (typeof api.favoritesTitle === 'string' || typeof api.favoritesSubtitle === 'string')) {
+    return {
+      title:
+        typeof api.favoritesTitle === 'string' && api.favoritesTitle.trim()
+          ? api.favoritesTitle.trim()
+          : DEFAULT_PASSENGER_HOME_FAVORITES_TITLE,
+      subtitle:
+        typeof api.favoritesSubtitle === 'string' && api.favoritesSubtitle.trim()
+          ? api.favoritesSubtitle.trim()
+          : DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE,
+    };
+  }
   if (!isEnvConfigured()) {
     return {
       title: DEFAULT_PASSENGER_HOME_FAVORITES_TITLE,
@@ -77,6 +114,8 @@ export async function fetchPassengerHomeFavoritesCopy(): Promise<{ title: string
  * Default: oculta para no afectar UX.
  */
 export async function fetchPassengerPricingPolylineVisible(): Promise<boolean> {
+  const api = await fetchPassengerUiSettingsFromApi();
+  if (api && typeof api.pricingPolylineVisible === 'boolean') return api.pricingPolylineVisible;
   if (!isEnvConfigured()) return false;
   const { data, error } = await supabase
     .from('settings')

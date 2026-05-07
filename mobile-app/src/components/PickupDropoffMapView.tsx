@@ -423,9 +423,10 @@ export function PickupDropoffMapView({
       {showPricingRoute && pricingPolylineCoords.length >= 2 && (
         <Polyline
           coordinates={pricingPolylineCoords}
-          strokeColor="#f59e0b"
-          strokeWidth={4}
-          lineDashPattern={[8, 6]}
+          strokeColor="#ff8a00"
+          strokeWidth={8}
+          lineDashPattern={[12, 6]}
+          zIndex={99}
         />
       )}
     </>

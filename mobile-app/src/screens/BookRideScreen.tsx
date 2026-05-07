@@ -456,7 +456,7 @@ export function BookRideScreen() {
       const pts =
         Array.isArray(res.polyline) && res.polyline.length >= 2
           ? res.polyline.map((p) => ({ lat: p.lat, lng: p.lng }))
-          : [];
+          : [{ lat: pickup.lat, lng: pickup.lng }, ...pricingWaypoints, { lat: dropoff.lat, lng: dropoff.lng }];
       setPricingRoutePolyline(pts);
     });
     return () => {
