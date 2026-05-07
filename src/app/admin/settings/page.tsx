@@ -16,6 +16,7 @@ const KEY = 'driver_pending_instructions';
 const SHORTCUTS_KEY = 'passenger_home_shortcuts_visible';
 const FAVORITES_TITLE_KEY = 'passenger_home_favorites_title';
 const FAVORITES_SUBTITLE_KEY = 'passenger_home_favorites_subtitle';
+const PASSENGER_PRICING_POLYLINE_VISIBLE_KEY = 'passenger_pricing_polyline_visible';
 
 function parseShortcutsVisible(raw: unknown): boolean {
   if (typeof raw === 'boolean') return raw;
@@ -33,6 +34,10 @@ export default function AdminSettingsPage() {
   const [shortcutsLoading, setShortcutsLoading] = useState(true);
   const [shortcutsSaving, setShortcutsSaving] = useState(false);
   const [shortcutsDone, setShortcutsDone] = useState(false);
+  const [pricingPolylineVisible, setPricingPolylineVisible] = useState(false);
+  const [pricingPolylineLoading, setPricingPolylineLoading] = useState(true);
+  const [pricingPolylineSaving, setPricingPolylineSaving] = useState(false);
+  const [pricingPolylineDone, setPricingPolylineDone] = useState(false);
   const [favoritesTitle, setFavoritesTitle] = useState('');
   const [favoritesSubtitle, setFavoritesSubtitle] = useState('');
   const [favoritesCopyLoading, setFavoritesCopyLoading] = useState(true);
@@ -161,6 +166,17 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     (async () => {
+      const { data } = await supabase
+        .from('settings')
+        .select('value')
+        .eq('key', PASSENGER_PRICING_POLYLINE_VISIBLE_KEY)
+        .maybeSingle();
+      setPricingPolylineVisible(Boolean(data?.value));
+    })().finally(() => setPricingPolylineLoading(false));
+  }, []);
+
+  useEffect(() => {
+    (async () => {
       const [titleRes, subtitleRes] = await Promise.all([
         supabase.from('settings').select('value').eq('key', FAVORITES_TITLE_KEY).maybeSingle(),
         supabase.from('settings').select('value').eq('key', FAVORITES_SUBTITLE_KEY).maybeSingle(),
@@ -281,6 +297,31 @@ export default function AdminSettingsPage() {
     }
     setFavoritesCopyDone(true);
     window.setTimeout(() => setFavoritesCopyDone(false), 2500);
+  }
+
+  async function handlePassengerPricingPolylineToggle(next: boolean) {
+    const prev = pricingPolylineVisible;
+    setPricingPolylineVisible(next);
+    setPricingPolylineSaving(true);
+    setPricingPolylineDone(false);
+    const nowIso = new Date().toISOString();
+    const row = { key: PASSENGER_PRICING_POLYLINE_VISIBLE_KEY, value: next, updated_at: nowIso };
+    let { error } = await supabase.from('settings').upsert(row, { onConflict: 'key' });
+    if (error) {
+      const updateRes = await supabase
+        .from('settings')
+        .update({ value: next, updated_at: nowIso })
+        .eq('key', PASSENGER_PRICING_POLYLINE_VISIBLE_KEY);
+      error = updateRes.error;
+    }
+    setPricingPolylineSaving(false);
+    if (error) {
+      setPricingPolylineVisible(prev);
+      alert(error.message);
+      return;
+    }
+    setPricingPolylineDone(true);
+    window.setTimeout(() => setPricingPolylineDone(false), 2500);
   }
 
   async function handleLegalSave(e: React.FormEvent) {
@@ -567,6 +608,51 @@ export default function AdminSettingsPage() {
             </div>
             {shortcutsSaving && <span className="text-sm text-gray-500">Guardando…</span>}
             {shortcutsDone && !shortcutsSaving && <span className="text-sm text-green-600">Guardado en Supabase.</span>}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-xl mt-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">App pasajero — Auditoría de pricing</h2>
+        <p className="text-sm text-gray-600 mb-5">
+          Muestra/oculta en el mapa de reserva una línea naranja punteada con la ruta usada para calcular el costo
+          (solo puntos del pasajero). No cambia la UI general ni el cálculo en sí; solo auditoría visual.
+        </p>
+        {pricingPolylineLoading ? (
+          <div className="flex justify-center py-6">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600" />
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={pricingPolylineVisible}
+              disabled={pricingPolylineSaving}
+              onClick={() => void handlePassengerPricingPolylineToggle(!pricingPolylineVisible)}
+              className={`relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 ${
+                pricingPolylineVisible ? 'bg-green-600' : 'bg-gray-300'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow ring-0 transition ${
+                  pricingPolylineVisible ? 'translate-x-6' : 'translate-x-0.5'
+                }`}
+                style={{ marginTop: '1px' }}
+              />
+            </button>
+            <div className="flex-1 min-w-[200px]">
+              <p className="text-sm font-medium text-gray-900">
+                {pricingPolylineVisible ? 'Línea de pricing visible' : 'Línea de pricing oculta'}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Aplica al volver a abrir la pantalla de reserva en la app.
+              </p>
+            </div>
+            {pricingPolylineSaving && <span className="text-sm text-gray-500">Guardando…</span>}
+            {pricingPolylineDone && !pricingPolylineSaving && (
+              <span className="text-sm text-green-600">Guardado en Supabase.</span>
+            )}
           </div>
         )}
       </div>

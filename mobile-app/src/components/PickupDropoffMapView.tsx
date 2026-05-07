@@ -58,6 +58,9 @@ type Props = {
    * Ruta fusionada (recorte conductor + OSRM por A/paradas/B). Si `mid` tiene ≥2 puntos, reemplaza el recorte solo sobre la base.
    */
   resolvedPassengerRoute?: PassengerMergedSegments | null;
+  /** Ruta dedicada al cálculo de precio (solo puntos del pasajero), opcional para auditoría visual. */
+  pricingRoute?: Point[];
+  showPricingRoute?: boolean;
 };
 
 const GREEN = '#166534';
@@ -107,6 +110,8 @@ export function PickupDropoffMapView({
   existingDropoffs = [],
   height = 320,
   resolvedPassengerRoute,
+  pricingRoute = [],
+  showPricingRoute = false,
 }: Props) {
   const hasExtras = typeof onExtraStopsChange === 'function';
   const [mode, setMode] = useState<'pickup' | 'dropoff' | 'extra'>('pickup');
@@ -155,6 +160,10 @@ export function PickupDropoffMapView({
   const basePolylineCoords = useMemo(
     () => baseRoute.map((p) => ({ latitude: p.lat, longitude: p.lng })),
     [baseRoute]
+  );
+  const pricingPolylineCoords = useMemo(
+    () => pricingRoute.map((p) => ({ latitude: p.lat, longitude: p.lng })),
+    [pricingRoute]
   );
 
   const extraStopsKey = useMemo(
@@ -411,6 +420,14 @@ export function PickupDropoffMapView({
       {dropoff && (
         <Marker coordinate={{ latitude: dropoff.lat, longitude: dropoff.lng }} title="Bajada (B)" pinColor="red" />
       )}
+      {showPricingRoute && pricingPolylineCoords.length >= 2 && (
+        <Polyline
+          coordinates={pricingPolylineCoords}
+          strokeColor="#f59e0b"
+          strokeWidth={4}
+          lineDashPattern={[8, 6]}
+        />
+      )}
     </>
   );
 
@@ -445,6 +462,12 @@ export function PickupDropoffMapView({
       ? `Gris: recorrido compartido (conductor + reservas) · Verde: tu tramo · Puntos grises: paradas${hasExistingOthers ? ' y otros pasajeros' : ''}`
       : `Gris: recorrido compartido; verde: tu tramo sobre esa línea · Puntos grises: paradas${hasExistingOthers ? ' y otros' : ''}`
     : `Gris: recorrido del viaje (conductor${hasExistingOthers ? ' + pasajeros ya reservados' : ''}) · Marcá A/B cerca del corredor`;
+  const legendFinal = showPricingRoute
+    ? `${legendText} · Naranja punteado: ruta de pricing (solo pasajero)`
+    : legendText;
+  const modalHintFinal = showPricingRoute
+    ? `${modalHintLines} La línea naranja punteada representa la ruta usada para el cálculo del costo.`
+    : modalHintLines;
 
   const modeRow = (
     <View style={styles.modeRow}>
@@ -482,7 +505,7 @@ export function PickupDropoffMapView({
         {mode === 'extra' && hasExtras && 'Tocá + Parada o el mapa para agregar una parada intermedia (máx. 3).'}
       </Text>
       {tapHint ? <Text style={styles.warnHint}>{tapHint}</Text> : null}
-      <Text style={styles.legend}>{legendText}</Text>
+      <Text style={styles.legend}>{legendFinal}</Text>
 
       <View style={[styles.previewShell, { height }]}>
         <MapView
@@ -538,7 +561,7 @@ export function PickupDropoffMapView({
             </Text>
             <View style={styles.modalHeaderSpacer} />
           </View>
-          <Text style={styles.modalHint}>{modalHintLines}</Text>
+          <Text style={styles.modalHint}>{modalHintFinal}</Text>
           {tapHint ? <Text style={styles.warnHint}>{tapHint}</Text> : null}
 
           <View style={styles.modalMapWrap}>

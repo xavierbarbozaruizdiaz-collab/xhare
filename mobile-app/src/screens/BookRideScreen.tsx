@@ -18,7 +18,7 @@ import { CommonActions, useNavigation, useRoute, type RouteProp } from '@react-n
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
-import { fetchSegmentStats } from '../backend/routeApi';
+import { fetchRoute, fetchSegmentStats } from '../backend/routeApi';
 import { reverseGeocodeStructured } from '../backend/geocodeApi';
 import { saveExtraStops } from '../backend/api';
 import { fetchRideForReserve, fetchRidePublicMapPoints, type RideStopForReserve } from '../rides/api';
@@ -40,6 +40,7 @@ import type { MainStackParamList } from '../navigation/types';
 import { buildMasterBookRidePolyline } from '../lib/buildMasterBookRidePolyline';
 import { buildPassengerMergedRoute, type PassengerMergedSegments } from '../lib/passengerMergedRoute';
 import { driverIntermediateStopsBetween, mergeOsrmWaypointsBetween } from '../lib/passengerRouteWaypoints';
+import { fetchPassengerPricingPolylineVisible } from '../backend/passengerUiSettings';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'BookRide'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'BookRide'>;
@@ -104,6 +105,8 @@ export function BookRideScreen() {
   const [mapDisplayRoute, setMapDisplayRoute] = useState<Point[]>([]);
   const [masterGreyResolving, setMasterGreyResolving] = useState(false);
   const [mergedPassengerRoute, setMergedPassengerRoute] = useState<PassengerMergedSegments | null>(null);
+  const [pricingRouteVisible, setPricingRouteVisible] = useState(false);
+  const [pricingRoutePolyline, setPricingRoutePolyline] = useState<Point[]>([]);
 
   const rideRef = useRef<Record<string, unknown> | null>(null);
   const driverStopsRef = useRef(driverStops);
@@ -194,7 +197,7 @@ export function BookRideScreen() {
     [extraStops]
   );
 
-  /** OSRM verde / precio: solo extras del pasajero actual + paradas del conductor entre A y B (otros ya van en la gris). */
+  /** OSRM verde en mapa: mantiene contexto del conductor + extras del pasajero. */
   const waypointsBetween = useMemo(() => {
     if (!pickup || !dropoff || mapDisplayRoute.length < 2) return [];
     const extras = sortExtrasBetween(pickup, dropoff, extraStops, mapDisplayRoute);
@@ -226,6 +229,15 @@ export function BookRideScreen() {
     () => waypointsBetween.map((p) => `${p.lat},${p.lng}`).join(';'),
     [waypointsBetween]
   );
+  /** Distancia de pricing: SOLO pasajero (A -> paradas del pasajero -> B). */
+  const pricingWaypoints = useMemo(() => {
+    if (!pickup || !dropoff || mapDisplayRoute.length < 2) return [];
+    return sortExtrasBetween(pickup, dropoff, extraStops, mapDisplayRoute);
+  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, extraStopsKey, mapDisplayRoute]);
+  const pricingWaypointsKey = useMemo(
+    () => pricingWaypoints.map((p) => `${p.lat},${p.lng}`).join(';'),
+    [pricingWaypoints]
+  );
 
   useEffect(() => {
     let c = false;
@@ -235,6 +247,17 @@ export function BookRideScreen() {
     });
     return () => {
       c = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPassengerPricingPolylineVisible().then((v) => {
+      if (cancelled) return;
+      setPricingRouteVisible(v);
+    });
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -398,7 +421,7 @@ export function BookRideScreen() {
     fetchSegmentStats(
       { lat: pickup.lat, lng: pickup.lng },
       { lat: dropoff.lat, lng: dropoff.lng },
-      waypointsBetween,
+      pricingWaypoints,
       { signal: ac.signal }
     ).then((res) => {
       if (cancelled || res.aborted) return;
@@ -414,7 +437,40 @@ export function BookRideScreen() {
       cancelled = true;
       ac.abort();
     };
-  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, waypointsBetween, usesDriverSeatPrice]);
+  }, [pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, pricingWaypoints, usesDriverSeatPrice]);
+
+  useEffect(() => {
+    if (!pricingRouteVisible || !pickup || !dropoff || !env.apiBaseUrl?.trim()) {
+      setPricingRoutePolyline([]);
+      return;
+    }
+    let cancelled = false;
+    const ac = new AbortController();
+    void fetchRoute(
+      { lat: pickup.lat, lng: pickup.lng },
+      { lat: dropoff.lat, lng: dropoff.lng },
+      pricingWaypoints,
+      { signal: ac.signal }
+    ).then((res) => {
+      if (cancelled || res.aborted) return;
+      const pts =
+        Array.isArray(res.polyline) && res.polyline.length >= 2
+          ? res.polyline.map((p) => ({ lat: p.lat, lng: p.lng }))
+          : [];
+      setPricingRoutePolyline(pts);
+    });
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, [
+    pricingRouteVisible,
+    pickup?.lat,
+    pickup?.lng,
+    dropoff?.lat,
+    dropoff?.lng,
+    pricingWaypointsKey,
+  ]);
 
   useEffect(() => {
     if (!pickup || !dropoff || mapDisplayRoute.length < 2 || !env.apiBaseUrl?.trim()) {
@@ -521,6 +577,7 @@ export function BookRideScreen() {
         seats: seatsToBook,
         total: pricePaid,
         pricing_mode: usesDriverSeatPrice ? 'driver_seat_price' : 'segment',
+        pricing_route_mode: usesDriverSeatPrice ? 'driver_seat_price' : 'passenger_only',
       };
       const linkRows = stopsForBookLink.filter((s) => s.id && Number.isFinite(s.lat) && Number.isFinite(s.lng));
       const pickup_stop_id =
@@ -665,6 +722,8 @@ export function BookRideScreen() {
               <PickupDropoffMapView
                 baseRoute={mapDisplayRoute}
                 resolvedPassengerRoute={mergedPassengerRoute}
+                pricingRoute={pricingRoutePolyline}
+                showPricingRoute={pricingRouteVisible}
                 pickup={pickup}
                 dropoff={dropoff}
                 onPickupChange={setPickup}
