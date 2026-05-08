@@ -78,8 +78,7 @@ function copyApk(suffix) {
 function buildOne(flavor, copySuffix) {
   console.log('\n=== Release build:', flavor, '===\n');
   if (!runGradlewClean()) {
-    console.error('gradlew clean falló');
-    return false;
+    console.warn('gradlew clean falló; continúo con assembleRelease');
   }
   if (!runGradleAssembleRelease(flavor)) {
     console.error('gradlew assembleRelease falló');

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
 
@@ -55,6 +55,8 @@ export default function AdminDriversPage() {
   const [docsByDriver, setDocsByDriver] = useState<Record<string, DriverDocument[]>>({});
   const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
   const [showAllDriverDocs, setShowAllDriverDocs] = useState(false);
+  const [docsQuery, setDocsQuery] = useState('');
+  const [expandedDriverDocs, setExpandedDriverDocs] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     loadPending();
@@ -367,6 +369,58 @@ export default function AdminDriversPage() {
     }
   }
 
+  const driverDocsRows = useMemo(() => {
+    const requiredTypes = Object.keys(DOC_TYPE_LABEL) as DriverDocumentType[];
+    const today = new Date().toISOString().slice(0, 10);
+    return approved.map((driver) => {
+      const docs = docsByDriver[driver.id] ?? [];
+      let approvedCount = 0;
+      let pendingCount = 0;
+      let rejectedCount = 0;
+      let missingCount = 0;
+      let expiredCount = 0;
+      for (const t of requiredTypes) {
+        const doc = docs.find((x) => x.doc_type === t);
+        if (!doc) {
+          missingCount += 1;
+          continue;
+        }
+        if (doc.status === 'approved') approvedCount += 1;
+        else if (doc.status === 'rejected') rejectedCount += 1;
+        else pendingCount += 1;
+        if (doc.expires_at && doc.expires_at < today) expiredCount += 1;
+      }
+      const hasIssues = missingCount > 0 || pendingCount > 0 || rejectedCount > 0 || expiredCount > 0;
+      const lowerName = String(driver.full_name ?? '').toLowerCase();
+      const lowerPhone = String(driver.phone ?? '').toLowerCase();
+      return {
+        driver,
+        docs,
+        approvedCount,
+        pendingCount,
+        rejectedCount,
+        missingCount,
+        expiredCount,
+        hasIssues,
+        searchBlob: `${lowerName} ${lowerPhone}`.trim(),
+      };
+    });
+  }, [approved, docsByDriver]);
+
+  const visibleDriverDocsRows = useMemo(() => {
+    const q = docsQuery.trim().toLowerCase();
+    return driverDocsRows.filter((row) => {
+      if (!showAllDriverDocs && !row.hasIssues) return false;
+      if (!q) return true;
+      return row.searchBlob.includes(q);
+    });
+  }, [docsQuery, driverDocsRows, showAllDriverDocs]);
+
+  const issueRowsCount = useMemo(
+    () => driverDocsRows.filter((x) => x.hasIssues).length,
+    [driverDocsRows]
+  );
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Solicitudes de conductores</h1>
@@ -555,34 +609,70 @@ export default function AdminDriversPage() {
       <h2 className="text-xl font-bold text-gray-900 mt-10 mb-4">Documentos de conductor</h2>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <p className="text-gray-600">
-          Revisión de seguro pasajero, habilitación DINATRAN y cédula verde cargados desde la app.
+          Vista por excepción: por defecto se muestran solo conductores con algo pendiente.
         </p>
-        <button
-          type="button"
-          onClick={() => setShowAllDriverDocs((v) => !v)}
-          className="text-sm font-semibold text-green-700 hover:underline"
-        >
-          {showAllDriverDocs ? 'Ver solo pendientes' : 'Ver todos'}
-        </button>
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            value={docsQuery}
+            onChange={(e) => setDocsQuery(e.target.value)}
+            placeholder="Buscar conductor..."
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          />
+          <button
+            type="button"
+            onClick={() => setShowAllDriverDocs((v) => !v)}
+            className="text-sm font-semibold text-green-700 hover:underline"
+          >
+            {showAllDriverDocs ? 'Ver solo pendientes' : 'Ver todos'}
+          </button>
+        </div>
+      </div>
+      <div className="mb-4 text-sm text-gray-600">
+        Mostrando {visibleDriverDocsRows.length} conductor(es){' '}
+        {!showAllDriverDocs ? `(con incidencia: ${issueRowsCount})` : ''}.
       </div>
       <div className="space-y-3">
-        {approved
-          .filter((d) => {
-            if (showAllDriverDocs) return true;
-            const docs = docsByDriver[d.id] ?? [];
-            // Pendiente = falta algún documento o existe alguno aún en revisión.
-            const hasMissing = (Object.keys(DOC_TYPE_LABEL) as DriverDocumentType[]).some(
-              (docType) => !docs.some((x) => x.doc_type === docType)
-            );
-            const hasPending = docs.some((x) => x.status === 'pending');
-            return hasMissing || hasPending;
-          })
-          .map((d) => {
-          const docs = docsByDriver[d.id] ?? [];
+        {visibleDriverDocsRows.map((row) => {
+          const d = row.driver;
+          const docs = row.docs;
+          const expanded = !!expandedDriverDocs[d.id];
+          const statusTone =
+            row.expiredCount > 0 || row.rejectedCount > 0
+              ? 'bg-red-100 text-red-700'
+              : row.pendingCount > 0 || row.missingCount > 0
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-green-100 text-green-700';
           return (
             <div key={`docs-${d.id}`} className="bg-white rounded-xl border border-gray-200 p-4">
-              <p className="font-semibold text-gray-900">{d.full_name || d.id.slice(0, 8)}</p>
-              <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-gray-900">{d.full_name || d.id.slice(0, 8)}</p>
+                  <p className="text-xs text-gray-500">
+                    {row.approvedCount}/3 aprobados · faltan {row.missingCount} · en revisión {row.pendingCount} · rechazados {row.rejectedCount}
+                    {row.expiredCount > 0 ? ` · vencidos ${row.expiredCount}` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`px-2 py-1 rounded-full text-xs font-semibold ${statusTone}`}>
+                    {row.expiredCount > 0 || row.rejectedCount > 0
+                      ? 'Con bloqueo'
+                      : row.pendingCount > 0 || row.missingCount > 0
+                        ? 'Pendiente'
+                        : 'Completo'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedDriverDocs((prev) => ({ ...prev, [d.id]: !prev[d.id] }))
+                    }
+                    className="text-sm font-semibold text-green-700 hover:underline"
+                  >
+                    {expanded ? 'Ocultar detalle' : 'Ver detalle'}
+                  </button>
+                </div>
+              </div>
+              {expanded ? <div className="mt-3 space-y-2">
                 {(Object.keys(DOC_TYPE_LABEL) as DriverDocumentType[]).map((docType) => {
                   const doc = docs.find((x) => x.doc_type === docType);
                   const status = doc?.status ?? 'pending';
@@ -654,21 +744,13 @@ export default function AdminDriversPage() {
                     </div>
                   );
                 })}
-              </div>
+              </div> : null}
             </div>
           );
         })}
-        {!showAllDriverDocs &&
-        approved.filter((d) => {
-          const docs = docsByDriver[d.id] ?? [];
-          const hasMissing = (Object.keys(DOC_TYPE_LABEL) as DriverDocumentType[]).some(
-            (docType) => !docs.some((x) => x.doc_type === docType)
-          );
-          const hasPending = docs.some((x) => x.status === 'pending');
-          return hasMissing || hasPending;
-        }).length === 0 ? (
+        {visibleDriverDocsRows.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 p-6 text-sm text-gray-500">
-            No hay documentos pendientes de revisión.
+            No hay conductores para mostrar con ese filtro.
           </div>
         ) : null}
       </div>
