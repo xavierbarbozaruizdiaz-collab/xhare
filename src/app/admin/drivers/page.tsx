@@ -24,6 +24,27 @@ type DriverAccount = {
   updated_at: string;
 };
 
+type DriverDocumentType = 'passenger_insurance' | 'dinatran_permit' | 'cedula_verde';
+type DriverDocumentStatus = 'pending' | 'approved' | 'rejected';
+type DriverDocument = {
+  id: string;
+  driver_id: string;
+  doc_type: DriverDocumentType;
+  storage_bucket: string;
+  storage_path: string;
+  file_name: string | null;
+  status: DriverDocumentStatus;
+  review_notes: string | null;
+  expires_at: string | null;
+  updated_at: string;
+};
+
+const DOC_TYPE_LABEL: Record<DriverDocumentType, string> = {
+  passenger_insurance: 'Seguro pasajero',
+  dinatran_permit: 'Habilitación DINATRAN',
+  cedula_verde: 'Cédula verde',
+};
+
 export default function AdminDriversPage() {
   const [pending, setPending] = useState<Profile[]>([]);
   const [approved, setApproved] = useState<Array<Profile & { account?: DriverAccount | null }>>([]);
@@ -31,11 +52,29 @@ export default function AdminDriversPage() {
   const [acting, setActing] = useState<string | null>(null);
   const [uploadingAvatarFor, setUploadingAvatarFor] = useState<string | null>(null);
   const [uploadingVehiclePhotoFor, setUploadingVehiclePhotoFor] = useState<string | null>(null);
+  const [docsByDriver, setDocsByDriver] = useState<Record<string, DriverDocument[]>>({});
+  const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
+  const [showAllDriverDocs, setShowAllDriverDocs] = useState(false);
 
   useEffect(() => {
     loadPending();
     loadApproved();
+    loadDriverDocs();
   }, []);
+
+  async function loadDriverDocs() {
+    const { data } = await supabase
+      .from('driver_documents')
+      .select('id, driver_id, doc_type, storage_bucket, storage_path, file_name, status, review_notes, expires_at, updated_at')
+      .order('updated_at', { ascending: false });
+    const next: Record<string, DriverDocument[]> = {};
+    (data ?? []).forEach((d) => {
+      const row = d as DriverDocument;
+      if (!next[row.driver_id]) next[row.driver_id] = [];
+      next[row.driver_id]!.push(row);
+    });
+    setDocsByDriver(next);
+  }
 
   async function loadApproved() {
     const { data: drivers } = await supabase
@@ -234,6 +273,100 @@ export default function AdminDriversPage() {
     }
   }
 
+  async function openDocPreview(doc: DriverDocument) {
+    try {
+      const { data, error } = await supabase.storage
+        .from(doc.storage_bucket)
+        .createSignedUrl(doc.storage_path, 60 * 5);
+      if (error || !data?.signedUrl) throw error ?? new Error('No se pudo generar enlace');
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudo abrir el documento.');
+    }
+  }
+
+  async function reviewDriverDoc(doc: DriverDocument, status: 'approved' | 'rejected') {
+    const notes =
+      status === 'rejected'
+        ? prompt('Motivo de rechazo (se mostrará al conductor):', doc.review_notes ?? '') ?? ''
+        : '';
+    if (status === 'rejected' && !notes.trim()) {
+      alert('Debés ingresar el motivo de rechazo.');
+      return;
+    }
+    setReviewingDocId(doc.id);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const nowIso = new Date().toISOString();
+      const payload = {
+        status,
+        review_notes: status === 'rejected' ? notes.trim() : null,
+        reviewed_at: nowIso,
+        reviewed_by: user?.id ?? null,
+        approved_at: status === 'approved' ? nowIso : null,
+        rejected_at: status === 'rejected' ? nowIso : null,
+      };
+      const { error } = await supabase.from('driver_documents').update(payload).eq('id', doc.id);
+      if (error) throw error;
+      await supabase.from('driver_document_audit_logs').insert({
+        driver_document_id: doc.id,
+        driver_id: doc.driver_id,
+        actor_id: user?.id ?? null,
+        action: status === 'approved' ? 'approved' : 'rejected',
+        prev_status: doc.status,
+        new_status: status,
+        prev_expires_at: doc.expires_at ?? null,
+        new_expires_at: doc.expires_at ?? null,
+        notes: status === 'rejected' ? notes.trim() : null,
+      });
+      await loadDriverDocs();
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudo guardar la revisión.');
+    } finally {
+      setReviewingDocId(null);
+    }
+  }
+
+  async function setDriverDocExpiry(doc: DriverDocument) {
+    const current = doc.expires_at ? String(doc.expires_at) : '';
+    const raw = prompt('Vencimiento (YYYY-MM-DD). Dejá vacío para quitar:', current);
+    if (raw == null) return;
+    const v = raw.trim();
+    if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      alert('Formato inválido. Usá YYYY-MM-DD.');
+      return;
+    }
+    setReviewingDocId(doc.id);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { error } = await supabase
+        .from('driver_documents')
+        .update({ expires_at: v || null })
+        .eq('id', doc.id);
+      if (error) throw error;
+      await supabase.from('driver_document_audit_logs').insert({
+        driver_document_id: doc.id,
+        driver_id: doc.driver_id,
+        actor_id: user?.id ?? null,
+        action: 'expiry_set',
+        prev_status: doc.status,
+        new_status: doc.status,
+        prev_expires_at: doc.expires_at ?? null,
+        new_expires_at: v || null,
+        notes: null,
+      });
+      await loadDriverDocs();
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudo actualizar vencimiento.');
+    } finally {
+      setReviewingDocId(null);
+    }
+  }
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Solicitudes de conductores</h1>
@@ -417,6 +550,127 @@ export default function AdminDriversPage() {
             )}
           </tbody>
         </table>
+      </div>
+
+      <h2 className="text-xl font-bold text-gray-900 mt-10 mb-4">Documentos de conductor</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <p className="text-gray-600">
+          Revisión de seguro pasajero, habilitación DINATRAN y cédula verde cargados desde la app.
+        </p>
+        <button
+          type="button"
+          onClick={() => setShowAllDriverDocs((v) => !v)}
+          className="text-sm font-semibold text-green-700 hover:underline"
+        >
+          {showAllDriverDocs ? 'Ver solo pendientes' : 'Ver todos'}
+        </button>
+      </div>
+      <div className="space-y-3">
+        {approved
+          .filter((d) => {
+            if (showAllDriverDocs) return true;
+            const docs = docsByDriver[d.id] ?? [];
+            // Pendiente = falta algún documento o existe alguno aún en revisión.
+            const hasMissing = (Object.keys(DOC_TYPE_LABEL) as DriverDocumentType[]).some(
+              (docType) => !docs.some((x) => x.doc_type === docType)
+            );
+            const hasPending = docs.some((x) => x.status === 'pending');
+            return hasMissing || hasPending;
+          })
+          .map((d) => {
+          const docs = docsByDriver[d.id] ?? [];
+          return (
+            <div key={`docs-${d.id}`} className="bg-white rounded-xl border border-gray-200 p-4">
+              <p className="font-semibold text-gray-900">{d.full_name || d.id.slice(0, 8)}</p>
+              <div className="mt-3 space-y-2">
+                {(Object.keys(DOC_TYPE_LABEL) as DriverDocumentType[]).map((docType) => {
+                  const doc = docs.find((x) => x.doc_type === docType);
+                  const status = doc?.status ?? 'pending';
+                  const statusClass =
+                    status === 'approved'
+                      ? 'bg-green-100 text-green-800'
+                      : status === 'rejected'
+                        ? 'bg-red-100 text-red-800'
+                        : 'bg-amber-100 text-amber-800';
+                  return (
+                    <div
+                      key={`${d.id}-${docType}`}
+                      className="border border-gray-100 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900">{DOC_TYPE_LABEL[docType]}</p>
+                        <p className="text-xs text-gray-500">
+                          {doc?.file_name ? doc.file_name : 'Sin archivo cargado'}
+                        </p>
+                        {doc?.expires_at ? (
+                          <p className="text-xs text-gray-500">
+                            Vence: {new Date(`${doc.expires_at}T00:00:00`).toLocaleDateString('es-PY')}
+                          </p>
+                        ) : null}
+                        {doc?.review_notes ? (
+                          <p className="text-xs text-amber-700 mt-1">Nota: {doc.review_notes}</p>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${statusClass}`}>
+                          {status === 'approved' ? 'Aprobado' : status === 'rejected' ? 'Rechazado' : 'En revisión'}
+                        </span>
+                        {doc ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void openDocPreview(doc)}
+                              className="text-blue-600 hover:underline text-sm font-medium"
+                            >
+                              Ver
+                            </button>
+                            <button
+                              type="button"
+                              disabled={reviewingDocId != null}
+                              onClick={() => void setDriverDocExpiry(doc)}
+                              className="text-indigo-700 hover:underline text-sm font-medium disabled:opacity-50"
+                            >
+                              {reviewingDocId === doc.id ? '...' : 'Vencimiento'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={reviewingDocId != null}
+                              onClick={() => void reviewDriverDoc(doc, 'approved')}
+                              className="text-green-700 hover:underline text-sm font-medium disabled:opacity-50"
+                            >
+                              {reviewingDocId === doc.id ? '...' : 'Aprobar'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={reviewingDocId != null}
+                              onClick={() => void reviewDriverDoc(doc, 'rejected')}
+                              className="text-red-700 hover:underline text-sm font-medium disabled:opacity-50"
+                            >
+                              {reviewingDocId === doc.id ? '...' : 'Rechazar'}
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        {!showAllDriverDocs &&
+        approved.filter((d) => {
+          const docs = docsByDriver[d.id] ?? [];
+          const hasMissing = (Object.keys(DOC_TYPE_LABEL) as DriverDocumentType[]).some(
+            (docType) => !docs.some((x) => x.doc_type === docType)
+          );
+          const hasPending = docs.some((x) => x.status === 'pending');
+          return hasMissing || hasPending;
+        }).length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-6 text-sm text-gray-500">
+            No hay documentos pendientes de revisión.
+          </div>
+        ) : null}
       </div>
     </div>
   );

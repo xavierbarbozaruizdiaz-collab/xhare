@@ -5,6 +5,7 @@ import ActiveRideBar from '@/components/ActiveRideBar'
 import OfferAcceptedNotifier from '@/components/OfferAcceptedNotifier'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import PushRegistration from '@/components/PushRegistration'
+import WebRoleGate from '@/components/WebRoleGate'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -21,6 +22,7 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={inter.className}>
+        <WebRoleGate />
         <ActiveRideBar />
         <OfferAcceptedNotifier />
         <PushRegistration />

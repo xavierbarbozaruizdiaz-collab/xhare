@@ -126,7 +126,7 @@ module.exports = {
       supportsTablet: true,
       bundleIdentifier: isDriver ? 'com.xhare.driver' : 'com.xhare.app',
     },
-    plugins: ['@react-native-community/datetimepicker'],
+    plugins: ['@react-native-community/datetimepicker', 'expo-image-picker', 'expo-document-picker'],
     android: {
       adaptiveIcon: {
         // Driver usa un ícono distinto (monochrome) para que el launcher muestre

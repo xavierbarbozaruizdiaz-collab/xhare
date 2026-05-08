@@ -42,6 +42,7 @@ import { isPickupAtLeastLeadAhead, MIN_BOOKING_LEAD_MS } from '../lib/bookingLea
 type Nav = NativeStackNavigationProp<MainStackParamList, 'SearchPublishedRides'>;
 
 const WEEKDAY_TOGGLE_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'] as const;
+const SEARCH_RESULTS_INITIAL_LIMIT = 10;
 
 function toYmdLocal(d: Date): string {
   const y = d.getFullYear();
@@ -213,9 +214,9 @@ export function SearchPublishedRidesScreen() {
   const { session } = useAuth();
   const userId = session?.id ?? '';
 
-  const [date, setDate] = useState(() => toYmdLocal(new Date()));
+  const [date, setDate] = useState('');
   /** HH:MM (24 h): en favoritos = salida/recogida (persistido); en búsqueda = hora desde. */
-  const [fromTime, setFromTime] = useState('08:00');
+  const [fromTime, setFromTime] = useState('');
   /** Solo favoritos: hora a la que el usuario necesita llegar al destino (entrada principal). */
   const [arrivalTimeHm, setArrivalTimeHm] = useState('');
   const arrivalSyncedFromStoredPickupRef = useRef(false);
@@ -236,9 +237,10 @@ export function SearchPublishedRidesScreen() {
   const [savingFavorite, setSavingFavorite] = useState(false);
   const saveFavoriteInFlightRef = useRef(false);
   const [loading, setLoading] = useState(!isFavoriteMode);
-  /** Búsqueda: fecha/hora “desde” demasiado pronto (< 4 h). */
+  /** Búsqueda: fecha/hora “desde” demasiado pronto (< 4 h), solo cuando ambos filtros están completos. */
   const [searchLeadError, setSearchLeadError] = useState<string | null>(null);
   const [list, setList] = useState<Record<string, unknown>[]>([]);
+  const [visibleCount, setVisibleCount] = useState(SEARCH_RESULTS_INITIAL_LIMIT);
   const [routeEta, setRouteEta] = useState<SearchRouteEtaState>({
     loading: false,
     durationMinutes: null,
@@ -329,9 +331,14 @@ export function SearchPublishedRidesScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     setList([]);
-    const normalizedShareCode = normalizeShareCodeInput(shareCodeQuery);
-    const hmSearch = fromTime.trim() || '08:00';
-    if (!normalizedShareCode && !isPickupAtLeastLeadAhead(date.trim(), hmSearch, MIN_BOOKING_LEAD_MS)) {
+    const rawRouteOrCode = shareCodeQuery.trim();
+    const normalizedShareCode = normalizeShareCodeInput(rawRouteOrCode);
+    const singleFieldRouteName =
+      normalizedShareCode || !rawRouteOrCode ? undefined : rawRouteOrCode;
+    const rawDate = date.trim();
+    const hmSearch = fromTime.trim();
+    const shouldValidateLead = !normalizedShareCode && rawDate.length > 0 && hmSearch.length > 0;
+    if (shouldValidateLead && !isPickupAtLeastLeadAhead(rawDate, hmSearch, MIN_BOOKING_LEAD_MS)) {
       setSearchLeadError(
         'Elegí fecha y hora de salida con al menos 4 horas de anticipación respecto de ahora (hora de este dispositivo).'
       );
@@ -342,10 +349,10 @@ export function SearchPublishedRidesScreen() {
     try {
       const mapKm = mapSearchRadiusKmForRideKind(rideKind);
       const rows = (await searchRides({
-        date: date.trim(),
-        fromTimeLocal: fromTime.trim() || '08:00',
+        date: rawDate || undefined,
+        fromTimeLocal: hmSearch || undefined,
         shareCode: normalizedShareCode || undefined,
-        routeName: routeNameQuery.trim() || undefined,
+        routeName: routeNameQuery.trim() || singleFieldRouteName,
         origin: originGeo ? undefined : origin.trim() || undefined,
         destination: destGeo ? undefined : destination.trim() || undefined,
         originNear: originGeo
@@ -357,12 +364,20 @@ export function SearchPublishedRidesScreen() {
         seats: 1,
       })) as Record<string, unknown>[];
       setList(applyRideKindFilter(rows, rideKind));
+      setVisibleCount(SEARCH_RESULTS_INITIAL_LIMIT);
     } catch {
       setList([]);
+      setVisibleCount(SEARCH_RESULTS_INITIAL_LIMIT);
     } finally {
       setLoading(false);
     }
   }, [date, fromTime, shareCodeQuery, routeNameQuery, origin, destination, originGeo, destGeo, rideKind]);
+
+  const visibleList = useMemo(
+    () => list.slice(0, Math.max(SEARCH_RESULTS_INITIAL_LIMIT, visibleCount)),
+    [list, visibleCount]
+  );
+  const hasMoreResults = visibleList.length < list.length;
 
   useEffect(() => {
     if (isFavoriteMode) return;
@@ -547,18 +562,30 @@ export function SearchPublishedRidesScreen() {
         height={240}
       />
 
-      <Text style={styles.label}>Fecha del viaje</Text>
+      <Text style={styles.label}>Ingrese código o nombre de ruta</Text>
+      <TextInput
+        style={styles.input}
+        value={shareCodeQuery}
+        onChangeText={(t) => setShareCodeQuery(t)}
+        autoCapitalize="none"
+        autoCorrect={false}
+        placeholder="Ingrese código o nombre de ruta"
+        placeholderTextColor="#9ca3af"
+      />
+      <Text style={styles.label}>Fecha del viaje (opcional)</Text>
       <TouchableOpacity
         style={styles.pickerRow}
         onPress={() => setShowDatePicker(true)}
         accessibilityRole="button"
         accessibilityLabel="Elegir fecha"
       >
-        <Text style={styles.pickerValue}>{date.trim()}</Text>
+        <Text style={date.trim() ? styles.pickerValue : styles.pickerPlaceholder}>
+          {date.trim() || 'Sin fecha'}
+        </Text>
       </TouchableOpacity>
       {showDatePicker ? (
         <DateTimePicker
-          value={new Date(date.trim() + 'T12:00:00')}
+          value={date.trim() ? new Date(date.trim() + 'T12:00:00') : new Date()}
           mode="date"
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={(ev, d) => {
@@ -571,9 +598,7 @@ export function SearchPublishedRidesScreen() {
           }}
         />
       ) : null}
-      <Text style={styles.label}>
-        {favoriteArrivalCopy ? 'Hora de llegada deseada' : 'Hora desde'}
-      </Text>
+      <Text style={styles.label}>{favoriteArrivalCopy ? 'Hora de llegada deseada' : 'Hora desde (opcional)'}</Text>
       <TouchableOpacity
         style={styles.pickerRow}
         onPress={() => setShowTimePicker(true)}
@@ -588,12 +613,16 @@ export function SearchPublishedRidesScreen() {
       >
         <Text
           style={
-            favoriteArrivalCopy && !arrivalTimeHm.trim()
+            !favoriteArrivalCopy && !fromTime.trim()
+              ? styles.pickerPlaceholder
+              : favoriteArrivalCopy && !arrivalTimeHm.trim()
               ? styles.pickerPlaceholder
               : styles.pickerValue
           }
         >
-          {favoriteArrivalCopy ? arrivalTimeHm.trim() || fromTime.trim() || '08:00' : fromTime.trim() || '08:00'}
+          {favoriteArrivalCopy
+            ? arrivalTimeHm.trim() || fromTime.trim() || '08:00'
+            : fromTime.trim() || 'Sin hora'}
         </Text>
       </TouchableOpacity>
       {showTimePicker ? (
@@ -631,16 +660,6 @@ export function SearchPublishedRidesScreen() {
           }}
         />
       ) : null}
-      <Text style={styles.label}>Código de viaje (opcional)</Text>
-      <TextInput
-        style={styles.input}
-        value={shareCodeQuery}
-        onChangeText={(t) => setShareCodeQuery(t.toUpperCase().replace(/\s+/g, ''))}
-        autoCapitalize="characters"
-        autoCorrect={false}
-        placeholder="Ej: XH-ABC123"
-        placeholderTextColor="#9ca3af"
-      />
       {favoriteSlot ? (
         <View style={styles.dailyRow}>
           <View style={styles.dailyTextWrap}>
@@ -874,11 +893,23 @@ export function SearchPublishedRidesScreen() {
   return (
     <View style={styles.container}>
       <FlatList
-        data={list}
+        data={visibleList}
         keyExtractor={(item) => String(item.id)}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={listHeader}
+        ListFooterComponent={
+          !favoriteSlot && !loading && hasMoreResults ? (
+            <TouchableOpacity
+              style={styles.loadMoreBtn}
+              onPress={() => setVisibleCount((prev) => prev + SEARCH_RESULTS_INITIAL_LIMIT)}
+              accessibilityRole="button"
+              accessibilityLabel="Ver más resultados"
+            >
+              <Text style={styles.loadMoreBtnText}>Ver más</Text>
+            </TouchableOpacity>
+          ) : null
+        }
         ListEmptyComponent={
           loading ? (
             <ActivityIndicator style={styles.listSpinner} size="large" color="#166534" />
@@ -1070,6 +1101,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   searchBtnText: { color: '#fff', fontWeight: '700' },
+  loadMoreBtn: {
+    borderWidth: 1,
+    borderColor: '#166534',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 14,
+    backgroundColor: '#fff',
+  },
+  loadMoreBtnText: { color: '#166534', fontWeight: '700' },
   listSpinner: { marginTop: 28 },
   card: {
     backgroundColor: '#f9fafb',

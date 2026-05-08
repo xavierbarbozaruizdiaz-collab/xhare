@@ -536,6 +536,34 @@ export function BookRideScreen() {
           effectivePricing
         )
       : null;
+  const bookingEtaSummary = useMemo(() => {
+    if (!pickup || !dropoff || mapDisplayRoute.length < 2) return null;
+    const depIso = String(ride?.departure_time ?? '').trim();
+    if (!depIso) return null;
+    const departureAt = new Date(depIso);
+    if (Number.isNaN(departureAt.getTime())) return null;
+
+    const pickupPos = Math.max(0, Math.min(1, getPositionAlongPolyline(pickup, mapDisplayRoute)));
+    const dropoffPos = Math.max(pickupPos, Math.min(1, getPositionAlongPolyline(dropoff, mapDisplayRoute)));
+    const totalDurationMin = Math.max(0, Number(ride?.estimated_duration_minutes ?? 0));
+    const fallbackSegmentMin =
+      segmentDistanceKm != null ? Math.max(1, Math.round((segmentDistanceKm / 28) * 60)) : 0;
+    const pickupOffsetMin =
+      totalDurationMin > 0 ? Math.max(0, Math.round(totalDurationMin * pickupPos)) : 0;
+    const destinationOffsetMin =
+      totalDurationMin > 0
+        ? Math.max(pickupOffsetMin + 1, Math.round(totalDurationMin * dropoffPos))
+        : pickupOffsetMin + fallbackSegmentMin;
+
+    const pickupEta = new Date(departureAt.getTime() + pickupOffsetMin * 60_000);
+    const destinationEta = new Date(departureAt.getTime() + destinationOffsetMin * 60_000);
+    const toHm = (d: Date) => d.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' });
+
+    return {
+      pickupLine: `El conductor llegará a tu ubicación a las ${toHm(pickupEta)}.`,
+      destinationLine: `Llegarás a tu destino a las ${toHm(destinationEta)} aprox (±15 min).`,
+    };
+  }, [pickup, dropoff, mapDisplayRoute, ride?.departure_time, ride?.estimated_duration_minutes, segmentDistanceKm]);
 
   const handleSubmit = async () => {
     if (!session?.id || !ride) return;
@@ -790,6 +818,12 @@ export function BookRideScreen() {
                 ₲ {totalPrice.toLocaleString('es-PY')}
                 {!usesDriverSeatPrice && segmentDistanceKm != null ? ` · ~${segmentDistanceKm.toFixed(1)} km` : ''}
               </Text>
+              {bookingEtaSummary ? (
+                <View style={styles.etaSummaryBox}>
+                  <Text style={styles.etaSummaryText}>{bookingEtaSummary.pickupLine}</Text>
+                  <Text style={styles.etaSummaryText}>{bookingEtaSummary.destinationLine}</Text>
+                </View>
+              ) : null}
             </View>
           ) : (
             <Text style={styles.muted}>No se pudo calcular el tramo; se usará tarifa mínima al confirmar.</Text>
@@ -876,6 +910,19 @@ const styles = StyleSheet.create({
   priceBox: { backgroundColor: '#ecfdf5', padding: 14, borderRadius: 10, marginTop: 16 },
   priceLabel: { fontSize: 13, color: '#065f46' },
   priceValue: { fontSize: 20, fontWeight: '800', color: '#166534', marginTop: 4 },
+  etaSummaryBox: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#bbf7d0',
+    gap: 6,
+  },
+  etaSummaryText: {
+    fontSize: 13,
+    color: '#14532d',
+    lineHeight: 18,
+    fontWeight: '500',
+  },
   muted: { fontSize: 14, color: '#6b7280', marginTop: 8 },
   errorText: { color: '#b91c1c', marginBottom: 12 },
   warnBox: { backgroundColor: '#fef3c7', padding: 12, borderRadius: 8, marginBottom: 12 },

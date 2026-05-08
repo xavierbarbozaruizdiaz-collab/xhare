@@ -69,11 +69,10 @@ export function PublishRouteMapModal({
   showWaypointMode = true,
 }: Props) {
   const mapRef = useRef<MapView>(null);
-  /** Tras quitar una parada con `onMarkerPress`, Android también dispara `onPress` del mapa: lo ignoramos un instante. */
-  const mapPressSilenceUntilRef = useRef(0);
   const didFitForOpenRef = useRef(false);
   const [locationOk, setLocationOk] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [selectionCenter, setSelectionCenter] = useState<{ lat: number; lng: number } | null>(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -103,6 +102,9 @@ export function PublishRouteMapModal({
           edgePadding: { top: 96, right: 44, bottom: 200, left: 44 },
           animated: !didFitForOpenRef.current,
         });
+        const lat = coords.reduce((acc, c) => acc + c.latitude, 0) / coords.length;
+        const lng = coords.reduce((acc, c) => acc + c.longitude, 0) / coords.length;
+        setSelectionCenter({ lat, lng });
       } else if (coords.length === 1) {
         mapRef.current?.animateToRegion(
           {
@@ -113,6 +115,9 @@ export function PublishRouteMapModal({
           },
           380
         );
+        setSelectionCenter({ lat: coords[0].latitude, lng: coords[0].longitude });
+      } else {
+        setSelectionCenter({ lat: region.latitude, lng: region.longitude });
       }
       didFitForOpenRef.current = true;
     }, 320);
@@ -157,7 +162,6 @@ export function PublishRouteMapModal({
       const now = Date.now();
       if (now - removeWpDebounceRef.current < 350) return;
       removeWpDebounceRef.current = now;
-      mapPressSilenceUntilRef.current = now + 700;
       onRemoveWaypoint(index);
     },
     [onRemoveWaypoint, allowEditingPoints]
@@ -175,14 +179,18 @@ export function PublishRouteMapModal({
     [requestRemoveWaypoint]
   );
 
-  const handleMapPress = useCallback(
-    (ev: MapPressEvent) => {
-      if (!allowEditingPoints) return;
-      if (Date.now() < mapPressSilenceUntilRef.current) return;
-      onMapPress(ev);
-    },
-    [onMapPress, allowEditingPoints]
-  );
+  const confirmPointAtCenter = useCallback(() => {
+    if (!allowEditingPoints || !selectionCenter) return;
+    const synthetic = {
+      nativeEvent: {
+        coordinate: {
+          latitude: selectionCenter.lat,
+          longitude: selectionCenter.lng,
+        },
+      },
+    } as MapPressEvent;
+    onMapPress(synthetic);
+  }, [allowEditingPoints, selectionCenter, onMapPress]);
 
   const modeLabel =
     mapMode === 'origin' ? 'Marcá el origen' : mapMode === 'destination' ? 'Marcá el destino' : 'Marcá una parada';
@@ -202,7 +210,7 @@ export function PublishRouteMapModal({
         </View>
         <Text style={styles.hint}>
           {allowEditingPoints
-            ? 'Tocá el mapa para colocar el punto. La ruta verde es por calles (origen → paradas → destino).'
+            ? 'Mové el mapa y confirmá el punto del centro. La ruta verde es por calles (origen → paradas → destino).'
             : 'Vista de solo lectura: los puntos del grupo son fijos y no se pueden editar.'}
           {allowEditingPoints && mapMode === 'waypoint'
             ? ' Colocá la parada donde quieras (entre origen y destino). Para quitarla, tocá el pin o la etiqueta.'
@@ -214,8 +222,10 @@ export function PublishRouteMapModal({
             provider={androidMapProvider}
             style={styles.map}
             initialRegion={region}
-            onPress={handleMapPress}
             onMarkerPress={handleMapMarkerPress}
+            onRegionChangeComplete={(r) => {
+              setSelectionCenter({ lat: r.latitude, lng: r.longitude });
+            }}
             scrollEnabled
             zoomEnabled
             rotateEnabled
@@ -291,6 +301,15 @@ export function PublishRouteMapModal({
               />
             )}
           </MapView>
+          {allowEditingPoints ? (
+            <View style={styles.centerPinWrap} pointerEvents="none">
+              <Ionicons
+                name={mapMode === 'origin' ? 'location' : mapMode === 'destination' ? 'flag' : 'add-circle'}
+                size={34}
+                color={mapMode === 'destination' ? '#b91c1c' : mapMode === 'waypoint' ? '#2563eb' : GREEN}
+              />
+            </View>
+          ) : null}
           <TouchableOpacity
             style={styles.locateBtn}
             onPress={goToMyLocation}
@@ -351,6 +370,28 @@ export function PublishRouteMapModal({
               </Text>
             </TouchableOpacity>
           </View>
+          {allowEditingPoints ? (
+            <TouchableOpacity
+              style={styles.confirmBtn}
+              onPress={confirmPointAtCenter}
+              accessibilityRole="button"
+              accessibilityLabel={
+                mapMode === 'origin'
+                  ? 'Confirmar origen'
+                  : mapMode === 'destination'
+                    ? 'Confirmar destino'
+                    : 'Confirmar parada'
+              }
+            >
+              <Text style={styles.confirmBtnText}>
+                {mapMode === 'origin'
+                  ? 'Confirmar origen'
+                  : mapMode === 'destination'
+                    ? 'Confirmar destino'
+                    : 'Confirmar parada'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </SafeAreaView>
       </SafeAreaView>
     </Modal>
@@ -380,6 +421,14 @@ const styles = StyleSheet.create({
   },
   mapContainer: { flex: 1, position: 'relative', backgroundColor: '#e8ece9' },
   map: { ...StyleSheet.absoluteFillObject },
+  centerPinWrap: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginLeft: -17,
+    marginTop: -34,
+    zIndex: 5,
+  },
   locateBtn: {
     position: 'absolute',
     right: 14,
@@ -421,6 +470,20 @@ const styles = StyleSheet.create({
   modeText: { fontSize: 13, fontWeight: '600', color: '#374151' },
   modeTextActive: { color: '#fff' },
   modeTextDisabled: { color: '#9ca3af' },
+  confirmBtn: {
+    marginHorizontal: 12,
+    marginTop: 2,
+    marginBottom: Platform.OS === 'ios' ? 4 : 2,
+    borderRadius: 10,
+    backgroundColor: '#111827',
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
+  confirmBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
   wpMarker: { alignItems: 'center' },
   wpChip: {
     flexDirection: 'row',

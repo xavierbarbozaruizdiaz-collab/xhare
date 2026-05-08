@@ -384,6 +384,17 @@ export function PublishRideScreen() {
         });
         setDestinationInput(String(row.destination ?? ''));
       }
+      setWaypoints(
+        Array.isArray(row.waypoints)
+          ? row.waypoints
+              .map((w) => ({
+                lat: Number(w.lat),
+                lng: Number(w.lng),
+                label: w.label != null ? String(w.label) : undefined,
+              }))
+              .filter((w) => Number.isFinite(w.lat) && Number.isFinite(w.lng))
+          : []
+      );
     })();
     return () => {
       cancelled = true;
@@ -999,6 +1010,38 @@ export function PublishRideScreen() {
       );
       return;
     }
+    if (isDriverApp) {
+      const requiredTypes = ['passenger_insurance', 'dinatran_permit', 'cedula_verde'] as const;
+      const { data: docs, error: docsErr } = await supabase
+        .from('driver_documents')
+        .select('doc_type, status, expires_at')
+        .eq('driver_id', session.id);
+      if (docsErr) {
+        Alert.alert('Documentos', 'No pudimos validar tus documentos. Intentá de nuevo en unos segundos.');
+        return;
+      }
+      const todayYmd = new Date().toISOString().slice(0, 10);
+      for (const t of requiredTypes) {
+        const row = (docs ?? []).find((d) => String((d as { doc_type?: unknown }).doc_type) === t) as
+          | { status?: string | null; expires_at?: string | null }
+          | undefined;
+        if (!row || row.status !== 'approved') {
+          Alert.alert(
+            'Documentación pendiente',
+            'Para publicar viajes necesitás tener aprobados: seguro pasajero, habilitación DINATRAN y cédula verde.'
+          );
+          return;
+        }
+        const exp = String(row.expires_at ?? '').trim();
+        if (exp && exp < todayYmd) {
+          Alert.alert(
+            'Documento vencido',
+            'Tenés documentación vencida. Subí el documento actualizado para volver a publicar.'
+          );
+          return;
+        }
+      }
+    }
     if (!origin || !destination) {
       Alert.alert('Ruta', 'Elegí origen y destino (escribí y tocá una sugerencia).');
       return;
@@ -1378,6 +1421,9 @@ export function PublishRideScreen() {
           originLng: origin.lng,
           destinationLat: destination.lat,
           destinationLng: destination.lng,
+          waypoints: [...waypoints]
+            .sort((a, b) => getPositionAlongPolyline(a, chord) - getPositionAlongPolyline(b, chord))
+            .map((w) => ({ lat: w.lat, lng: w.lng, label: w.label ?? null })),
           homeActiveRideId: rideId,
         });
       }

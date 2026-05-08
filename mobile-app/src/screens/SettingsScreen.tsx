@@ -13,6 +13,8 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
@@ -30,6 +32,28 @@ const NAV_OPTIONS: { value: NavPreference; label: string }[] = [
 ];
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'MainTabs'>;
+type DriverDocumentType = 'passenger_insurance' | 'dinatran_permit' | 'cedula_verde';
+type DriverDocumentStatus = 'pending' | 'approved' | 'rejected';
+type DriverDocumentRow = {
+  id: string;
+  driver_id: string;
+  doc_type: DriverDocumentType;
+  storage_bucket: string;
+  storage_path: string;
+  file_name: string | null;
+  mime_type: string | null;
+  file_size_bytes: number | null;
+  status: DriverDocumentStatus;
+  review_notes: string | null;
+  expires_at: string | null;
+  updated_at: string;
+};
+
+const DRIVER_DOCUMENTS: Array<{ type: DriverDocumentType; label: string }> = [
+  { type: 'passenger_insurance', label: 'Seguro pasajero' },
+  { type: 'dinatran_permit', label: 'Habilitación DINATRAN' },
+  { type: 'cedula_verde', label: 'Cédula verde' },
+];
 
 export function SettingsScreen() {
   const navigation = useNavigation<Nav>();
@@ -39,6 +63,10 @@ export function SettingsScreen() {
   const [locationStatus, setLocationStatus] = useState<string>('');
   const [signingOut, setSigningOut] = useState(false);
   const [loadingProfilePhotos, setLoadingProfilePhotos] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [uploadingDocumentType, setUploadingDocumentType] = useState<DriverDocumentType | null>(null);
+  const [driverDocuments, setDriverDocuments] = useState<DriverDocumentRow[]>([]);
   const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
   const [vehiclePhotoUrl, setVehiclePhotoUrl] = useState<string | null>(null);
   const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
@@ -63,7 +91,7 @@ export function SettingsScreen() {
   useEffect(() => {
     let cancelled = false;
     const userId = session?.id;
-    if (!userId || flavor !== 'driver') {
+    if (!userId) {
       setProfileAvatarUrl(null);
       setVehiclePhotoUrl(null);
       return;
@@ -82,7 +110,7 @@ export function SettingsScreen() {
         setVehiclePhotoUrl(null);
       } else {
         setProfileAvatarUrl((data?.avatar_url as string | null) ?? null);
-        setVehiclePhotoUrl((data?.vehicle_photo_url as string | null) ?? null);
+        setVehiclePhotoUrl(flavor === 'driver' ? ((data?.vehicle_photo_url as string | null) ?? null) : null);
       }
       setLoadingProfilePhotos(false);
     })();
@@ -91,6 +119,194 @@ export function SettingsScreen() {
       cancelled = true;
     };
   }, [session?.id, flavor]);
+
+  const loadDriverDocuments = async () => {
+    const userId = session?.id;
+    if (!userId || flavor !== 'driver') {
+      setDriverDocuments([]);
+      return;
+    }
+    setLoadingDocuments(true);
+    try {
+      const { data, error } = await supabase
+        .from('driver_documents')
+        .select(
+          'id, driver_id, doc_type, storage_bucket, storage_path, file_name, mime_type, file_size_bytes, status, review_notes, expires_at, updated_at'
+        )
+        .eq('driver_id', userId)
+        .order('updated_at', { ascending: false });
+      if (error) throw error;
+      setDriverDocuments((data ?? []) as DriverDocumentRow[]);
+    } catch {
+      setDriverDocuments([]);
+    } finally {
+      setLoadingDocuments(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadDriverDocuments();
+  }, [session?.id, flavor]);
+
+  const extFromMime = (mimeType: string | null | undefined): string => {
+    const t = String(mimeType ?? '').toLowerCase();
+    if (t.includes('png')) return 'png';
+    if (t.includes('webp')) return 'webp';
+    return 'jpg';
+  };
+
+  const pathFromPublicUrl = (url: string | null, bucket: string): string | null => {
+    if (!url) return null;
+    const marker = `/storage/v1/object/public/${bucket}/`;
+    const idx = url.indexOf(marker);
+    if (idx < 0) return null;
+    const tail = url.slice(idx + marker.length);
+    if (!tail) return null;
+    return tail.split('?')[0] ?? null;
+  };
+
+  const handleUploadAvatar = async () => {
+    const userId = session?.id;
+    if (!userId || uploadingAvatar) return;
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permiso', 'Necesitamos acceso a tus fotos para actualizar tu avatar.');
+      return;
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.8,
+      aspect: [1, 1],
+    });
+    if (picked.canceled || !picked.assets?.length) return;
+    const asset = picked.assets[0];
+    if (!asset?.uri) return;
+
+    try {
+      setUploadingAvatar(true);
+      const res = await fetch(asset.uri);
+      const blob = await res.blob();
+      const maxBytes = 3 * 1024 * 1024;
+      if (blob.size > maxBytes) {
+        Alert.alert('Foto muy pesada', 'La imagen supera 3MB. Elegí una más liviana.');
+        return;
+      }
+
+      const ext = extFromMime(asset.mimeType);
+      const bucket = 'profile-avatars';
+      const objectPath = `${userId}/avatar-${Date.now()}.${ext}`;
+      const oldPath = pathFromPublicUrl(profileAvatarUrl, bucket);
+
+      const { error: upErr } = await supabase.storage.from(bucket).upload(objectPath, blob, {
+        contentType: asset.mimeType ?? 'image/jpeg',
+        cacheControl: '3600',
+        upsert: true,
+      });
+      if (upErr) throw upErr;
+
+      const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
+      const newUrl = data.publicUrl;
+      const { error: profileErr } = await supabase
+        .from('profiles')
+        .update({ avatar_url: newUrl })
+        .eq('id', userId);
+      if (profileErr) throw profileErr;
+
+      if (oldPath && oldPath !== objectPath) {
+        await supabase.storage.from(bucket).remove([oldPath]);
+      }
+      setProfileAvatarUrl(newUrl);
+      Alert.alert('Listo', 'Tu foto de perfil se actualizó.');
+    } catch (e) {
+      Alert.alert('No se pudo subir la foto', e instanceof Error ? e.message : 'Intentá de nuevo.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const statusLabel = (status: DriverDocumentStatus): string => {
+    if (status === 'approved') return 'Aprobado';
+    if (status === 'rejected') return 'Rechazado';
+    return 'En revisión';
+  };
+
+  const statusStyle = (status: DriverDocumentStatus) => {
+    if (status === 'approved') return styles.docBadgeApproved;
+    if (status === 'rejected') return styles.docBadgeRejected;
+    return styles.docBadgePending;
+  };
+
+  const uploadDriverDocument = async (docType: DriverDocumentType) => {
+    const userId = session?.id;
+    if (!userId || uploadingDocumentType) return;
+    const picked = await DocumentPicker.getDocumentAsync({
+      type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (picked.canceled || !picked.assets?.length) return;
+    const file = picked.assets[0];
+    if (!file?.uri) return;
+    try {
+      setUploadingDocumentType(docType);
+      const response = await fetch(file.uri);
+      const blob = await response.blob();
+      const maxBytes = 5 * 1024 * 1024;
+      if (blob.size > maxBytes) {
+        Alert.alert('Archivo pesado', 'El archivo supera 5MB. Elegí uno más liviano.');
+        return;
+      }
+      const mime = file.mimeType ?? blob.type ?? 'application/octet-stream';
+      const ext =
+        mime === 'application/pdf'
+          ? 'pdf'
+          : mime.includes('png')
+            ? 'png'
+            : mime.includes('webp')
+              ? 'webp'
+              : 'jpg';
+      const bucket = 'driver-documents';
+      const objectPath = `${userId}/${docType}/document-${Date.now()}.${ext}`;
+
+      const prev = driverDocuments.find((d) => d.doc_type === docType);
+      if (prev?.storage_path) {
+        await supabase.storage.from(bucket).remove([prev.storage_path]);
+      }
+
+      const { error: upErr } = await supabase.storage.from(bucket).upload(objectPath, blob, {
+        contentType: mime,
+        cacheControl: '3600',
+        upsert: true,
+      });
+      if (upErr) throw upErr;
+
+      const payload = {
+        driver_id: userId,
+        doc_type: docType,
+        storage_bucket: bucket,
+        storage_path: objectPath,
+        file_name: file.name ?? null,
+        mime_type: mime,
+        file_size_bytes: blob.size,
+        status: 'pending',
+        review_notes: null,
+        reviewed_by: null,
+        reviewed_at: null,
+      };
+      const { error: dbErr } = await supabase
+        .from('driver_documents')
+        .upsert(payload, { onConflict: 'driver_id,doc_type' });
+      if (dbErr) throw dbErr;
+
+      await loadDriverDocuments();
+      Alert.alert('Listo', 'Documento cargado. Quedó en revisión.');
+    } catch (e) {
+      Alert.alert('No se pudo cargar', e instanceof Error ? e.message : 'Intentá de nuevo.');
+    } finally {
+      setUploadingDocumentType(null);
+    }
+  };
 
   const handleRequestLocation = async () => {
     const granted = await requestLocationPermission();
@@ -105,40 +321,52 @@ export function SettingsScreen() {
         <Text style={styles.email}>{session.email}</Text>
       ) : null}
 
-      {flavor === 'driver' ? (
-        <>
-          <Text style={styles.sectionTitle}>Perfil</Text>
-          {loadingProfilePhotos ? (
-            <View style={styles.profileCard}>
-              <ActivityIndicator size="small" color="#166534" />
-              <Text style={styles.profileHint}>Cargando fotos...</Text>
-            </View>
-          ) : (
-            <View style={styles.profileCard}>
-              <View style={styles.photoBlock}>
-                <Text style={styles.photoLabel}>Foto de perfil</Text>
-                {profileAvatarUrl ? (
-                  <Image source={{ uri: profileAvatarUrl }} style={styles.profilePhoto} />
+      <Text style={styles.sectionTitle}>Perfil</Text>
+      {loadingProfilePhotos ? (
+        <View style={styles.profileCard}>
+          <ActivityIndicator size="small" color="#166534" />
+          <Text style={styles.profileHint}>Cargando fotos...</Text>
+        </View>
+      ) : (
+        <View style={styles.profileCard}>
+          <View style={styles.photoBlock}>
+            <Text style={styles.photoLabel}>Foto de perfil</Text>
+            <View style={styles.avatarRow}>
+              {profileAvatarUrl ? (
+                <Image source={{ uri: profileAvatarUrl }} style={styles.profilePhoto} />
+              ) : (
+                <View style={[styles.profilePhoto, styles.photoPlaceholder]}>
+                  <Text style={styles.photoPlaceholderText}>Sin foto</Text>
+                </View>
+              )}
+              <TouchableOpacity
+                style={[styles.smallActionBtn, uploadingAvatar && styles.buttonDisabled]}
+                onPress={() => void handleUploadAvatar()}
+                disabled={uploadingAvatar}
+              >
+                {uploadingAvatar ? (
+                  <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <View style={[styles.profilePhoto, styles.photoPlaceholder]}>
-                    <Text style={styles.photoPlaceholderText}>Sin foto</Text>
-                  </View>
+                  <Text style={styles.smallActionBtnText}>Subir desde dispositivo</Text>
                 )}
-              </View>
-              <View style={styles.photoBlock}>
-                <Text style={styles.photoLabel}>Foto del vehículo</Text>
-                {vehiclePhotoUrl ? (
-                  <Image source={{ uri: vehiclePhotoUrl }} style={styles.vehiclePhoto} />
-                ) : (
-                  <View style={[styles.vehiclePhoto, styles.photoPlaceholder]}>
-                    <Text style={styles.photoPlaceholderText}>Sin foto</Text>
-                  </View>
-                )}
-              </View>
+              </TouchableOpacity>
             </View>
-          )}
-        </>
-      ) : null}
+          </View>
+          {flavor === 'driver' ? (
+            <View style={styles.photoBlock}>
+              <Text style={styles.photoLabel}>Foto del vehículo</Text>
+              {vehiclePhotoUrl ? (
+                <Image source={{ uri: vehiclePhotoUrl }} style={styles.vehiclePhoto} />
+              ) : (
+                <View style={[styles.vehiclePhoto, styles.photoPlaceholder]}>
+                  <Text style={styles.photoPlaceholderText}>Sin foto</Text>
+                </View>
+              )}
+              <Text style={styles.profileHint}>La foto del vehículo sigue gestionada desde panel admin.</Text>
+            </View>
+          ) : null}
+        </View>
+      )}
 
       {flavor === 'driver' ? (
         <>
@@ -157,6 +385,57 @@ export function SettingsScreen() {
               {navPref === opt.value ? <Text style={styles.radioCheck}>✓</Text> : null}
             </TouchableOpacity>
           ))}
+        </>
+      ) : null}
+
+      {flavor === 'driver' ? (
+        <>
+          <Text style={styles.sectionTitle}>Documentos del conductor</Text>
+          {loadingDocuments ? (
+            <View style={styles.profileCard}>
+              <ActivityIndicator size="small" color="#166534" />
+              <Text style={styles.profileHint}>Cargando documentos...</Text>
+            </View>
+          ) : (
+            <View style={styles.profileCard}>
+              {DRIVER_DOCUMENTS.map((d) => {
+                const row = driverDocuments.find((x) => x.doc_type === d.type);
+                const uploading = uploadingDocumentType === d.type;
+                return (
+                  <View key={d.type} style={styles.docRow}>
+                    <View style={styles.docMain}>
+                      <Text style={styles.docTitle}>{d.label}</Text>
+                      <View style={[styles.docBadge, statusStyle(row?.status ?? 'pending')]}>
+                        <Text style={styles.docBadgeText}>{statusLabel(row?.status ?? 'pending')}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.docMeta} numberOfLines={1}>
+                      {row?.file_name ? `Archivo: ${row.file_name}` : 'Sin archivo cargado'}
+                    </Text>
+                    {row?.expires_at ? (
+                      <Text style={styles.docMeta}>Vence: {new Date(`${row.expires_at}T00:00:00`).toLocaleDateString('es-PY')}</Text>
+                    ) : null}
+                    {row?.review_notes ? (
+                      <Text style={styles.docReviewNote}>Observación admin: {row.review_notes}</Text>
+                    ) : null}
+                    <TouchableOpacity
+                      style={[styles.smallActionBtn, uploading && styles.buttonDisabled]}
+                      onPress={() => void uploadDriverDocument(d.type)}
+                      disabled={uploading}
+                    >
+                      {uploading ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                      ) : (
+                        <Text style={styles.smallActionBtnText}>
+                          {row?.file_name ? 'Reemplazar documento' : 'Subir documento'}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          )}
         </>
       ) : null}
 
@@ -235,6 +514,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   photoBlock: { gap: 6 },
+  avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
   photoLabel: { fontSize: 13, color: '#374151', fontWeight: '600' },
   profilePhoto: {
     width: 84,
@@ -257,6 +537,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   photoPlaceholderText: { color: '#6b7280', fontSize: 12 },
+  smallActionBtn: {
+    backgroundColor: '#166534',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  smallActionBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  docRow: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+    gap: 6,
+  },
+  docMain: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  docTitle: { fontSize: 14, color: '#111827', fontWeight: '700', flex: 1 },
+  docMeta: { fontSize: 12, color: '#6b7280' },
+  docReviewNote: { fontSize: 12, color: '#92400e', lineHeight: 16 },
+  docBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+  },
+  docBadgePending: { backgroundColor: '#fef3c7' },
+  docBadgeApproved: { backgroundColor: '#dcfce7' },
+  docBadgeRejected: { backgroundColor: '#fee2e2' },
+  docBadgeText: { fontSize: 11, fontWeight: '700', color: '#374151' },
   profileHint: { fontSize: 12, color: '#6b7280' },
   hint: { fontSize: 13, color: '#666', marginBottom: 12 },
   radioRow: {

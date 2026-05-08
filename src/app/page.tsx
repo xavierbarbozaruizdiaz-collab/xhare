@@ -12,7 +12,7 @@ const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: f
 
 type MapPoint = { lat: number; lng: number; label?: string } | null;
 
-type AuthState = 'loading' | 'guest' | 'passenger' | 'driver';
+type AuthState = 'loading' | 'guest' | 'passenger' | 'driver' | 'admin';
 
 export default function Home() {
   const router = useRouter();
@@ -30,7 +30,7 @@ export default function Home() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Verificar sesión y rol: guest → landing; driver → my-rides; passenger → búsqueda
+  // Verificar sesión y rol: admin queda web; pasajero/conductor usan app móvil.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -47,12 +47,17 @@ export default function Home() {
           .eq('id', user.id)
           .single();
         if (cancelled) return;
-        if (profile?.role === 'driver') {
-          setAuthState('driver');
-          router.replace('/my-rides');
+        if (profile?.role === 'admin') {
+          setAuthState('admin');
+          router.replace('/admin');
           return;
         }
-        setAuthState('passenger');
+        if (profile?.role === 'driver' || profile?.role === 'driver_pending' || profile?.role === 'passenger') {
+          setAuthState('passenger');
+          router.replace('/descargar');
+          return;
+        }
+        setAuthState('guest');
       } catch {
         if (!cancelled) setAuthState('guest');
       }
@@ -140,12 +145,12 @@ export default function Home() {
   }
 
   // Loading inicial
-  if (authState === 'loading' || authState === 'driver') {
+  if (authState === 'loading' || authState === 'driver' || authState === 'passenger' || authState === 'admin') {
     return (
       <div className="min-h-screen bg-gray-50 app-mobile-shell flex items-center justify-center">
         <div className="text-center text-gray-700">
           <div className="inline-block w-10 h-10 border-2 border-green-600 border-t-transparent rounded-full animate-spin mb-4" />
-          <p>{authState === 'driver' ? 'Redirigiendo a tus viajes...' : 'Cargando...'}</p>
+          <p>Cargando...</p>
         </div>
       </div>
     );

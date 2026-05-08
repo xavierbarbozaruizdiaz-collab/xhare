@@ -34,6 +34,8 @@ export type DriverHomeTemplateSnapshot = {
   originLng: number | null;
   destinationLat: number | null;
   destinationLng: number | null;
+  /** Paradas intermedias del conductor (en orden de ruta). */
+  waypoints?: Array<{ lat: number; lng: number; label?: string | null }>;
   nextTriggerAtIso?: string;
   /** Viaje vigente ligado a esta plantilla desde Inicio (apagar = intentar cancelar este id). */
   homeActiveRideId?: string | null;
@@ -256,6 +258,18 @@ export async function upsertDriverHomeTemplateRow(
       patch.destinationLat !== undefined ? patch.destinationLat : prev?.destinationLat ?? null,
     destinationLng:
       patch.destinationLng !== undefined ? patch.destinationLng : prev?.destinationLng ?? null,
+    waypoints:
+      patch.waypoints !== undefined
+        ? (Array.isArray(patch.waypoints)
+            ? patch.waypoints
+                .map((w) => ({
+                  lat: Number(w.lat),
+                  lng: Number(w.lng),
+                  label: w.label != null ? String(w.label) : null,
+                }))
+                .filter((w) => Number.isFinite(w.lat) && Number.isFinite(w.lng))
+            : [])
+        : (prev?.waypoints ?? []),
     nextTriggerAtIso: nextTrigger ?? undefined,
     homeActiveRideId:
       patch.homeActiveRideId !== undefined ? patch.homeActiveRideId : prev?.homeActiveRideId ?? undefined,

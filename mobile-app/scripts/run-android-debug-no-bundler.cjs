@@ -1,7 +1,6 @@
 /**
  * Robust Android debug runner without Metro bundler launch:
- * - `gradlew clean` antes de compilar (salvo EXPO_ANDROID_SKIP_GRADLE_CLEAN=1) para que al alternar
- *   pasajero/conductor el APK instalado coincida con el package / app.config de ese flavor.
+ * - Regenera `android/` por flavor (`expo prebuild --clean`) para alinear package/appId.
  * - Builds/installs with Expo (`--no-build-cache`).
  * - If Expo fails only when opening activity (known placeholder issue), force-opens .MainActivity.
  */
@@ -28,23 +27,15 @@ function getFlavor() {
   return raw === 'driver' ? 'driver' : 'passenger';
 }
 
-function runGradleCleanIfRequested() {
-  if (String(process.env.EXPO_ANDROID_SKIP_GRADLE_CLEAN ?? '').trim() === '1') return true;
-  const androidDir = path.join(__dirname, '..', 'android');
-  const gradlewBin = process.platform === 'win32' ? 'gradlew.bat' : 'gradlew';
-  const gradlewPath = path.join(androidDir, gradlewBin);
-  if (!fs.existsSync(gradlewPath)) return true;
-  console.log('[android-no-bundler] gradlew clean (evita APK mezclado al alternar pasajero/conductor)…');
-  const r = spawnSync(gradlewBin, ['clean'], {
-    cwd: androidDir,
+function runExpoPrebuildClean() {
+  const expoCli = require.resolve('expo/bin/cli');
+  console.log('[android-no-bundler] expo prebuild --platform android --clean (sincroniza package por flavor)…');
+  const r = spawnSync(process.execPath, [expoCli, 'prebuild', '--platform', 'android', '--clean'], {
     stdio: 'inherit',
+    cwd: path.join(__dirname, '..'),
     env: process.env,
-    shell: process.platform === 'win32',
   });
-  if (r.status !== 0) {
-    console.warn('[android-no-bundler] gradlew clean falló; sigo con el build (podés setear EXPO_ANDROID_SKIP_GRADLE_CLEAN=1).');
-  }
-  return true;
+  return r.status === 0;
 }
 
 function runExpoInstall(appId) {
@@ -93,7 +84,10 @@ const flavor = getFlavor();
 const appId = flavor === 'driver' ? 'com.xhare.driver' : 'com.xhare.app';
 const adb = findAdb();
 
-runGradleCleanIfRequested();
+if (!runExpoPrebuildClean()) {
+  console.error('[android-no-bundler] Falló expo prebuild --clean; abortando para evitar binario inconsistente.');
+  process.exit(1);
+}
 const result = runExpoInstall(appId);
 if (result.error) {
   console.error('[android-no-bundler] Error ejecutando Expo:', result.error.message);

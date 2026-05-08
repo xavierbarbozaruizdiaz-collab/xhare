@@ -1563,35 +1563,6 @@ export function RideDetailScreen() {
               <Text style={styles.bodyLine}>{priceSeat.toLocaleString('es-PY')} PYG</Text>
             </>
           ) : null}
-          {durMin > 0 ? (
-            <>
-              <Text style={styles.sectionLabel}>Duración estimada</Text>
-              {status === 'en_route' && passengerBooking ? (
-                <View style={styles.etaRow}>
-                  <View style={styles.etaCol}>
-                    <Text style={styles.bodyLine}>{durMin} minutos</Text>
-                    <Text style={styles.etaSubLabel}>Duración total</Text>
-                  </View>
-                  <View style={styles.etaCol}>
-                    <Text style={styles.bodyLine}>
-                      {passengerEtaToPickupMin != null ? `${passengerEtaToPickupMin} min` : '—'}
-                    </Text>
-                    <Text style={styles.etaSubLabel}>Llega conductor</Text>
-                  </View>
-                </View>
-              ) : (
-                <Text style={styles.bodyLine}>{durMin} minutos</Text>
-              )}
-            </>
-          ) : null}
-          {maxDevKm > 0 && !passengerBooking ? (
-            <>
-              <Text style={styles.sectionLabel}>Subida y bajada</Text>
-              <Text style={styles.bodyMuted}>
-                Podés elegir puntos hasta unos {maxDevKm} km a cada lado de la ruta del conductor (al reservar en el mapa).
-              </Text>
-            </>
-          ) : null}
           {vehicleLine ? (
             <>
               <Text style={styles.sectionLabel}>Vehículo</Text>
@@ -1609,19 +1580,6 @@ export function RideDetailScreen() {
             <>
               <Text style={styles.sectionLabel}>Descripción</Text>
               <Text style={styles.description}>{description}</Text>
-            </>
-          ) : null}
-          {rideStops.length > 0 && !passengerBooking ? (
-            <>
-              <Text style={styles.sectionLabel}>Paradas del recorrido</Text>
-              {rideStops.map((s, i) => (
-                <View key={s.id} style={[styles.stopRow, { marginTop: 8 }]}>
-                  <Text style={styles.stopOrder}>{i + 1}.</Text>
-                  <Text style={[styles.stopLabel, styles.stopLabelFlex]}>
-                    {s.label?.trim() || `Parada ${i + 1}`}
-                  </Text>
-                </View>
-              ))}
             </>
           ) : null}
           {driver ? (

@@ -1375,7 +1375,7 @@ export function HomeScreen() {
                   accessibilityLabel="Buscar viajes"
                 >
                   <Ionicons name="search" size={20} color="#9ca3af" style={styles.fakeSearchIcon} />
-                  <Text style={styles.fakeSearchPlaceholder}>Ingrese codigo de ruta</Text>
+                  <Text style={styles.fakeSearchPlaceholder}>Ingrese código o nombre de ruta</Text>
                 </TouchableOpacity>
 
                 <View style={styles.rowTwo}>
@@ -1457,12 +1457,57 @@ export function HomeScreen() {
                       <TouchableOpacity
                         key={row.id}
                         style={styles.favoriteRow}
-                        onPress={() =>
-                          parentNav?.navigate('PublishRide', {
-                            driverTemplateId: row.id,
-                            publishKind: row.rideKind === 'long_distance' ? 'long_distance' : 'internal',
-                          })
-                        }
+                        onPress={() => {
+                          void (async () => {
+                            if (!parentNav) return;
+                            const publishKind =
+                              row.rideKind === 'long_distance' ? 'long_distance' : 'internal';
+                            if (!userId) {
+                              parentNav.navigate('PublishRide', {
+                                driverTemplateId: row.id,
+                                publishKind,
+                              });
+                              return;
+                            }
+                            try {
+                              let editRideId = '';
+                              const preferredId = String(row.homeActiveRideId ?? '').trim();
+                              if (preferredId) {
+                                const { data: preferred } = await supabase
+                                  .from('rides')
+                                  .select('id, status')
+                                  .eq('id', preferredId)
+                                  .eq('driver_id', userId)
+                                  .maybeSingle();
+                                const st = String((preferred as { status?: unknown } | null)?.status ?? '');
+                                if (st === 'published' || st === 'booked') {
+                                  editRideId = String((preferred as { id?: unknown } | null)?.id ?? '').trim();
+                                }
+                              }
+                              if (!editRideId) {
+                                const { data: active } = await supabase
+                                  .from('rides')
+                                  .select('id')
+                                  .eq('driver_id', userId)
+                                  .eq('driver_home_template_slot', row.id)
+                                  .in('status', ['published', 'booked'])
+                                  .order('departure_time', { ascending: true })
+                                  .limit(1);
+                                editRideId = String((active?.[0] as { id?: unknown } | undefined)?.id ?? '').trim();
+                              }
+                              if (editRideId) {
+                                parentNav.navigate('EditRide', { rideId: editRideId });
+                                return;
+                              }
+                            } catch {
+                              // fallback: abrir formulario de publicación
+                            }
+                            parentNav.navigate('PublishRide', {
+                              driverTemplateId: row.id,
+                              publishKind,
+                            });
+                          })();
+                        }}
                         accessibilityRole="button"
                         accessibilityLabel={`Plantilla ${title}`}
                       >

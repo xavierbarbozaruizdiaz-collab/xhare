@@ -50,25 +50,9 @@ export default function LoginPage() {
         router.replace('/admin');
         return;
       }
-      if (role === 'driver' || role === 'driver_pending') {
-        if (role === 'driver_pending') {
-          didRedirect = true;
-          router.replace('/driver/pending');
-          return;
-        }
-        const { data: p } = await supabase.from('profiles').select('vehicle_seat_count, driver_approved_at').eq('id', session.user.id).maybeSingle();
-        if (p?.driver_approved_at && p?.vehicle_seat_count == null) {
-          didRedirect = true;
-          router.replace('/driver/setup');
-          return;
-        }
-        if (p?.driver_approved_at) {
-          didRedirect = true;
-          router.replace('/my-rides');
-          return;
-        }
+      if (role === 'driver' || role === 'driver_pending' || role === 'passenger') {
         didRedirect = true;
-        router.replace('/driver/pending');
+        router.replace('/descargar');
         return;
       }
       didRedirect = true;
@@ -156,28 +140,12 @@ export default function LoginPage() {
             router.refresh();
             return;
           }
-          if (profile?.role === 'driver_pending') {
-            router.push('/driver/setup');
-            router.refresh();
-            return;
-          }
-          if (profile?.role === 'driver') {
-            const { data: p, error: seatErr } = await supabase
-              .from('profiles')
-              .select('vehicle_seat_count, driver_approved_at')
-              .eq('id', userId)
-              .maybeSingle();
-            if (!seatErr && p != null && p.driver_approved_at && p.vehicle_seat_count == null) {
-              router.push('/driver/setup');
-              router.refresh();
-              return;
-            }
-            if (!seatErr && p != null && p.driver_approved_at) {
-              router.push('/my-rides');
-              router.refresh();
-              return;
-            }
-            router.push('/driver/pending');
+          if (
+            profile?.role === 'driver_pending' ||
+            profile?.role === 'driver' ||
+            profile?.role === 'passenger'
+          ) {
+            router.push('/descargar');
             router.refresh();
             return;
           }

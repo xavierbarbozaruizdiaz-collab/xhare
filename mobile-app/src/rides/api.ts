@@ -24,7 +24,7 @@ function normalizeSearchText(s: string): string {
     .trim();
 }
 
-/** Coincidencia más estricta: frase completa o ≥70% de palabras significativas (≥3 letras). */
+/** Coincidencia flexible: frase completa o al menos ~50% de tokens significativos (mínimo 1). */
 function labelMatchesSearchText(label: string, query: string): boolean {
   const l = normalizeSearchText(label);
   const qRaw = normalizeSearchText(query);
@@ -34,7 +34,7 @@ function labelMatchesSearchText(label: string, query: string): boolean {
   const sig = tokens.filter((t) => t.length >= 3);
   if (sig.length === 0) return l.includes(qRaw);
   const matched = sig.filter((t) => l.includes(t)).length;
-  return matched >= Math.max(1, Math.ceil(sig.length * 0.7));
+  return matched >= Math.max(1, Math.ceil(sig.length * 0.5));
 }
 
 function textMatchStrength(label: string, query: string): number {

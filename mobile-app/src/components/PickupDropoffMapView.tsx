@@ -15,7 +15,7 @@ import {
   Pressable,
   Alert,
 } from 'react-native';
-import MapView, { Polyline, Marker, type MapPressEvent, type Region } from 'react-native-maps';
+import MapView, { Polyline, Marker, type Region } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -119,6 +119,7 @@ export function PickupDropoffMapView({
   const [fullVisible, setFullVisible] = useState(false);
   const [locationOk, setLocationOk] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [selectionCenter, setSelectionCenter] = useState<Point | null>(null);
   const mapRef = useRef<MapView>(null);
 
   useEffect(() => {
@@ -153,6 +154,7 @@ export function PickupDropoffMapView({
     if (!fullVisible) return;
     const t = setTimeout(() => {
       mapRef.current?.animateToRegion(region, 400);
+      setSelectionCenter({ lat: region.latitude, lng: region.longitude });
     }, 120);
     return () => clearTimeout(t);
   }, [fullVisible, region.latitude, region.longitude, region.latitudeDelta, region.longitudeDelta]);
@@ -227,9 +229,7 @@ export function PickupDropoffMapView({
     return true;
   };
 
-  const onMapPress = (e: MapPressEvent) => {
-    const { latitude, longitude } = e.nativeEvent.coordinate;
-    const raw: Point = { lat: latitude, lng: longitude };
+  const applySelectionPoint = (raw: Point) => {
     if (!validateCorridor(raw)) return;
     let p = raw;
     if (snapToRoute && baseRoute.length >= 2) {
@@ -282,6 +282,11 @@ export function PickupDropoffMapView({
       );
       onExtraStopsChange(next.slice(0, maxExtraStops));
     }
+  };
+
+  const confirmSelectionAtCenter = () => {
+    if (!selectionCenter) return;
+    applySelectionPoint(selectionCenter);
   };
 
   const removeLastExtra = () => {
@@ -448,8 +453,8 @@ export function PickupDropoffMapView({
     : '';
   const modalHintLines =
     (corridorM != null
-      ? `Podés tocar hasta unos ${corridorM} m de la ruta gris del conductor. `
-      : 'Tocá el mapa para colocar el punto. ') +
+      ? `Mové el mapa y confirmá dentro de unos ${corridorM} m de la ruta gris del conductor. `
+      : 'Mové el mapa y confirmá para colocar el punto. ') +
     othersHint +
     (hasPassengerHighlight
       ? usesOsrmMergedPath
@@ -501,9 +506,9 @@ export function PickupDropoffMapView({
     <View>
       {modeRow}
       <Text style={styles.modeHint}>
-        {mode === 'pickup' && 'Tocá “A · Subida” o el mapa para abrir pantalla completa y marcar subida (A).'}
-        {mode === 'dropoff' && 'Tocá “B · Bajada” o el mapa para marcar bajada (B).'}
-        {mode === 'extra' && hasExtras && 'Tocá + Parada o el mapa para agregar una parada intermedia (máx. 3).'}
+        {mode === 'pickup' && 'Tocá “A · Subida”, mové el mapa y confirmá para fijar la subida.'}
+        {mode === 'dropoff' && 'Tocá “B · Bajada”, mové el mapa y confirmá para fijar la bajada.'}
+        {mode === 'extra' && hasExtras && 'Tocá “+ Parada”, mové el mapa y confirmá para agregar parada (máx. 3).'}
       </Text>
       {tapHint ? <Text style={styles.warnHint}>{tapHint}</Text> : null}
       <Text style={styles.legend}>{legendFinal}</Text>
@@ -571,7 +576,9 @@ export function PickupDropoffMapView({
               provider={androidMapProvider}
               style={styles.modalMap}
               initialRegion={region}
-              onPress={onMapPress}
+              onRegionChangeComplete={(r) => {
+                setSelectionCenter({ lat: r.latitude, lng: r.longitude });
+              }}
               scrollEnabled
               zoomEnabled
               rotateEnabled={false}
@@ -581,6 +588,13 @@ export function PickupDropoffMapView({
             >
               {mapChildren}
             </MapView>
+            <View style={styles.centerPinWrap} pointerEvents="none">
+              <Ionicons
+                name={mode === 'pickup' ? 'location' : mode === 'dropoff' ? 'flag' : 'add-circle'}
+                size={34}
+                color={mode === 'dropoff' ? '#b91c1c' : mode === 'extra' ? '#2563eb' : GREEN}
+              />
+            </View>
             <TouchableOpacity
               style={styles.locateBtn}
               onPress={() => void goToMyLocation()}
@@ -617,6 +631,26 @@ export function PickupDropoffMapView({
                 </TouchableOpacity>
               ) : null}
             </View>
+            <TouchableOpacity
+              style={styles.confirmSelectionBtn}
+              onPress={confirmSelectionAtCenter}
+              accessibilityRole="button"
+              accessibilityLabel={
+                mode === 'pickup'
+                  ? 'Confirmar subida'
+                  : mode === 'dropoff'
+                    ? 'Confirmar bajada'
+                    : 'Confirmar parada intermedia'
+              }
+            >
+              <Text style={styles.confirmSelectionBtnText}>
+                {mode === 'pickup'
+                  ? 'Confirmar subida'
+                  : mode === 'dropoff'
+                    ? 'Confirmar bajada'
+                    : 'Confirmar parada'}
+              </Text>
+            </TouchableOpacity>
           </SafeAreaView>
         </SafeAreaView>
       </Modal>
@@ -716,6 +750,14 @@ const styles = StyleSheet.create({
   },
   modalMapWrap: { flex: 1, position: 'relative' },
   modalMap: { ...StyleSheet.absoluteFillObject },
+  centerPinWrap: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginLeft: -17,
+    marginTop: -34,
+    zIndex: 5,
+  },
   locateBtn: {
     position: 'absolute',
     right: 14,
@@ -744,6 +786,20 @@ const styles = StyleSheet.create({
     borderTopColor: '#e5e7eb',
     paddingTop: 4,
     paddingBottom: Platform.OS === 'ios' ? 2 : 8,
+  },
+  confirmSelectionBtn: {
+    marginHorizontal: 10,
+    marginTop: -2,
+    marginBottom: 4,
+    borderRadius: 10,
+    backgroundColor: '#111827',
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
+  confirmSelectionBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
   },
   driverDot: {
     width: 18,
