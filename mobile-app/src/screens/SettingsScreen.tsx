@@ -1,6 +1,6 @@
 /**
  * Settings: cuenta, navegación, permisos, Mensajes; Mis solicitudes (pasajero) o Solicitudes de viaje (conductor), cerrar sesión.
- * Vehículo: solo administración web.
+ * Perfil/documentos: carga única por defecto; recarga solo si admin la habilita.
  */
 import React, { useState } from 'react';
 import {
@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
@@ -46,6 +47,7 @@ type DriverDocumentRow = {
   status: DriverDocumentStatus;
   review_notes: string | null;
   expires_at: string | null;
+  reupload_enabled: boolean | null;
   updated_at: string;
 };
 
@@ -69,6 +71,8 @@ export function SettingsScreen() {
   const [driverDocuments, setDriverDocuments] = useState<DriverDocumentRow[]>([]);
   const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
   const [vehiclePhotoUrl, setVehiclePhotoUrl] = useState<string | null>(null);
+  const [avatarReuploadEnabled, setAvatarReuploadEnabled] = useState(false);
+  const [vehiclePhotoReuploadEnabled, setVehiclePhotoReuploadEnabled] = useState(false);
   const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
   const handleSignOut = async () => {
@@ -101,16 +105,22 @@ export function SettingsScreen() {
     (async () => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('avatar_url, vehicle_photo_url')
+        .select('avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled')
         .eq('id', userId)
         .maybeSingle();
       if (cancelled) return;
       if (error) {
         setProfileAvatarUrl(null);
         setVehiclePhotoUrl(null);
+        setAvatarReuploadEnabled(false);
+        setVehiclePhotoReuploadEnabled(false);
       } else {
         setProfileAvatarUrl((data?.avatar_url as string | null) ?? null);
         setVehiclePhotoUrl(flavor === 'driver' ? ((data?.vehicle_photo_url as string | null) ?? null) : null);
+        setAvatarReuploadEnabled(Boolean((data as { avatar_reupload_enabled?: unknown } | null)?.avatar_reupload_enabled));
+        setVehiclePhotoReuploadEnabled(
+          Boolean((data as { vehicle_photo_reupload_enabled?: unknown } | null)?.vehicle_photo_reupload_enabled)
+        );
       }
       setLoadingProfilePhotos(false);
     })();
@@ -131,7 +141,7 @@ export function SettingsScreen() {
       const { data, error } = await supabase
         .from('driver_documents')
         .select(
-          'id, driver_id, doc_type, storage_bucket, storage_path, file_name, mime_type, file_size_bytes, status, review_notes, expires_at, updated_at'
+          'id, driver_id, doc_type, storage_bucket, storage_path, file_name, mime_type, file_size_bytes, status, review_notes, expires_at, reupload_enabled, updated_at'
         )
         .eq('driver_id', userId)
         .order('updated_at', { ascending: false });
@@ -165,9 +175,40 @@ export function SettingsScreen() {
     return tail.split('?')[0] ?? null;
   };
 
+  const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+    let str = base64.replace(/=+$/, '');
+    let output = '';
+    let bc = 0;
+    let bs = 0;
+    let buffer: number;
+    let idx = 0;
+    while ((buffer = str.charCodeAt(idx++))) {
+      const val = chars.indexOf(String.fromCharCode(buffer));
+      if (val < 0) continue;
+      bs = bc % 4 ? bs * 64 + val : val;
+      if (bc++ % 4) output += String.fromCharCode(255 & (bs >> ((-2 * bc) & 6)));
+    }
+    const bytes = new Uint8Array(output.length);
+    for (let i = 0; i < output.length; i++) bytes[i] = output.charCodeAt(i);
+    return bytes.buffer;
+  };
+
+  const readUriToArrayBuffer = async (uri: string): Promise<ArrayBuffer> => {
+    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    return base64ToArrayBuffer(b64);
+  };
+
   const handleUploadAvatar = async () => {
     const userId = session?.id;
     if (!userId || uploadingAvatar) return;
+    if (profileAvatarUrl && !avatarReuploadEnabled) {
+      Alert.alert(
+        'Carga bloqueada',
+        'Tu foto de perfil ya fue cargada. Solo podés volver a subir si un admin habilita la recarga.'
+      );
+      return;
+    }
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       Alert.alert('Permiso', 'Necesitamos acceso a tus fotos para actualizar tu avatar.');
@@ -185,10 +226,10 @@ export function SettingsScreen() {
 
     try {
       setUploadingAvatar(true);
-      const res = await fetch(asset.uri);
-      const blob = await res.blob();
+      const content = await readUriToArrayBuffer(asset.uri);
+      const sizeBytes = asset.fileSize ?? content.byteLength;
       const maxBytes = 3 * 1024 * 1024;
-      if (blob.size > maxBytes) {
+      if (sizeBytes > maxBytes) {
         Alert.alert('Foto muy pesada', 'La imagen supera 3MB. Elegí una más liviana.');
         return;
       }
@@ -198,7 +239,7 @@ export function SettingsScreen() {
       const objectPath = `${userId}/avatar-${Date.now()}.${ext}`;
       const oldPath = pathFromPublicUrl(profileAvatarUrl, bucket);
 
-      const { error: upErr } = await supabase.storage.from(bucket).upload(objectPath, blob, {
+      const { error: upErr } = await supabase.storage.from(bucket).upload(objectPath, content, {
         contentType: asset.mimeType ?? 'image/jpeg',
         cacheControl: '3600',
         upsert: true,
@@ -209,7 +250,7 @@ export function SettingsScreen() {
       const newUrl = data.publicUrl;
       const { error: profileErr } = await supabase
         .from('profiles')
-        .update({ avatar_url: newUrl })
+        .update({ avatar_url: newUrl, avatar_reupload_enabled: false })
         .eq('id', userId);
       if (profileErr) throw profileErr;
 
@@ -217,7 +258,71 @@ export function SettingsScreen() {
         await supabase.storage.from(bucket).remove([oldPath]);
       }
       setProfileAvatarUrl(newUrl);
+      setAvatarReuploadEnabled(false);
       Alert.alert('Listo', 'Tu foto de perfil se actualizó.');
+    } catch (e) {
+      Alert.alert('No se pudo subir la foto', e instanceof Error ? e.message : 'Intentá de nuevo.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleUploadVehiclePhoto = async () => {
+    const userId = session?.id;
+    if (!userId || uploadingAvatar) return;
+    if (vehiclePhotoUrl && !vehiclePhotoReuploadEnabled) {
+      Alert.alert(
+        'Carga bloqueada',
+        'La foto del vehículo ya fue cargada. Solo podés volver a subir si un admin habilita la recarga.'
+      );
+      return;
+    }
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permiso', 'Necesitamos acceso a tus fotos para subir la foto del vehículo.');
+      return;
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.85,
+      aspect: [4, 3],
+    });
+    if (picked.canceled || !picked.assets?.length) return;
+    const asset = picked.assets[0];
+    if (!asset?.uri) return;
+    try {
+      setUploadingAvatar(true);
+      const content = await readUriToArrayBuffer(asset.uri);
+      const sizeBytes = asset.fileSize ?? content.byteLength;
+      const maxBytes = 3 * 1024 * 1024;
+      if (sizeBytes > maxBytes) {
+        Alert.alert('Foto muy pesada', 'La imagen supera 3MB. Elegí una más liviana.');
+        return;
+      }
+      const ext = extFromMime(asset.mimeType);
+      const bucket = 'driver-vehicles';
+      const objectPath = `${userId}/vehicle-${Date.now()}.${ext}`;
+      const oldPath = pathFromPublicUrl(vehiclePhotoUrl, bucket);
+      const { error: upErr } = await supabase.storage.from(bucket).upload(objectPath, content, {
+        contentType: asset.mimeType ?? 'image/jpeg',
+        cacheControl: '3600',
+        upsert: true,
+      });
+      if (upErr) throw upErr;
+      const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
+      const newUrl = data.publicUrl;
+      const { error: profileErr } = await supabase
+        .from('profiles')
+        .update({ vehicle_photo_url: newUrl, vehicle_photo_reupload_enabled: false })
+        .eq('id', userId);
+      if (profileErr) throw profileErr;
+      if (oldPath && oldPath !== objectPath) {
+        await supabase.storage.from(bucket).remove([oldPath]);
+      }
+      setVehiclePhotoUrl(newUrl);
+      setVehiclePhotoReuploadEnabled(false);
+      Alert.alert('Listo', 'Tu foto del vehículo se actualizó.');
     } catch (e) {
       Alert.alert('No se pudo subir la foto', e instanceof Error ? e.message : 'Intentá de nuevo.');
     } finally {
@@ -240,6 +345,14 @@ export function SettingsScreen() {
   const uploadDriverDocument = async (docType: DriverDocumentType) => {
     const userId = session?.id;
     if (!userId || uploadingDocumentType) return;
+    const current = driverDocuments.find((d) => d.doc_type === docType);
+    if (current?.file_name && !current.reupload_enabled) {
+      Alert.alert(
+        'Carga bloqueada',
+        'Este documento ya fue cargado. Solo podés reemplazarlo si un admin habilita la recarga.'
+      );
+      return;
+    }
     const picked = await DocumentPicker.getDocumentAsync({
       type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
       copyToCacheDirectory: true,
@@ -250,14 +363,14 @@ export function SettingsScreen() {
     if (!file?.uri) return;
     try {
       setUploadingDocumentType(docType);
-      const response = await fetch(file.uri);
-      const blob = await response.blob();
+      const content = await readUriToArrayBuffer(file.uri);
+      const sizeBytes = file.size ?? content.byteLength;
       const maxBytes = 5 * 1024 * 1024;
-      if (blob.size > maxBytes) {
+      if (sizeBytes > maxBytes) {
         Alert.alert('Archivo pesado', 'El archivo supera 5MB. Elegí uno más liviano.');
         return;
       }
-      const mime = file.mimeType ?? blob.type ?? 'application/octet-stream';
+      const mime = file.mimeType ?? 'application/octet-stream';
       const ext =
         mime === 'application/pdf'
           ? 'pdf'
@@ -269,12 +382,12 @@ export function SettingsScreen() {
       const bucket = 'driver-documents';
       const objectPath = `${userId}/${docType}/document-${Date.now()}.${ext}`;
 
-      const prev = driverDocuments.find((d) => d.doc_type === docType);
+      const prev = current;
       if (prev?.storage_path) {
         await supabase.storage.from(bucket).remove([prev.storage_path]);
       }
 
-      const { error: upErr } = await supabase.storage.from(bucket).upload(objectPath, blob, {
+      const { error: upErr } = await supabase.storage.from(bucket).upload(objectPath, content, {
         contentType: mime,
         cacheControl: '3600',
         upsert: true,
@@ -288,11 +401,12 @@ export function SettingsScreen() {
         storage_path: objectPath,
         file_name: file.name ?? null,
         mime_type: mime,
-        file_size_bytes: blob.size,
+        file_size_bytes: sizeBytes,
         status: 'pending',
         review_notes: null,
         reviewed_by: null,
         reviewed_at: null,
+        reupload_enabled: false,
       };
       const { error: dbErr } = await supabase
         .from('driver_documents')
@@ -340,17 +454,27 @@ export function SettingsScreen() {
                 </View>
               )}
               <TouchableOpacity
-                style={[styles.smallActionBtn, uploadingAvatar && styles.buttonDisabled]}
+                style={[
+                  styles.smallActionBtn,
+                  (uploadingAvatar || (profileAvatarUrl != null && !avatarReuploadEnabled)) && styles.buttonDisabled,
+                ]}
                 onPress={() => void handleUploadAvatar()}
-                disabled={uploadingAvatar}
+                disabled={uploadingAvatar || (profileAvatarUrl != null && !avatarReuploadEnabled)}
               >
                 {uploadingAvatar ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text style={styles.smallActionBtnText}>Subir desde dispositivo</Text>
+                  <Text style={styles.smallActionBtnText}>
+                    {profileAvatarUrl && !avatarReuploadEnabled ? 'Bloqueado por admin' : 'Subir desde dispositivo'}
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>
+            <Text style={styles.profileHint}>
+              {profileAvatarUrl && !avatarReuploadEnabled
+                ? 'Ya cargaste tu foto. Solo admin puede habilitar una nueva carga.'
+                : 'Podés subir una sola vez; para reemplazarla necesitás habilitación de admin.'}
+            </Text>
           </View>
           {flavor === 'driver' ? (
             <View style={styles.photoBlock}>
@@ -362,7 +486,27 @@ export function SettingsScreen() {
                   <Text style={styles.photoPlaceholderText}>Sin foto</Text>
                 </View>
               )}
-              <Text style={styles.profileHint}>La foto del vehículo sigue gestionada desde panel admin.</Text>
+              <TouchableOpacity
+                style={[
+                  styles.smallActionBtn,
+                  (uploadingAvatar || (vehiclePhotoUrl != null && !vehiclePhotoReuploadEnabled)) && styles.buttonDisabled,
+                ]}
+                onPress={() => void handleUploadVehiclePhoto()}
+                disabled={uploadingAvatar || (vehiclePhotoUrl != null && !vehiclePhotoReuploadEnabled)}
+              >
+                {uploadingAvatar ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.smallActionBtnText}>
+                    {vehiclePhotoUrl && !vehiclePhotoReuploadEnabled ? 'Bloqueado por admin' : 'Subir desde dispositivo'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+              <Text style={styles.profileHint}>
+                {vehiclePhotoUrl && !vehiclePhotoReuploadEnabled
+                  ? 'Ya cargaste la foto del vehículo. Solo admin puede habilitar una nueva carga.'
+                  : 'Podés subir una sola vez; para reemplazarla necesitás habilitación de admin.'}
+              </Text>
             </View>
           ) : null}
         </View>
@@ -400,6 +544,7 @@ export function SettingsScreen() {
             <View style={styles.profileCard}>
               {DRIVER_DOCUMENTS.map((d) => {
                 const row = driverDocuments.find((x) => x.doc_type === d.type);
+                const canUpload = !row?.file_name || Boolean(row?.reupload_enabled);
                 const uploading = uploadingDocumentType === d.type;
                 return (
                   <View key={d.type} style={styles.docRow}>
@@ -419,18 +564,23 @@ export function SettingsScreen() {
                       <Text style={styles.docReviewNote}>Observación admin: {row.review_notes}</Text>
                     ) : null}
                     <TouchableOpacity
-                      style={[styles.smallActionBtn, uploading && styles.buttonDisabled]}
+                      style={[styles.smallActionBtn, (!canUpload || uploading) && styles.buttonDisabled]}
                       onPress={() => void uploadDriverDocument(d.type)}
-                      disabled={uploading}
+                      disabled={uploading || !canUpload}
                     >
                       {uploading ? (
                         <ActivityIndicator color="#fff" size="small" />
                       ) : (
                         <Text style={styles.smallActionBtnText}>
-                          {row?.file_name ? 'Reemplazar documento' : 'Subir documento'}
+                          {row?.file_name ? (canUpload ? 'Reemplazar documento' : 'Bloqueado por admin') : 'Subir documento'}
                         </Text>
                       )}
                     </TouchableOpacity>
+                    {row?.file_name && !canUpload ? (
+                      <Text style={styles.profileHint}>
+                        Ya cargaste este documento. Solo admin puede habilitar una nueva carga.
+                      </Text>
+                    ) : null}
                   </View>
                 );
               })}

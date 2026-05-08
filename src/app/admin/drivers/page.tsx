@@ -12,6 +12,8 @@ type Profile = {
   city: string | null;
   avatar_url: string | null;
   vehicle_photo_url: string | null;
+  avatar_reupload_enabled?: boolean | null;
+  vehicle_photo_reupload_enabled?: boolean | null;
   role: string;
   created_at?: string;
 };
@@ -36,6 +38,7 @@ type DriverDocument = {
   status: DriverDocumentStatus;
   review_notes: string | null;
   expires_at: string | null;
+  reupload_enabled: boolean | null;
   updated_at: string;
 };
 
@@ -67,7 +70,7 @@ export default function AdminDriversPage() {
   async function loadDriverDocs() {
     const { data } = await supabase
       .from('driver_documents')
-      .select('id, driver_id, doc_type, storage_bucket, storage_path, file_name, status, review_notes, expires_at, updated_at')
+      .select('id, driver_id, doc_type, storage_bucket, storage_path, file_name, status, review_notes, expires_at, reupload_enabled, updated_at')
       .order('updated_at', { ascending: false });
     const next: Record<string, DriverDocument[]> = {};
     (data ?? []).forEach((d) => {
@@ -81,7 +84,7 @@ export default function AdminDriversPage() {
   async function loadApproved() {
     const { data: drivers } = await supabase
       .from('profiles')
-      .select('id, full_name, phone, address, city, avatar_url, vehicle_photo_url, role, created_at')
+      .select('id, full_name, phone, address, city, avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled, role, created_at')
       .eq('role', 'driver')
       .order('full_name');
     const { data: accounts } = await supabase
@@ -96,16 +99,24 @@ export default function AdminDriversPage() {
     setLoading(true);
     let { data, error } = await supabase
       .from('profiles')
-      .select('id, full_name, phone, address, city, avatar_url, vehicle_photo_url, role, created_at')
+      .select('id, full_name, phone, address, city, avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled, role, created_at')
       .eq('role', 'driver_pending')
       .order('created_at', { ascending: false });
     if (error?.code === '42703' || error?.message?.includes('column')) {
       const res = await supabase
         .from('profiles')
-        .select('id, full_name, phone, avatar_url, vehicle_photo_url, role, created_at')
+        .select('id, full_name, phone, avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled, role, created_at')
         .eq('role', 'driver_pending')
         .order('created_at', { ascending: false });
-      data = (res.data ?? []).map((r) => ({ ...r, address: null, city: null, avatar_url: null, vehicle_photo_url: null }));
+      data = (res.data ?? []).map((r) => ({
+        ...r,
+        address: null,
+        city: null,
+        avatar_url: null,
+        vehicle_photo_url: null,
+        avatar_reupload_enabled: false,
+        vehicle_photo_reupload_enabled: false,
+      }));
     }
     setPending(data ?? []);
     setLoading(false);
@@ -140,6 +151,20 @@ export default function AdminDriversPage() {
     }
     setActing(null);
     loadApproved();
+  }
+
+  async function enableProfileReupload(
+    driverId: string,
+    field: 'avatar_reupload_enabled' | 'vehicle_photo_reupload_enabled'
+  ) {
+    setActing(driverId);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ [field]: true })
+      .eq('id', driverId);
+    setActing(null);
+    if (error) alert(error.message);
+    await loadApproved();
   }
 
   function extFromFile(file: File): string {
@@ -309,6 +334,7 @@ export default function AdminDriversPage() {
         reviewed_by: user?.id ?? null,
         approved_at: status === 'approved' ? nowIso : null,
         rejected_at: status === 'rejected' ? nowIso : null,
+        reupload_enabled: false,
       };
       const { error } = await supabase.from('driver_documents').update(payload).eq('id', doc.id);
       if (error) throw error;
@@ -364,6 +390,22 @@ export default function AdminDriversPage() {
       await loadDriverDocs();
     } catch (err: any) {
       alert(err?.message ?? 'No se pudo actualizar vencimiento.');
+    } finally {
+      setReviewingDocId(null);
+    }
+  }
+
+  async function enableDriverDocReupload(doc: DriverDocument) {
+    setReviewingDocId(doc.id);
+    try {
+      const { error } = await supabase
+        .from('driver_documents')
+        .update({ reupload_enabled: true })
+        .eq('id', doc.id);
+      if (error) throw error;
+      await loadDriverDocs();
+    } catch (err: any) {
+      alert(err?.message ?? 'No se pudo habilitar recarga.');
     } finally {
       setReviewingDocId(null);
     }
@@ -563,6 +605,19 @@ export default function AdminDriversPage() {
                           Quitar foto
                         </button>
                       ) : null}
+                      {d.avatar_url && !d.avatar_reupload_enabled ? (
+                        <button
+                          type="button"
+                          disabled={acting !== null}
+                          onClick={() => enableProfileReupload(d.id, 'avatar_reupload_enabled')}
+                          className="text-emerald-700 hover:underline text-sm font-medium disabled:opacity-50"
+                        >
+                          Habilitar recarga foto perfil
+                        </button>
+                      ) : null}
+                      {d.avatar_url && d.avatar_reupload_enabled ? (
+                        <span className="text-xs text-emerald-700 font-semibold">Recarga perfil habilitada</span>
+                      ) : null}
                       <label className="text-indigo-600 hover:underline text-sm font-medium cursor-pointer">
                         {uploadingVehiclePhotoFor === d.id ? 'Subiendo...' : 'Subir foto vehículo'}
                         <input
@@ -595,6 +650,18 @@ export default function AdminDriversPage() {
                           >
                             Quitar foto vehículo
                           </button>
+                          {!d.vehicle_photo_reupload_enabled ? (
+                            <button
+                              type="button"
+                              disabled={acting !== null}
+                              onClick={() => enableProfileReupload(d.id, 'vehicle_photo_reupload_enabled')}
+                              className="text-emerald-700 hover:underline text-sm font-medium disabled:opacity-50"
+                            >
+                              Habilitar recarga foto vehículo
+                            </button>
+                          ) : (
+                            <span className="text-xs text-emerald-700 font-semibold">Recarga vehículo habilitada</span>
+                          )}
                         </>
                       ) : null}
                     </div>
@@ -721,6 +788,14 @@ export default function AdminDriversPage() {
                               className="text-indigo-700 hover:underline text-sm font-medium disabled:opacity-50"
                             >
                               {reviewingDocId === doc.id ? '...' : 'Vencimiento'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={reviewingDocId != null || !!doc.reupload_enabled}
+                              onClick={() => void enableDriverDocReupload(doc)}
+                              className="text-emerald-700 hover:underline text-sm font-medium disabled:opacity-50"
+                            >
+                              {doc.reupload_enabled ? 'Recarga habilitada' : reviewingDocId === doc.id ? '...' : 'Habilitar recarga'}
                             </button>
                             <button
                               type="button"

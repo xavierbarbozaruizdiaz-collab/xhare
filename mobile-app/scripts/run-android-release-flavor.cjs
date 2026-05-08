@@ -51,6 +51,21 @@ function runGradlewClean() {
   return r.status === 0;
 }
 
+function runExpoPrebuildClean(flavor) {
+  const expoCli = require.resolve('expo/bin/cli');
+  const env = { ...process.env, APP_FLAVOR: flavor, EXPO_PUBLIC_APP_FLAVOR: flavor };
+  const r = spawnSync(
+    process.execPath,
+    [expoCli, 'prebuild', '--platform', 'android', '--clean'],
+    {
+      cwd: root,
+      stdio: 'inherit',
+      env,
+    }
+  );
+  return r.status === 0;
+}
+
 function runGradleAssembleRelease(flavor) {
   const gradlew = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
   const env = { ...process.env, APP_FLAVOR: flavor };
@@ -77,6 +92,10 @@ function copyApk(suffix) {
 
 function buildOne(flavor, copySuffix) {
   console.log('\n=== Release build:', flavor, '===\n');
+  if (!runExpoPrebuildClean(flavor)) {
+    console.error('expo prebuild --clean falló');
+    return false;
+  }
   if (!runGradlewClean()) {
     console.warn('gradlew clean falló; continúo con assembleRelease');
   }

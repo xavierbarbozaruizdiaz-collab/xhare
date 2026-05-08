@@ -28,7 +28,6 @@ export function LoginScreen() {
   const [message, setMessage] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [resetSent, setResetSent] = useState(false);
-  const [acceptLegal, setAcceptLegal] = useState(false);
   const termsUrl = `${env.apiBaseUrl?.trim().replace(/\/$/, '') || ''}/legal/terms`;
   const privacyUrl = `${env.apiBaseUrl?.trim().replace(/\/$/, '') || ''}/legal/privacy`;
 
@@ -52,11 +51,6 @@ export function LoginScreen() {
       });
 
       if (isSignUp) {
-        if (!acceptLegal) {
-          setMessage('Tenés que aceptar TyC y Privacidad para crear la cuenta.');
-          setLoading(false);
-          return;
-        }
         if (typeof (authAny?.signUp) !== 'function') {
           throw new Error('Supabase auth no tiene signUp');
         }
@@ -66,7 +60,7 @@ export function LoginScreen() {
         });
         console.log('MOBILE signUp result:', !!data?.session, error);
         if (error) throw error;
-        setMessage('Revisá tu correo para confirmar la cuenta.');
+        setMessage('Cuenta creada. Antes de continuar te pediremos aceptar TyC y Privacidad.');
       } else {
         if (typeof (authAny?.signInWithPassword) !== 'function') {
           throw new Error('Supabase auth no tiene signInWithPassword');
@@ -202,18 +196,9 @@ export function LoginScreen() {
         )}
         {isSignUp && (
           <View style={styles.legalWrap}>
-            <TouchableOpacity
-              style={styles.checkboxRow}
-              onPress={() => setAcceptLegal((v) => !v)}
-              disabled={loading}
-            >
-              <View style={[styles.checkbox, acceptLegal && styles.checkboxChecked]}>
-                {acceptLegal ? <Text style={styles.checkboxTick}>✓</Text> : null}
-              </View>
-              <Text style={styles.legalText}>
-                Acepto TyC y Política de Privacidad.
-              </Text>
-            </TouchableOpacity>
+            <Text style={styles.legalText}>
+              Al crear tu cuenta, te mostraremos una sola pantalla para aceptar TyC y Privacidad.
+            </Text>
             <View style={styles.legalLinksRow}>
               <TouchableOpacity onPress={() => { if (env.apiBaseUrl) void Linking.openURL(termsUrl); }}>
                 <Text style={styles.legalLink}>Ver TyC</Text>
