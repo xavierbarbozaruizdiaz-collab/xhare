@@ -1,11 +1,12 @@
 /**
- * External navigation: open Maps, Waze, or browser.
- * Android: intent `intent://…#Intent;scheme=https;package=com.google.android.apps.maps` evita el selector
- * "Abrir con" al abrir URLs https de Maps; opcionalmente módulo nativo XhareNavigation con setPackage.
+ * Navegación externa (Maps / Waze / navegador).
+ * Android: módulo nativo `xhare-navigation` usa Intent + setPackage (sin selector "Abrir con").
  */
 import * as Linking from 'expo-linking';
-import { NativeModules, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import { distanceMeters } from '../lib/geo';
+import { ANDROID_GOOGLE_MAPS_PKG, ANDROID_WAZE_PKG } from './constants';
+import { getXhareNavigationNative } from './navNative';
 
 export { getNavAppAvailability, type NavAppAvailability } from './availability';
 
@@ -14,24 +15,12 @@ export type OpenNavigationError = 'invalid_coordinates' | 'target_app_unavailabl
 
 export type OpenNavigationResult = { ok: true } | { ok: false; error: OpenNavigationError };
 
-type XhareNavigationNative = {
-  openViewUriInPackage: (uri: string, packageName: string) => Promise<boolean>;
-};
-
 const WAZE_PREFIX = 'https://waze.com/ul';
-const ANDROID_GOOGLE_MAPS_PKG = 'com.google.android.apps.maps';
-const ANDROID_WAZE_PKG = 'com.waze';
 
 /** Waze rechaza rutas de conducción ~>3000 mi; la recta debe quedar holgada por debajo. */
 const WAZE_MAX_HAVERSINE_METERS = 2_500 * 1609.344;
 
 export type NavViaPoint = { lat: number; lng: number };
-
-function nativeNav(): XhareNavigationNative | null {
-  const m = NativeModules.XhareNavigation as XhareNavigationNative | undefined;
-  if (m != null && typeof m.openViewUriInPackage === 'function') return m;
-  return null;
-}
 
 function normalizeLatLng(lat: number, lng: number): { lat: number; lng: number } {
   const a = Number(lat);
@@ -61,35 +50,20 @@ async function tryOpenUrl(url: string): Promise<boolean> {
   }
 }
 
-/** Abre una URL https en una app concreta (Android), sin hoja "Abrir con". */
-async function tryOpenAndroidHttpsInPackage(httpsUrl: string, packageName: string): Promise<boolean> {
-  if (Platform.OS !== 'android') return false;
-  if (!/^https:\/\//i.test(httpsUrl)) return false;
-  try {
-    const stripped = httpsUrl.replace(/^https:\/\//i, '');
-    if (!stripped) return false;
-    const intentUri = `intent://${stripped}#Intent;scheme=https;package=${packageName};end`;
-    await Linking.openURL(intentUri);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Abre URI en un paquete concreto (Android). Fallback a Linking si el nativo no está o el intent falla.
+ * Abre URI; en Android el nativo fuerza el paquete. Sin nativo, Linking (puede mostrar selector).
  */
 async function tryOpenInPackage(url: string, packageName: string): Promise<OpenNavigationResult> {
   if (Platform.OS !== 'android') {
     return (await tryOpenUrl(url)) ? { ok: true } : { ok: false, error: 'target_app_unavailable' };
   }
-  const mod = nativeNav();
+  const mod = getXhareNavigationNative();
   if (mod != null) {
     try {
       const opened = await mod.openViewUriInPackage(url, packageName);
       if (opened) return { ok: true };
     } catch {
-      /* intent explícito falló: probamos Linking (p. ej. otra variante del sistema) */
+      /* seguir al fallback */
     }
   }
   if (await tryOpenUrl(url)) return { ok: true };
@@ -108,7 +82,7 @@ function wazeNavigateUrls(lat: number, lng: number): string[] {
 }
 
 /**
- * Open navigation to a destination. Uses saved preference from settings (caller should pass it).
+ * Abre navegación hacia un destino según preferencia guardada en Ajustes.
  */
 export async function openNavigation(
   lat: number,
@@ -140,11 +114,6 @@ export async function openNavigation(
       return await tryOpenInPackage(mapsDirUrl, ANDROID_GOOGLE_MAPS_PKG);
     }
     const [schemeUrl, httpsUrl] = wazeNavigateUrls(dest.lat, dest.lng);
-    if (Platform.OS === 'android') {
-      if (await tryOpenAndroidHttpsInPackage(httpsUrl, ANDROID_WAZE_PKG)) {
-        return { ok: true };
-      }
-    }
     let r = await tryOpenInPackage(schemeUrl, ANDROID_WAZE_PKG);
     if (r.ok) return r;
     r = await tryOpenInPackage(httpsUrl, ANDROID_WAZE_PKG);
@@ -169,11 +138,6 @@ export async function openNavigation(
   }
 
   // google_maps
-  if (Platform.OS === 'android') {
-    if (await tryOpenAndroidHttpsInPackage(mapsDirUrl, ANDROID_GOOGLE_MAPS_PKG)) {
-      return { ok: true };
-    }
-  }
   if (Platform.OS === 'android' && !hasVia) {
     const navUri = `google.navigation:q=${dest.lat},${dest.lng}`;
     const r = await tryOpenInPackage(navUri, ANDROID_GOOGLE_MAPS_PKG);

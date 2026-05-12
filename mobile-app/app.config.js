@@ -139,18 +139,6 @@ module.exports = {
           android: {
             manifestQueries: {
               package: ['com.waze', 'com.google.android.apps.maps', 'com.android.chrome'],
-              intent: [
-                { action: 'android.intent.action.VIEW', data: { scheme: 'waze' } },
-                { action: 'android.intent.action.VIEW', data: { scheme: 'google.navigation' } },
-                {
-                  action: 'android.intent.action.VIEW',
-                  data: { scheme: 'https', host: 'www.google.com' },
-                },
-                {
-                  action: 'android.intent.action.VIEW',
-                  data: { scheme: 'https', host: 'www.waze.com' },
-                },
-              ],
             },
           },
         },

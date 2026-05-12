@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["XhareNavigationModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.xharenavigation.XhareNavigationModule"]
+  }
+}

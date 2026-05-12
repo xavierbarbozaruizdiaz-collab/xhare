@@ -57,7 +57,8 @@
     "react-native": "0.83.2",
     "react-native-maps": "1.26.20",
     "react-native-safe-area-context": "^5.7.0",
-    "react-native-screens": "^4.24.0"
+    "react-native-screens": "^4.24.0",
+    "xhare-navigation": "file:./modules/xhare-navigation"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
