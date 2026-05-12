@@ -158,10 +158,6 @@ export default function AdminRidesPage() {
   };
 
   const handleForceComplete = async (rideId: string) => {
-    if (!accessToken) {
-      alert('No hay sesión. Recargá la página e intentá de nuevo.');
-      return;
-    }
     if (
       !confirm(
         '¿Forzar finalizado? El viaje pasará a “Finalizado”, se limpiará la ubicación del conductor en vivo y las reservas activas se marcarán como completadas (según reglas del sistema).'
@@ -170,61 +166,67 @@ export default function AdminRidesPage() {
       return;
     }
     setForceCompletingId(rideId);
-    const refreshed = await supabase.auth.refreshSession();
-    let token =
-      refreshed.data.session?.access_token ??
-      (await supabase.auth.getSession()).data.session?.access_token ??
-      accessToken;
-    if (!token) {
-      setForceCompletingId(null);
-      alert('No hay sesión. Recargá la página e intentá de nuevo.');
-      return;
-    }
-    const postBody = () =>
-      JSON.stringify({
-        access_token: token,
-      });
-    let res = await fetch(`/api/admin/rides/${encodeURIComponent(rideId)}/force-complete`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: postBody(),
-    });
-    if (res.status === 401) {
-      token = (await refetch()) ?? '';
-      if (token) {
-        res = await fetch(`/api/admin/rides/${encodeURIComponent(rideId)}/force-complete`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ access_token: token }),
+    try {
+      const refreshed = await supabase.auth.refreshSession();
+      let token =
+        refreshed.data.session?.access_token ??
+        (await supabase.auth.getSession()).data.session?.access_token ??
+        accessToken;
+      if (!token) {
+        alert('No hay sesión. Recargá la página e intentá de nuevo.');
+        return;
+      }
+      const postBody = () =>
+        JSON.stringify({
+          access_token: token,
         });
+      let res = await fetch(`/api/admin/rides/${encodeURIComponent(rideId)}/force-complete`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: postBody(),
+      });
+      if (res.status === 401) {
+        token = (await refetch()) ?? '';
+        if (token) {
+          res = await fetch(`/api/admin/rides/${encodeURIComponent(rideId)}/force-complete`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ access_token: token }),
+          });
+        }
       }
-    }
-    setForceCompletingId(null);
-    const body = (await res.json().catch(() => ({}))) as { error?: string; details?: string; ride?: { status?: string } };
-    if (!res.ok) {
-      const msg =
-        typeof body.details === 'string'
-          ? body.details
-          : typeof body.error === 'string'
-            ? body.error
-            : 'No se pudo finalizar el viaje';
-      alert(msg);
-      return;
-    }
-    setRides((prev) => {
-      if (statusFilter === 'en_route') {
-        return prev.filter((x) => x.id !== rideId);
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        details?: string;
+        ride?: { status?: string };
+      };
+      if (!res.ok) {
+        const msg =
+          typeof body.details === 'string'
+            ? body.details
+            : typeof body.error === 'string'
+              ? body.error
+              : 'No se pudo finalizar el viaje';
+        alert(msg);
+        return;
       }
-      return prev.map((r) => (r.id === rideId ? { ...r, status: body.ride?.status ?? 'completed' } : r));
-    });
+      setRides((prev) => {
+        if (statusFilter === 'en_route') {
+          return prev.filter((x) => x.id !== rideId);
+        }
+        return prev.map((r) => (r.id === rideId ? { ...r, status: body.ride?.status ?? 'completed' } : r));
+      });
+    } finally {
+      setForceCompletingId(null);
+    }
   };
 
   const searchTrim = search.trim().toLowerCase();

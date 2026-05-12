@@ -1,47 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/server';
+import { collectAccessTokenCandidates, resolveUserFromAccessTokenCandidates } from '@/lib/supabase-bearer-user-from-tokens';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const ADMIN_FORCE_COMPLETE_WINDOW_MS = 60_000;
 const ADMIN_FORCE_COMPLETE_MAX_PER_WINDOW = 30;
 
-const bodySchema = z
-  .object({
-    /** Refuerzo si el JWT del header venció (admin web con sesión larga). */
-    access_token: z.string().min(1).optional(),
-  })
-  .passthrough();
-
 /**
  * Admin: cierra un viaje que quedó en `en_route` (conductor no finalizó).
  * Misma limpieza de ubicación que POST /api/rides/[id]/update-status → completed.
  * Las reservas se sincronizan vía trigger `sync_bookings_on_ride_status_change`.
+ *
+ * Auth: cliente Supabase fresco por JWT (ver `supabase-bearer-user-from-tokens.ts`);
+ * no usar `createServerClient(request)` + `getUser(jwt)` (401 en algunos despliegues).
  */
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const supabaseAuth = createServerClient(request);
-    const auth1 = await authGetUser(supabaseAuth, request);
-    let user = auth1.data.user ?? null;
-    let authError = auth1.error ?? null;
+    const body = await request.json().catch(() => ({}));
+    const tokens = collectAccessTokenCandidates(request, body);
+    const user = await resolveUserFromAccessTokenCandidates(tokens);
 
-    if (!user) {
-      const json = await request.json().catch(() => ({}));
-      const parsed = bodySchema.safeParse(json);
-      const t = parsed.success && parsed.data.access_token ? parsed.data.access_token.trim() : '';
-      if (t) {
-        const auth2 = await supabaseAuth.auth.getUser(t);
-        user = auth2.data.user ?? null;
-        authError = auth2.error ?? null;
-      }
-    }
-
-    if (authError || !user) {
+    if (!user?.id) {
       return NextResponse.json(
         {
           error: 'Unauthorized',
           details:
-            'Sesión inválida o vencida. Recargá la página del admin o cerrá sesión y volvé a entrar.',
+            'No se pudo validar el acceso a esta acción. Recargá la página; si sigue igual, revisá que el proyecto Vercel use el mismo Supabase (URL y anon key) que la app.',
         },
         { status: 401 }
       );

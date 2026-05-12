@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/server';
+import { collectAccessTokenCandidates, resolveUserFromAccessTokenCandidates } from '@/lib/supabase-bearer-user-from-tokens';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const assignDriverSchema = z.object({
@@ -9,34 +10,16 @@ const assignDriverSchema = z.object({
 const ADMIN_ASSIGN_DRIVER_WINDOW_MS = 60_000;
 const ADMIN_ASSIGN_DRIVER_MAX_PER_WINDOW = 20;
 
-function getJwtFromRequest(request: NextRequest): string | null {
-  const auth = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
-  if (auth.startsWith('Bearer ')) return auth.slice(7).trim();
-  return request.headers.get('x-admin-token')?.trim() ?? null;
-}
-
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const jwt = getJwtFromRequest(request);
-    const supabaseAuth = createServerClient(request);
+    const body = await request.json().catch(() => ({}));
+    const tokens = collectAccessTokenCandidates(request, body);
+    const user = await resolveUserFromAccessTokenCandidates(tokens);
 
-    let user: { id: string } | null = null;
-    let authError: Error | null = null;
-    if (jwt) {
-      const res = await supabaseAuth.auth.getUser(jwt);
-      user = res.data.user ?? null;
-      authError = res.error ?? null;
-    }
-    if (!user) {
-      const res = await supabaseAuth.auth.getUser();
-      user = res.data.user ?? null;
-      authError = res.error ?? null;
-    }
-
-    if (authError || !user) {
+    if (!user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const clientId = getClientId(request, user.id);
@@ -59,7 +42,6 @@ export async function POST(
     }
 
     const rideId = params.id;
-    const body = await request.json();
     const validated = assignDriverSchema.parse(body);
 
     const { data: driverProfile } = await service
