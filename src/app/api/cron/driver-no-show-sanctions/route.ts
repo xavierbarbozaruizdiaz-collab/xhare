@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { processRideNoShowSanction } from '@/lib/process-driver-no-show-sanction';
 
 /**
- * Cron (Vercel): viajes published/booked con salida ya pasada y sin `en_route` → sanción operativa + cancelación.
+ * Cron (Vercel, 1×/día en Hobby): viajes published/booked con salida ya pasada y sin `en_route` → sanción operativa + cancelación.
  * Proteger con CRON_SECRET en Authorization: Bearer …
  */
 export async function GET(request: NextRequest) {
