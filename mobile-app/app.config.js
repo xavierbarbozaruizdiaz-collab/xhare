@@ -125,8 +125,37 @@ module.exports = {
     ios: {
       supportsTablet: true,
       bundleIdentifier: isDriver ? 'com.xhare.driver' : 'com.xhare.app',
+      infoPlist: {
+        LSApplicationQueriesSchemes: ['waze', 'comgooglemaps', 'googlemaps', 'googlechromes'],
+      },
     },
-    plugins: ['@react-native-community/datetimepicker', 'expo-image-picker', 'expo-document-picker'],
+    plugins: [
+      '@react-native-community/datetimepicker',
+      'expo-image-picker',
+      'expo-document-picker',
+      [
+        'expo-build-properties',
+        {
+          android: {
+            manifestQueries: {
+              package: ['com.waze', 'com.google.android.apps.maps', 'com.android.chrome'],
+              intent: [
+                { action: 'android.intent.action.VIEW', data: { scheme: 'waze' } },
+                { action: 'android.intent.action.VIEW', data: { scheme: 'google.navigation' } },
+                {
+                  action: 'android.intent.action.VIEW',
+                  data: { scheme: 'https', host: 'www.google.com' },
+                },
+                {
+                  action: 'android.intent.action.VIEW',
+                  data: { scheme: 'https', host: 'www.waze.com' },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    ],
     android: {
       adaptiveIcon: {
         // Driver usa un ícono distinto (monochrome) para que el launcher muestre

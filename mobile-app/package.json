@@ -42,6 +42,7 @@
     "@supabase/supabase-js": "^2.99.1",
     "expo": "~55.0.6",
     "expo-application": "~55.0.14",
+    "expo-build-properties": "~55.0.13",
     "expo-constants": "^55.0.7",
     "expo-document-picker": "^55.0.13",
     "expo-image-picker": "^55.0.20",

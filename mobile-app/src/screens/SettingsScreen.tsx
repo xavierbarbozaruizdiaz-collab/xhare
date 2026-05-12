@@ -2,7 +2,7 @@
  * Settings: cuenta, navegación, permisos, Mensajes; Mis solicitudes (pasajero) o Solicitudes de viaje (conductor), cerrar sesión.
  * Perfil/documentos: carga única por defecto; recarga solo si admin la habilita.
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,15 +16,15 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { getNavigationPreference, setNavigationPreference, type NavPreference } from '../settings';
 import { requestLocationPermission, getLocationPermissionStatus } from '../permissions';
-import { useEffect } from 'react';
 import type { MainStackParamList } from '../navigation/types';
 import { getAppFlavor } from '../core/flavor';
 import { supabase } from '../backend/supabase';
+import { getNavAppAvailability, type NavAppAvailability } from '../external-navigation';
 
 const NAV_OPTIONS: { value: NavPreference; label: string }[] = [
   { value: 'google_maps', label: 'Google Maps' },
@@ -62,6 +62,7 @@ export function SettingsScreen() {
   const flavor = getAppFlavor();
   const { session, signOut } = useAuth();
   const [navPref, setNavPref] = useState<NavPreference>('google_maps');
+  const [navAvailability, setNavAvailability] = useState<NavAppAvailability | null>(null);
   const [locationStatus, setLocationStatus] = useState<string>('');
   const [signingOut, setSigningOut] = useState(false);
   const [loadingProfilePhotos, setLoadingProfilePhotos] = useState(false);
@@ -86,11 +87,31 @@ export function SettingsScreen() {
   };
 
   useEffect(() => {
-    getNavigationPreference().then(setNavPref);
     getLocationPermissionStatus().then((s) =>
       setLocationStatus(s === 'granted' ? 'Concedido' : s === 'denied' ? 'Denegado' : 'No solicitado')
     );
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (flavor !== 'driver') return undefined;
+      let active = true;
+      void (async () => {
+        const avail = await getNavAppAvailability();
+        if (!active) return;
+        setNavAvailability(avail);
+        let pref = await getNavigationPreference();
+        if (!avail.waze && pref === 'waze') pref = avail.google_maps ? 'google_maps' : 'browser';
+        if (!avail.google_maps && pref === 'google_maps') pref = avail.waze ? 'waze' : 'browser';
+        await setNavigationPreference(pref);
+        if (!active) return;
+        setNavPref(pref);
+      })();
+      return () => {
+        active = false;
+      };
+    }, [flavor])
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -516,19 +537,39 @@ export function SettingsScreen() {
         <>
           <Text style={styles.sectionTitle}>Navegación externa</Text>
           <Text style={styles.hint}>Al tocar "Abrir en Maps / Waze" en un viaje se usará:</Text>
-          {NAV_OPTIONS.map((opt) => (
+          {NAV_OPTIONS.map((opt) => {
+            const available =
+              opt.value === 'browser'
+                ? true
+                : opt.value === 'waze'
+                  ? navAvailability?.waze !== false
+                  : navAvailability?.google_maps !== false;
+            const disabled = navAvailability != null && !available;
+            return (
             <TouchableOpacity
               key={opt.value}
-              style={[styles.radioRow, navPref === opt.value && styles.radioRowActive]}
+              style={[
+                styles.radioRow,
+                navPref === opt.value && styles.radioRowActive,
+                disabled && styles.radioRowDisabled,
+              ]}
+              disabled={disabled}
               onPress={async () => {
+                if (disabled) return;
                 await setNavigationPreference(opt.value);
                 setNavPref(opt.value);
               }}
             >
-              <Text style={styles.radioLabel}>{opt.label}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.radioLabel, disabled && styles.radioLabelDisabled]}>{opt.label}</Text>
+                {disabled ? (
+                  <Text style={styles.radioSub}>No detectada en el dispositivo</Text>
+                ) : null}
+              </View>
               {navPref === opt.value ? <Text style={styles.radioCheck}>✓</Text> : null}
             </TouchableOpacity>
-          ))}
+            );
+          })}
         </>
       ) : null}
 
@@ -727,6 +768,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9fafb',
   },
   radioRowActive: { backgroundColor: '#dcfce7', borderWidth: 1, borderColor: '#166534' },
+  radioRowDisabled: { opacity: 0.55 },
+  radioLabelDisabled: { color: '#64748b' },
+  radioSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
   radioLabel: { fontSize: 15, color: '#111' },
   radioCheck: { color: '#166534', fontWeight: '700' },
   permRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
