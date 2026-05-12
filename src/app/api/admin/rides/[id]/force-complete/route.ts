@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, createServiceClient } from '@/lib/supabase/server';
+import { z } from 'zod';
+import { authGetUser, createServerClient, createServiceClient } from '@/lib/supabase/server';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const ADMIN_FORCE_COMPLETE_WINDOW_MS = 60_000;
 const ADMIN_FORCE_COMPLETE_MAX_PER_WINDOW = 30;
 
-function getJwtFromRequest(request: NextRequest): string | null {
-  const auth = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
-  if (auth.startsWith('Bearer ')) return auth.slice(7).trim();
-  return request.headers.get('x-admin-token')?.trim() ?? null;
-}
+const bodySchema = z
+  .object({
+    /** Refuerzo si el JWT del header venció (admin web con sesión larga). */
+    access_token: z.string().min(1).optional(),
+  })
+  .passthrough();
 
 /**
  * Admin: cierra un viaje que quedó en `en_route` (conductor no finalizó).
@@ -18,24 +20,31 @@ function getJwtFromRequest(request: NextRequest): string | null {
  */
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const jwt = getJwtFromRequest(request);
     const supabaseAuth = createServerClient(request);
+    const auth1 = await authGetUser(supabaseAuth, request);
+    let user = auth1.data.user ?? null;
+    let authError = auth1.error ?? null;
 
-    let user: { id: string } | null = null;
-    let authError: Error | null = null;
-    if (jwt) {
-      const res = await supabaseAuth.auth.getUser(jwt);
-      user = res.data.user ?? null;
-      authError = res.error ?? null;
-    }
     if (!user) {
-      const res = await supabaseAuth.auth.getUser();
-      user = res.data.user ?? null;
-      authError = res.error ?? null;
+      const json = await request.json().catch(() => ({}));
+      const parsed = bodySchema.safeParse(json);
+      const t = parsed.success && parsed.data.access_token ? parsed.data.access_token.trim() : '';
+      if (t) {
+        const auth2 = await supabaseAuth.auth.getUser(t);
+        user = auth2.data.user ?? null;
+        authError = auth2.error ?? null;
+      }
     }
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json(
+        {
+          error: 'Unauthorized',
+          details:
+            'Sesión inválida o vencida. Recargá la página del admin o cerrá sesión y volvé a entrar.',
+        },
+        { status: 401 }
+      );
     }
 
     const clientId = getClientId(request, user.id);

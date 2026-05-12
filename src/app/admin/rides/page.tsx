@@ -170,7 +170,20 @@ export default function AdminRidesPage() {
       return;
     }
     setForceCompletingId(rideId);
-    let token = accessToken;
+    const refreshed = await supabase.auth.refreshSession();
+    let token =
+      refreshed.data.session?.access_token ??
+      (await supabase.auth.getSession()).data.session?.access_token ??
+      accessToken;
+    if (!token) {
+      setForceCompletingId(null);
+      alert('No hay sesión. Recargá la página e intentá de nuevo.');
+      return;
+    }
+    const postBody = () =>
+      JSON.stringify({
+        access_token: token,
+      });
     let res = await fetch(`/api/admin/rides/${encodeURIComponent(rideId)}/force-complete`, {
       method: 'POST',
       credentials: 'include',
@@ -178,7 +191,7 @@ export default function AdminRidesPage() {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: '{}',
+      body: postBody(),
     });
     if (res.status === 401) {
       token = (await refetch()) ?? '';
@@ -190,7 +203,7 @@ export default function AdminRidesPage() {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: '{}',
+          body: JSON.stringify({ access_token: token }),
         });
       }
     }
