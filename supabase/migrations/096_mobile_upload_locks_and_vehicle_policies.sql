@@ -63,6 +63,7 @@ FOR EACH ROW
 EXECUTE FUNCTION public.profiles_enforce_media_reupload_locks();
 
 DROP POLICY IF EXISTS "Drivers update own documents as pending" ON public.driver_documents;
+DROP POLICY IF EXISTS "Drivers update own documents as pending when enabled" ON public.driver_documents;
 CREATE POLICY "Drivers update own documents as pending when enabled"
   ON public.driver_documents
   FOR UPDATE

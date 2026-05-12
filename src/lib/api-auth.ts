@@ -143,7 +143,7 @@ export async function requireDriverOwnsRide(rideId: string, req?: Request): Prom
 
   const { data: ride } = await auth.supabase
     .from('rides')
-    .select('id, driver_id, status')
+    .select('id, driver_id, status, departure_time, total_seats, available_seats')
     .eq('id', rideId)
     .single();
 

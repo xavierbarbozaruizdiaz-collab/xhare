@@ -333,7 +333,18 @@ function friendlyStatusError(code: string | undefined, details?: string): string
     case 'already_has_active_ride':
       return 'Ya tenés un viaje en curso. Finalizá ese antes de iniciar otro.';
     case 'account_suspended':
-      return 'Tu cuenta está suspendida. No podés iniciar ni finalizar viajes hasta regularizar.';
+      return 'Tu cuenta está suspendida por deuda. No podés iniciar viajes nuevos hasta regularizar.';
+    case 'operational_blocked':
+      return (
+        details ??
+        'Tu cuenta tiene una restricción temporal por incumplimiento de viaje programado. Contactá a soporte.'
+      );
+    case 'start_too_early':
+    case 'start_too_late':
+    case 'no_departure_time':
+    case 'cancel_high_occupancy':
+    case 'cancel_too_late_low_fill':
+      return details ?? 'No se pudo completar la acción en este momento.';
     case 'forbidden':
       return 'No tenés permiso para esta acción.';
     case 'unauthorized':

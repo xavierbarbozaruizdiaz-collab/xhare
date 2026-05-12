@@ -9,6 +9,11 @@
  */
 import { env } from '../core/env';
 import { supabase } from './supabase';
+import {
+  checkDriverAccountAllowsOperation,
+  checkDriverMayCancelPublishedOrBooked,
+  checkDriverMayStartEnRoute,
+} from '../lib/driverRideRules';
 
 export type RideStatusUpdate = 'en_route' | 'completed' | 'cancelled';
 
@@ -27,17 +32,24 @@ async function updateRideStatusDirectSupabase(
     return { ok: false, error: 'unauthorized' };
   }
 
+  const { data: rideRow, error: rideErr } = await supabase
+    .from('rides')
+    .select('status, departure_time, total_seats, available_seats')
+    .eq('id', rideId)
+    .eq('driver_id', user.id)
+    .single();
+  if (rideErr || !rideRow) {
+    return { ok: false, error: 'update_failed', details: rideErr?.message ?? 'Viaje no encontrado' };
+  }
+
   const { data: driverAccount } = await supabase
     .from('driver_accounts')
-    .select('account_status')
+    .select('account_status, operational_blocked_until')
     .eq('driver_id', user.id)
     .maybeSingle();
-  if (driverAccount?.account_status === 'suspended') {
-    return {
-      ok: false,
-      error: 'account_suspended',
-      details: 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.',
-    };
+  const gate = checkDriverAccountAllowsOperation(driverAccount);
+  if (!gate.ok) {
+    return { ok: false, error: gate.code, details: gate.details };
   }
 
   if (status === 'en_route') {
@@ -57,6 +69,24 @@ async function updateRideStatusDirectSupabase(
         error: 'already_has_active_ride',
         details: 'Ya tenés un viaje en curso. Finalizá ese viaje antes de iniciar otro.',
       };
+    }
+    const start = checkDriverMayStartEnRoute(rideRow.departure_time as string | null | undefined);
+    if (!start.ok) {
+      return { ok: false, error: start.code, details: start.details };
+    }
+  }
+
+  if (
+    status === 'cancelled' &&
+    (rideRow.status === 'published' || rideRow.status === 'booked')
+  ) {
+    const cancel = checkDriverMayCancelPublishedOrBooked(
+      rideRow.departure_time as string | null | undefined,
+      rideRow.total_seats as number | null | undefined,
+      rideRow.available_seats as number | null | undefined
+    );
+    if (!cancel.ok) {
+      return { ok: false, error: cancel.code, details: cancel.details };
     }
   }
 

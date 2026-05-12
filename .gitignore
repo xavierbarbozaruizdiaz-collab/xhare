@@ -43,3 +43,7 @@ next-env.d.ts
 .cursor/
 .idea/
 supabase/.temp/
+
+# Android signing / local build output (no versionar)
+*.jks
+mobile-app/dist-aab/

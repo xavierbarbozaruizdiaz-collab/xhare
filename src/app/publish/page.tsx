@@ -201,10 +201,12 @@ export default function PublishRidePage() {
       }
       const { data: account } = await supabase
         .from('driver_accounts')
-        .select('account_status')
+        .select('account_status, operational_blocked_until')
         .eq('driver_id', user.id)
         .maybeSingle();
-      setDriverSuspended(account?.account_status === 'suspended');
+      const opUntil = account?.operational_blocked_until ? Date.parse(String(account.operational_blocked_until)) : NaN;
+      const opActive = !Number.isNaN(opUntil) && opUntil > Date.now();
+      setDriverSuspended(account?.account_status === 'suspended' || opActive);
       if (profile?.vehicle_seat_count == null) {
         router.push('/driver/setup');
         return;
@@ -295,7 +297,7 @@ export default function PublishRidePage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (driverSuspended) {
-      alert('Tu cuenta está suspendida por deuda pendiente. No podés publicar viajes hasta regularizar. Contactá a soporte.');
+      alert('Tu cuenta tiene restricción por deuda o por incumplimiento de viaje programado. No podés publicar viajes. Contactá a soporte.');
       return;
     }
     if (!origin || !origin.lat || !origin.lng || !destination || !destination.lat || !destination.lng) {
@@ -718,8 +720,11 @@ export default function PublishRidePage() {
 
         {driverSuspended && (
           <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800">
-            <p className="font-medium">Cuenta suspendida</p>
-            <p className="text-sm mt-1">Tu cuenta está suspendida por deuda pendiente. No podés publicar ni iniciar viajes hasta regularizar. Contactá a soporte o administración.</p>
+            <p className="font-medium">Cuenta con restricción</p>
+            <p className="text-sm mt-1">
+              No podés publicar ni iniciar viajes por deuda pendiente o restricción temporal por incumplimiento. Contactá a
+              soporte o administración.
+            </p>
           </div>
         )}
         <form onSubmit={handleSubmit} className="mt-8 space-y-6">
@@ -800,7 +805,7 @@ export default function PublishRidePage() {
               disabled={submitting || driverSuspended || !origin || !destination}
               className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:bg-gray-400 font-semibold"
             >
-              {submitting ? 'Publicando...' : driverSuspended ? 'Cuenta suspendida' : 'Publicar viaje'}
+              {submitting ? 'Publicando...' : driverSuspended ? 'Restringido' : 'Publicar viaje'}
             </button>
           </div>
         </form>

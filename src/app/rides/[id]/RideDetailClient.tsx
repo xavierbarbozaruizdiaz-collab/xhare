@@ -467,10 +467,12 @@ export default function RideDetailClient() {
       if (user && data.driver_id === user.id) {
         const { data: account } = await supabase
           .from('driver_accounts')
-          .select('account_status')
+          .select('account_status, operational_blocked_until')
           .eq('driver_id', user.id)
           .maybeSingle();
-        setDriverSuspended(account?.account_status === 'suspended');
+        const opUntil = account?.operational_blocked_until ? Date.parse(String(account.operational_blocked_until)) : NaN;
+        const opActive = !Number.isNaN(opUntil) && opUntil > Date.now();
+        setDriverSuspended(account?.account_status === 'suspended' || opActive);
       } else {
         setDriverSuspended(false);
       }
@@ -645,17 +647,24 @@ export default function RideDetailClient() {
         return;
       }
       if (!res.ok || !data?.success) {
+        const d = typeof data?.details === 'string' ? data.details : null;
+        const err = typeof data?.error === 'string' ? data.error : '';
         const msg =
-          data?.error === 'account_suspended'
-            ? data?.details ??
-              'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.'
-            : data?.error === 'already_has_active_ride'
-              ? data?.details ?? 'Ya tenés un viaje en curso. Finalizá ese viaje antes de iniciar otro.'
-              : newStatus === 'en_route'
-                ? 'No se pudo iniciar el viaje. Volvé a intentar.'
-                : 'No se pudo actualizar el estado del viaje. Volvé a intentar.';
+          d ||
+          (err === 'account_suspended'
+            ? 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.'
+            : err === 'operational_blocked'
+              ? 'Tu cuenta tiene una restricción temporal por incumplimiento de viaje programado. Contactá a soporte.'
+              : err === 'already_has_active_ride'
+                ? 'Ya tenés un viaje en curso. Finalizá ese viaje antes de iniciar otro.'
+                : err === 'start_too_early' || err === 'start_too_late' || err === 'no_departure_time'
+                  ? String(data?.details ?? 'No se pudo iniciar el viaje en este momento.')
+                  : newStatus === 'en_route'
+                    ? 'No se pudo iniciar el viaje. Volvé a intentar.'
+                    : 'No se pudo actualizar el estado del viaje. Volvé a intentar.');
         alert(msg);
-        if (data?.error === 'account_suspended' || data?.error === 'already_has_active_ride') await loadRide();
+        if (err === 'account_suspended' || err === 'already_has_active_ride' || err === 'operational_blocked')
+          await loadRide();
         return;
       }
       // Actualización optimista: si acabamos de finalizar, el conductor ve el estado "completado" al instante
@@ -1184,10 +1193,12 @@ export default function RideDetailClient() {
           <div className="p-4 md:p-5 flex flex-col sm:flex-row gap-3 app-mobile-section">
             {ride.driver_id === currentUser?.id ? (
               <>
-                {driverSuspended && (
+                {driverSuspended && (ride.status === 'published' || ride.status === 'booked') && (
                   <div className="w-full mb-2 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800">
-                    <p className="font-medium">Cuenta suspendida</p>
-                    <p className="text-sm mt-1">Tu cuenta está suspendida por deuda pendiente. No podés iniciar ni finalizar viajes hasta regularizar. Contactá a soporte.</p>
+                    <p className="font-medium">Restricción en la cuenta</p>
+                    <p className="text-sm mt-1">
+                      No podés iniciar el viaje por deuda pendiente o restricción temporal. Podés seguir si el viaje ya está en curso. Contactá a soporte.
+                    </p>
                   </div>
                 )}
                 {(ride.status === 'published' || ride.status === 'booked') && (
@@ -1197,7 +1208,7 @@ export default function RideDetailClient() {
                     disabled={updatingStatus || driverSuspended}
                     className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition disabled:opacity-50"
                   >
-                    {updatingStatus ? '...' : driverSuspended ? 'Cuenta suspendida' : 'Iniciar viaje'}
+                    {updatingStatus ? '...' : driverSuspended ? 'No disponible' : 'Iniciar viaje'}
                   </button>
                 )}
                 {ride.status === 'en_route' && (
@@ -1242,10 +1253,10 @@ export default function RideDetailClient() {
                     <button
                       type="button"
                       onClick={() => setRideStatus('completed')}
-                      disabled={updatingStatus || driverSuspended}
+                      disabled={updatingStatus}
                       className="flex-1 inline-flex justify-center items-center px-5 py-3 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition disabled:opacity-50"
                     >
-                      {updatingStatus ? 'Finalizando…' : driverSuspended ? 'Cuenta suspendida' : 'Finalizar viaje'}
+                      {updatingStatus ? 'Finalizando…' : 'Finalizar viaje'}
                     </button>
                   </>
                 )}

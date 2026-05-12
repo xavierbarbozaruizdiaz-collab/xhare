@@ -280,7 +280,7 @@ export function PublishRideScreen() {
         .select('role, vehicle_seat_count, vehicle_model, vehicle_year, vehicle_seat_layout, driver_approved_at')
         .eq('id', session.id)
         .maybeSingle(),
-      supabase.from('driver_accounts').select('account_status').eq('driver_id', session.id).maybeSingle(),
+      supabase.from('driver_accounts').select('account_status, operational_blocked_until').eq('driver_id', session.id).maybeSingle(),
     ]);
     const { data: profile, error: pErr } = profileResult;
     const { data: account } = accountResult;
@@ -313,7 +313,9 @@ export function PublishRideScreen() {
       return;
     }
 
-    setDriverSuspended(account?.account_status === 'suspended');
+    const opUntil = account?.operational_blocked_until ? Date.parse(String(account.operational_blocked_until)) : NaN;
+    const opActive = !Number.isNaN(opUntil) && opUntil > Date.now();
+    setDriverSuspended(account?.account_status === 'suspended' || opActive);
 
     const seatCap = Math.max(1, Number(profile.vehicle_seat_count));
     setUserProfile({
@@ -1005,8 +1007,8 @@ export function PublishRideScreen() {
     if (!session?.id || !userProfile) return;
     if (driverSuspended) {
       Alert.alert(
-        'Cuenta suspendida',
-        'No podés publicar viajes hasta regularizar la deuda. Contactá a soporte.'
+        'No podés publicar',
+        'Tu cuenta tiene restricción por deuda o por incumplimiento de viaje programado. Contactá a soporte.'
       );
       return;
     }

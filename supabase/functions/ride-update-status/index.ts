@@ -13,6 +13,65 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_BATCH = 100;
 
+/** Alineado con `src/lib/driver-ride-rules.ts` y trigger SQL. */
+const DRIVER_START_WINDOW_MINUTES = 5;
+
+function checkDriverAccountAllowsEdge(
+  account: { account_status?: string; operational_blocked_until?: string | null } | null,
+  nowMs: number
+): { ok: true } | { ok: false; code: string; details: string } {
+  const op = account?.operational_blocked_until ? Date.parse(String(account.operational_blocked_until)) : NaN;
+  if (!Number.isNaN(op) && op > nowMs) {
+    return {
+      ok: false,
+      code: 'operational_blocked',
+      details:
+        'Tu cuenta tiene una restricción temporal por incumplimiento de viaje programado. Si es un error, contactá a soporte.',
+    };
+  }
+  if (account?.account_status === 'suspended') {
+    return {
+      ok: false,
+      code: 'account_suspended',
+      details: 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.',
+    };
+  }
+  return { ok: true };
+}
+
+function checkDriverMayStartEnRouteEdge(
+  departureTimeIso: string | null | undefined,
+  nowMs: number
+): { ok: true } | { ok: false; code: string; details: string } {
+  if (departureTimeIso == null || String(departureTimeIso).trim() === '') {
+    return {
+      ok: false,
+      code: 'no_departure_time',
+      details: 'Este viaje no tiene hora de salida definida. No se puede iniciar.',
+    };
+  }
+  const dep = Date.parse(String(departureTimeIso));
+  if (Number.isNaN(dep)) {
+    return { ok: false, code: 'invalid_departure_time', details: 'La fecha de salida no es válida.' };
+  }
+  const earliest = dep - DRIVER_START_WINDOW_MINUTES * 60_000;
+  if (nowMs < earliest) {
+    return {
+      ok: false,
+      code: 'start_too_early',
+      details: `Podés iniciar el viaje solo desde ${DRIVER_START_WINDOW_MINUTES} minutos antes de la hora de salida programada.`,
+    };
+  }
+  if (nowMs > dep) {
+    return {
+      ok: false,
+      code: 'start_too_late',
+      details: 'Ya pasó la hora de salida programada. No podés iniciar el viaje.',
+    };
+  }
+  return { ok: true };
+}
+
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('[ride-update-status] Missing SUPABASE_URL or SUPABASE_ANON_KEY in Edge Function environment');
 }
@@ -183,7 +242,7 @@ serve(async (req) => {
 
     const { data: ride, error: rideError } = await supabase
       .from('rides')
-      .select('id, driver_id')
+      .select('id, driver_id, departure_time')
       .eq('id', ride_id)
       .single();
 
@@ -201,7 +260,19 @@ serve(async (req) => {
       );
     }
 
-    // Un conductor no puede tener más de un viaje en curso a la vez
+    const { data: account } = await supabase
+      .from('driver_accounts')
+      .select('account_status, operational_blocked_until')
+      .eq('driver_id', user.id)
+      .maybeSingle();
+    const gate = checkDriverAccountAllowsEdge(account, Date.now());
+    if (!gate.ok) {
+      return new Response(JSON.stringify({ error: gate.code, details: gate.details }), {
+        status: 403,
+        headers: jsonHeaders,
+      });
+    }
+
     if (status === 'en_route') {
       const { data: otherEnRoute } = await supabase
         .from('rides')
@@ -219,28 +290,21 @@ serve(async (req) => {
           { status: 400, headers: jsonHeaders }
         );
       }
-    }
-
-    const { data: account } = await supabase
-      .from('driver_accounts')
-      .select('account_status')
-      .eq('driver_id', user.id)
-      .maybeSingle();
-    if (account?.account_status === 'suspended') {
-      return new Response(
-        JSON.stringify({
-          error: 'account_suspended',
-          details: 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.',
-        }),
-        { status: 403, headers: jsonHeaders }
-      );
+      const start = checkDriverMayStartEnRouteEdge(ride.departure_time as string | null | undefined, Date.now());
+      if (!start.ok) {
+        return new Response(JSON.stringify({ error: start.code, details: start.details }), {
+          status: 400,
+          headers: jsonHeaders,
+        });
+      }
     }
 
     const updatePayload: Record<string, unknown> = { status };
     const now = new Date().toISOString();
     if (status === 'en_route') {
-      // Solo seteamos started_at; el esquema actual de rides no tiene completed_at.
       updatePayload.started_at = now;
+      updatePayload.current_stop_index = 0;
+      updatePayload.awaiting_stop_confirmation = false;
     }
 
     const { error: updateError } = await supabase

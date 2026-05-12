@@ -24,6 +24,8 @@ type DriverAccount = {
   debt_pyg: number;
   debt_limit_pyg: number;
   updated_at: string;
+  operational_blocked_until?: string | null;
+  operational_block_reason?: string | null;
 };
 
 type DriverDocumentType = 'passenger_insurance' | 'dinatran_permit' | 'cedula_verde';
@@ -89,7 +91,9 @@ export default function AdminDriversPage() {
       .order('full_name');
     const { data: accounts } = await supabase
       .from('driver_accounts')
-      .select('driver_id, account_status, debt_pyg, debt_limit_pyg, updated_at');
+      .select(
+        'driver_id, account_status, debt_pyg, debt_limit_pyg, updated_at, operational_blocked_until, operational_block_reason'
+      );
     const accountByDriver: Record<string, DriverAccount> = {};
     (accounts ?? []).forEach((a: DriverAccount) => { accountByDriver[a.driver_id] = a; });
     setApproved((drivers ?? []).map((d) => ({ ...d, account: accountByDriver[d.id] ?? null })));
@@ -139,6 +143,21 @@ export default function AdminDriversPage() {
     setActing(null);
     if (error) alert(error.message);
     else loadPending();
+  }
+
+  async function clearOperationalBlock(driverId: string) {
+    if (!confirm('¿Levantar el bloqueo operativo (no-show) para este conductor?')) return;
+    setActing(driverId);
+    await supabase
+      .from('driver_accounts')
+      .update({
+        operational_blocked_until: null,
+        operational_block_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('driver_id', driverId);
+    setActing(null);
+    loadApproved();
   }
 
   async function setAccountStatus(driverId: string, status: 'active' | 'suspended') {
@@ -556,12 +575,42 @@ export default function AdminDriversPage() {
                   <td className="p-3 text-right">{(d.account?.debt_pyg ?? 0).toLocaleString('es-PY')}</td>
                   <td className="p-3 text-right">{(d.account?.debt_limit_pyg ?? 50000).toLocaleString('es-PY')}</td>
                   <td className="p-3">
-                    <span className={d.account?.account_status === 'suspended' ? 'text-amber-700 font-medium' : 'text-green-700'}>
-                      {d.account?.account_status === 'suspended' ? 'Suspendido' : 'Activo'}
-                    </span>
+                    <div className="space-y-1">
+                      <span className={d.account?.account_status === 'suspended' ? 'text-amber-700 font-medium' : 'text-green-700'}>
+                        {d.account?.account_status === 'suspended' ? 'Suspendido (deuda)' : 'Activo'}
+                      </span>
+                      {(() => {
+                        const op = d.account?.operational_blocked_until
+                          ? Date.parse(String(d.account.operational_blocked_until))
+                          : NaN;
+                        const opOn = !Number.isNaN(op) && op > Date.now();
+                        return opOn ? (
+                          <div className="text-xs text-red-700">
+                            Bloqueo operativo hasta {new Date(op).toLocaleString('es-PY')}
+                            {d.account?.operational_block_reason ? ` (${d.account.operational_block_reason})` : ''}
+                          </div>
+                        ) : null;
+                      })()}
+                    </div>
                   </td>
                   <td className="p-3">
                     <div className="flex flex-wrap items-center gap-3">
+                      {(() => {
+                        const op = d.account?.operational_blocked_until
+                          ? Date.parse(String(d.account.operational_blocked_until))
+                          : NaN;
+                        const opOn = !Number.isNaN(op) && op > Date.now();
+                        return opOn ? (
+                          <button
+                            type="button"
+                            disabled={acting !== null}
+                            onClick={() => clearOperationalBlock(d.id)}
+                            className="text-blue-600 hover:underline text-sm font-medium disabled:opacity-50"
+                          >
+                            Levantar bloqueo operativo
+                          </button>
+                        ) : null;
+                      })()}
                       {d.account?.account_status === 'suspended' ? (
                         <button
                           type="button"

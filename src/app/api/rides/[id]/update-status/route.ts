@@ -6,6 +6,11 @@ import { requireDriverOwnsRide } from '@/lib/api-auth';
 import { createServiceClient } from '@/lib/supabase/server';
 import { sendPassengersRideEnRoutePush } from '@/lib/push/sendPassengersRideEnRoutePush';
 import { sendPassengersRideCancelledPush } from '@/lib/push/sendPassengersRideCancelledPush';
+import {
+  checkDriverAccountAllowsOperation,
+  checkDriverMayCancelPublishedOrBooked,
+  checkDriverMayStartEnRoute,
+} from '@/lib/driver-ride-rules';
 
 const RIDE_STATUSES = ['draft', 'published', 'booked', 'en_route', 'completed', 'cancelled'] as const;
 const updateStatusSchema = z.object({
@@ -35,7 +40,7 @@ export async function POST(
       }
       return auth;
     }
-    const { user, supabase } = auth;
+    const { user, supabase, ride } = auth;
     const service = createServiceClient();
     if (process.env.NODE_ENV === 'development') {
       console.log('[update-status] AUTH_DEBUG', { userId: user.id, email: user.email });
@@ -52,6 +57,19 @@ export async function POST(
 
     const body = await request.json();
     const validated = updateStatusSchema.parse(body);
+
+    const { data: driverAccount } = await supabase
+      .from('driver_accounts')
+      .select('account_status, operational_blocked_until')
+      .eq('driver_id', user.id)
+      .maybeSingle();
+    const gate = checkDriverAccountAllowsOperation(driverAccount);
+    if (!gate.ok) {
+      return NextResponse.json(
+        { error: gate.code, details: gate.details },
+        { status: 403 }
+      );
+    }
 
     if (validated.status === 'en_route') {
       const { data: otherEnRoute } = await supabase
@@ -70,21 +88,26 @@ export async function POST(
           { status: 400 }
         );
       }
+      const start = checkDriverMayStartEnRoute(
+        ride.departure_time as string | null | undefined
+      );
+      if (!start.ok) {
+        return NextResponse.json({ error: start.code, details: start.details }, { status: 400 });
+      }
     }
 
-    const { data: driverAccount } = await supabase
-      .from('driver_accounts')
-      .select('account_status')
-      .eq('driver_id', user.id)
-      .maybeSingle();
-    if (driverAccount?.account_status === 'suspended') {
-      return NextResponse.json(
-        {
-          error: 'account_suspended',
-          details: 'Tu cuenta está suspendida por deuda pendiente. Contactá a soporte para regularizar.',
-        },
-        { status: 403 }
+    if (
+      validated.status === 'cancelled' &&
+      (ride.status === 'published' || ride.status === 'booked')
+    ) {
+      const cancel = checkDriverMayCancelPublishedOrBooked(
+        ride.departure_time as string | null | undefined,
+        ride.total_seats as number | null | undefined,
+        ride.available_seats as number | null | undefined
       );
+      if (!cancel.ok) {
+        return NextResponse.json({ error: cancel.code, details: cancel.details }, { status: 400 });
+      }
     }
 
     const updatePayload: Record<string, unknown> = { status: validated.status };

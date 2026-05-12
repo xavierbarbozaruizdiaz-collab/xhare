@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
+import { invalidatePricingCache } from '@/lib/pricing/runtime-pricing';
 import Link from 'next/link';
 
 type Charge = {
@@ -22,6 +23,9 @@ export default function AdminBillingPage() {
   const [filter, setFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [acting, setActing] = useState<string | null>(null);
   const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
+  const [pricingActiveId, setPricingActiveId] = useState<string | null>(null);
+  const [debtLimitEditing, setDebtLimitEditing] = useState('');
+  const [savingDebtLimit, setSavingDebtLimit] = useState(false);
 
   useEffect(() => {
     load();
@@ -47,7 +51,44 @@ export default function AdminBillingPage() {
       });
       setDriverNames(map);
     }
+    const { data: pricing } = await supabase
+      .from('pricing_settings')
+      .select('id, driver_debt_limit_default')
+      .eq('is_active', true)
+      .maybeSingle();
+    if (pricing?.id) {
+      setPricingActiveId(pricing.id);
+      setDebtLimitEditing(String((pricing as { driver_debt_limit_default?: number }).driver_debt_limit_default ?? 50000));
+    } else {
+      setPricingActiveId(null);
+      setDebtLimitEditing('');
+    }
     setLoading(false);
+  }
+
+  async function saveDebtLimitDefault() {
+    if (!pricingActiveId) {
+      alert('No hay pricing activo. Definilo en Administración → Pricing.');
+      return;
+    }
+    const v = parseInt(String(debtLimitEditing).replace(/\D/g, ''), 10);
+    if (!Number.isFinite(v) || v < 0) {
+      alert('Límite inválido');
+      return;
+    }
+    setSavingDebtLimit(true);
+    const { error } = await supabase
+      .from('pricing_settings')
+      .update({ driver_debt_limit_default: v })
+      .eq('id', pricingActiveId);
+    setSavingDebtLimit(false);
+    if (error) alert(error.message);
+    else {
+      invalidatePricingCache();
+      alert(
+        'Guardado. Los conductores nuevos usan este default al crearse la cuenta de deuda; los existentes mantienen su límite en la fila del conductor salvo que lo cambies en Conductores.'
+      );
+    }
   }
 
   async function markPaid(id: string) {
@@ -132,6 +173,42 @@ export default function AdminBillingPage() {
       <p className="text-gray-600 mb-4">
         Cargos por viaje completado. Marcar como pagado actualiza el estado y reduce la deuda del conductor.
       </p>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6 max-w-xl">
+        <h2 className="text-sm font-semibold text-gray-900 mb-1">Límite de deuda (default conductores)</h2>
+        <p className="text-xs text-gray-600 mb-3">
+          Monto en PYG a partir del cual la cuenta pasa a suspendida por deuda (nuevas filas en{' '}
+          <code className="bg-gray-100 px-1 rounded">driver_accounts</code>). Configuración completa de tarifas:{' '}
+          <Link href="/admin/pricing" className="text-green-600 hover:underline">
+            Pricing
+          </Link>
+          .
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <label htmlFor="billing-debt-limit" className="sr-only">
+              Límite PYG
+            </label>
+            <input
+              id="billing-debt-limit"
+              type="text"
+              inputMode="numeric"
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-40"
+              value={debtLimitEditing}
+              onChange={(e) => setDebtLimitEditing(e.target.value)}
+              disabled={!pricingActiveId || savingDebtLimit}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => void saveDebtLimitDefault()}
+            disabled={!pricingActiveId || savingDebtLimit}
+            className="px-3 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50"
+          >
+            {savingDebtLimit ? 'Guardando…' : 'Guardar límite'}
+          </button>
+        </div>
+      </div>
       <p className="text-sm text-amber-700 mb-4">
         Total pendiente (todos los cargos): <strong>{pendingTotal.toLocaleString('es-PY')} PYG</strong>
       </p>
