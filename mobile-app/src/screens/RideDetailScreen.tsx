@@ -1255,6 +1255,7 @@ export function RideDetailScreen() {
             height={300}
             otherBookingsGeo={driverBookingPins}
             driverLocation={driverLocationForMap}
+            driverEnRouteNavFocus={driverUiEnRoute ? orderedNavigationTarget : null}
             hidePolylineSourceNote={driverUiEnRoute}
           />
           {driverUiEnRoute ? null : (

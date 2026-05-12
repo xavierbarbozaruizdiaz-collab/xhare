@@ -4,7 +4,7 @@
  * Verde: solo tramo del pasajero con reserva (`buildPassengerMergedRoute` → tramo `mid`).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Platform, Animated } from 'react-native';
 import MapView, { Polyline, Marker } from 'react-native-maps';
 import { androidMapProvider } from '../lib/androidMapProvider';
 import { env } from '../core/env';
@@ -21,6 +21,38 @@ function isPlausibleGps(p: Point): boolean {
   if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) return false;
   if (Math.abs(p.lat) < 1e-5 && Math.abs(p.lng) < 1e-5) return false;
   return true;
+}
+
+/** Anillo pulsante sobre el próximo punto de navegación (conductor en ruta). */
+function PulsingNextNavMarker() {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [pulse]);
+  const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.35] });
+  const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] });
+  return (
+    <View style={styles.pulseWrap} collapsable={false}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.pulseRing,
+          {
+            opacity,
+            transform: [{ scale }],
+          },
+        ]}
+      />
+      <View style={styles.pulseCore} />
+    </View>
+  );
 }
 
 const GREEN = '#166534';
@@ -50,6 +82,8 @@ type Props = {
   coPassengerDropoffs?: Point[];
   /** Posición actual del conductor durante el viaje en curso (pasajero). */
   driverLocation?: Point | null;
+  /** Conductor en ruta: centrar el mapa en el próximo destino y marcarlo con pulso (mismo punto que “Navegar…”). */
+  driverEnRouteNavFocus?: Point | null;
   /** Conductor con viaje iniciado: oculta la leyenda tipo “Recorrido por calles…” bajo el mapa. */
   hidePolylineSourceNote?: boolean;
 };
@@ -69,13 +103,23 @@ function regionForPoints(pts: Point[]) {
   };
 }
 
+/** Región ajustada al próximo punto (conductor en ruta). */
+function regionForNavFocus(p: Point) {
+  const d = 0.028;
+  return {
+    latitude: p.lat,
+    longitude: p.lng,
+    latitudeDelta: d,
+    longitudeDelta: d,
+  };
+}
+
 function bookingGeoKey(g: PassengerBookingMapGeo | null | undefined): string {
   if (!g) return '';
   const ex = (g.extras ?? []).map((p) => `${p.lat},${p.lng}`).join(';');
   return `${g.pickup.lat},${g.pickup.lng}|${g.dropoff.lat},${g.dropoff.lng}|${ex}`;
 }
 
-/** Rumbo aproximado entre dos puntos geográficos (grados 0..360). */
 export function RideDetailRouteMap({
   ride,
   rideStops,
@@ -87,6 +131,7 @@ export function RideDetailRouteMap({
   coPassengerPickups = [],
   coPassengerDropoffs = [],
   driverLocation = null,
+  driverEnRouteNavFocus = null,
   hidePolylineSourceNote = false,
 }: Props) {
   const polyline = resolvedRoute.points;
@@ -298,6 +343,12 @@ export function RideDetailRouteMap({
 
   const region = useMemo(() => regionForPoints(regionPts), [regionPts]);
 
+  const navFocusKey = useMemo(() => {
+    if (!driverEnRouteNavFocus || !isPlausibleGps(driverEnRouteNavFocus)) return '';
+    const p = driverEnRouteNavFocus;
+    return `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
+  }, [driverEnRouteNavFocus]);
+
   const regionPtsRef = useRef(regionPts);
   regionPtsRef.current = regionPts;
 
@@ -341,7 +392,26 @@ export function RideDetailRouteMap({
   );
 
   useEffect(() => {
+    if (!mapReady || !driverEnRouteNavFocus || !isPlausibleGps(driverEnRouteNavFocus)) return;
+    const reg = regionForNavFocus(driverEnRouteNavFocus);
+    const delayMs = Platform.OS === 'android' ? 160 : 90;
+    const t = setTimeout(() => {
+      requestAnimationFrame(() => {
+        try {
+          mapRef.current?.animateToRegion(reg, 450);
+        } catch {
+          /* mapa midiendo */
+        }
+      });
+    }, delayMs);
+    return () => clearTimeout(t);
+  }, [mapReady, navFocusKey, driverEnRouteNavFocus]);
+
+  useEffect(() => {
     if (!mapReady) return;
+    if (driverEnRouteNavFocus && isPlausibleGps(driverEnRouteNavFocus)) {
+      return;
+    }
     const pts = regionPtsRef.current;
     if (pts.length < 2) return;
     const coords = pts
@@ -375,7 +445,7 @@ export function RideDetailRouteMap({
       });
     }, delayMs);
     return () => clearTimeout(t);
-  }, [mapReady, mapFitKey]);
+  }, [mapReady, mapFitKey, driverEnRouteNavFocus]);
 
   const displayBaseCoords = useMemo(
     () =>
@@ -640,6 +710,16 @@ export function RideDetailRouteMap({
               <View style={styles.otherPassengerPin} collapsable={false} />
             </Marker>
           ))}
+          {driverEnRouteNavFocus && isPlausibleGps(driverEnRouteNavFocus) ? (
+            <Marker
+              coordinate={{ latitude: driverEnRouteNavFocus.lat, longitude: driverEnRouteNavFocus.lng }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              zIndex={130}
+              tracksViewChanges
+            >
+              <PulsingNextNavMarker />
+            </Marker>
+          ) : null}
           {driverMarkerFallbackPoint ? (
             <Marker
               coordinate={{ latitude: driverMarkerFallbackPoint.lat, longitude: driverMarkerFallbackPoint.lng }}
@@ -772,4 +852,35 @@ const styles = StyleSheet.create({
     }),
   },
   routeStopEnd: { backgroundColor: '#b91c1c' },
+  pulseWrap: {
+    width: 56,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pulseRing: {
+    position: 'absolute',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 3,
+    borderColor: '#fb923c',
+  },
+  pulseCore: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#ea580c',
+    borderWidth: 3,
+    borderColor: '#fff',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.25,
+        shadowRadius: 3,
+        shadowOffset: { width: 0, height: 1 },
+      },
+      android: { elevation: 5 },
+    }),
+  },
 });
