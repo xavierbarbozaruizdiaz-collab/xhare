@@ -13,6 +13,7 @@ import {
   Modal,
   Platform,
   Image,
+  Share,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -40,6 +41,7 @@ import {
 } from '../lib/buildMasterBookRidePolyline';
 import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
 import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
+import { getSharedTripTrackingUrl } from '../lib/publicWeb';
 import { confirmRideBookingPayment, arriveAtStop, setRideAwaitingStopConfirmation } from '../backend/api';
 import { requestLocationPermission } from '../permissions';
 import { getOriginForExternalNavigation } from '../location/getOriginForExternalNavigation';
@@ -326,6 +328,21 @@ function canPassengerCancelReservation(bookingStatus: string, rideStatus: string
   const rs = String(rideStatus ?? '');
   if (rs === 'completed' || rs === 'cancelled' || rs === 'en_route') return false;
   return rs === 'published' || rs === 'booked';
+}
+
+/** Enlace de solo lectura para familiares (misma idea que otras apps de movilidad). */
+function canPassengerShareSafetyTracking(
+  booking: PassengerBookingSummary | null,
+  rideStatus: string,
+  shareCode: unknown
+): boolean {
+  if (!booking) return false;
+  const code = typeof shareCode === 'string' ? shareCode.trim() : '';
+  if (!code) return false;
+  const bs = String(booking.status ?? '');
+  if (bs === 'cancelled' || bs === 'completed') return false;
+  if (bs !== 'pending' && bs !== 'confirmed') return false;
+  return String(rideStatus ?? '') === 'en_route';
 }
 
 function friendlyStatusError(code: string | undefined, details?: string): string {
@@ -737,6 +754,20 @@ export function RideDetailScreen() {
       ]
     );
   }, [session?.id, passengerBooking, load, loadPassengerBooking]);
+
+  const handleSharePassengerSafetyTracking = useCallback(() => {
+    const code = ride?.share_code != null ? String(ride.share_code).trim() : '';
+    const url = getSharedTripTrackingUrl(code);
+    if (!url) {
+      Alert.alert(
+        'No disponible',
+        'No pudimos armar el enlace. Revisá que EXPO_PUBLIC_API_BASE_URL apunte al sitio web y actualizá esta pantalla.'
+      );
+      return;
+    }
+    const message = `Seguí mi viaje en Xhare (solo lectura):\n${url}`;
+    void Share.share(Platform.OS === 'ios' ? { message, url } : { message });
+  }, [ride?.share_code]);
 
   /** Poll de UI: pasajero con reserva ve avances y pin en mapa sin salir de pantalla. */
   useEffect(() => {
@@ -1504,6 +1535,23 @@ export function RideDetailScreen() {
                   ? ` · Pago: ${passengerBooking.payment_status}`
                   : ''}
               </Text>
+              {canPassengerShareSafetyTracking(passengerBooking, status, ride.share_code) ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.shareSafetyBtn}
+                    onPress={() => void handleSharePassengerSafetyTracking()}
+                    accessibilityRole="button"
+                    accessibilityLabel="Compartir enlace de seguimiento del viaje"
+                  >
+                    <Ionicons name="share-social-outline" size={20} color="#14532d" />
+                    <Text style={styles.shareSafetyBtnText}>Compartir seguimiento</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.shareSafetyHint}>
+                    Enlace público de solo lectura: estado del viaje y ubicación del conductor en vivo. No incluye tu
+                    teléfono ni datos privados.
+                  </Text>
+                </>
+              ) : null}
               <View style={styles.bookingSummaryRow}>
                 <View style={styles.bookingSummaryCol}>
                   <Text style={styles.sectionLabel}>Asientos</Text>
@@ -2136,6 +2184,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelBookingBtnText: { color: '#b91c1c', fontWeight: '700', fontSize: 15 },
+  shareSafetyBtn: {
+    marginTop: 4,
+    marginBottom: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#15803d',
+    backgroundColor: '#fff',
+  },
+  shareSafetyBtnText: { color: '#14532d', fontWeight: '700', fontSize: 15 },
+  shareSafetyHint: { fontSize: 12, color: '#166534', lineHeight: 17, marginBottom: 6, fontWeight: '500' },
   driverCardContactWrap: { marginTop: 14, width: '100%' },
   contactBtnInCard: {
     paddingVertical: 12,

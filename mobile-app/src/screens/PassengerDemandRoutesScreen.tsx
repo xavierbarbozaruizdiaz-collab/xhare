@@ -14,11 +14,16 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import { fetchDemandRoutes, type DemandRouteGroup } from '../backend/demandRoutesApi';
 import { isEnvConfigured } from '../backend/supabase';
 import type { MainStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'PassengerDemandRoutes'>;
+
+const PRIMARY = '#1a5c38';
+const PAGE_BG = '#f7f8fa';
+const ICON_TILE_BG = '#edf7f1';
 
 function formatDate(d: string | null | undefined): string {
   if (!d) return '—';
@@ -71,132 +76,261 @@ export function PassengerDemandRoutesScreen() {
 
   const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.topActions}>
+  const listHeader = (
+    <View style={styles.headerBlock}>
+      <Text style={styles.kicker}>EXPLORÁ</Text>
+      <Text style={styles.leadTitle}>Demanda y viajes publicados</Text>
+      <Text style={styles.leadSubtitle}>
+        Buscá por código o recorrido, abrí la lista del día o revisá tus reservas.
+      </Text>
+
+      <TouchableOpacity
+        style={styles.searchCard}
+        onPress={() => parentNav?.navigate('SearchPublishedRides', {})}
+        accessibilityRole="button"
+        accessibilityLabel="Buscar viajes con filtros"
+      >
+        <Ionicons name="search" size={20} color="#9ca3af" style={styles.searchCardIcon} />
+        <Text style={styles.searchCardPlaceholder}>Buscá un código o ruta…</Text>
+      </TouchableOpacity>
+
+      <View style={styles.quickRow}>
         <TouchableOpacity
-          style={styles.btnOutline}
-          onPress={() => parentNav?.navigate('SearchPublishedRides', {})}
-          accessibilityRole="button"
-          accessibilityLabel="Buscar viajes con filtros"
-        >
-          <Text style={styles.btnOutlineText}>Buscar viajes</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.btnSolid}
+          style={styles.quickTile}
           onPress={() => parentNav?.navigate('AvailableRides')}
           accessibilityRole="button"
           accessibilityLabel="Ver viajes disponibles publicados hoy"
         >
-          <Text style={styles.btnSolidText}>Viajes disponibles</Text>
+          <View style={styles.quickIconSquare}>
+            <Ionicons name="car-outline" size={24} color={PRIMARY} />
+          </View>
+          <Text style={styles.quickTileLabel}>Viajes disponibles</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickTile}
+          onPress={() => parentNav?.navigate('MyBookings')}
+          accessibilityRole="button"
+          accessibilityLabel="Ver mis reservas"
+        >
+          <View style={styles.quickIconSquare}>
+            <Ionicons name="calendar-outline" size={24} color={PRIMARY} />
+          </View>
+          <Text style={styles.quickTileLabel}>Mis reservas</Text>
         </TouchableOpacity>
       </View>
-      <TouchableOpacity
-        style={styles.btnReservas}
-        onPress={() => parentNav?.navigate('MyBookings')}
-        accessibilityRole="button"
-        accessibilityLabel="Ver mis reservas"
-      >
-        <Text style={styles.btnReservasText}>Mis reservas</Text>
-      </TouchableOpacity>
+
+      <Text style={styles.sectionLabel}>RUTAS CON DEMANDA</Text>
       <Text style={styles.intro}>
-        Abajo: rutas con demanda (varios pasajeros con ruta parecida). Para viajes ya publicados usá los botones de
-        arriba: Viajes disponibles (lista de hoy) o Buscar viajes (más filtros).
+        Varias solicitudes parecidas se agrupan acá. Para viajes ya publicados usá los accesos de arriba.
       </Text>
-      {error && <Text style={styles.apiError}>{error}</Text>}
+      {error ? <Text style={styles.apiError}>{error}</Text> : null}
       {loading && groups.length === 0 ? (
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#166534" />
+          <ActivityIndicator size="large" color={PRIMARY} />
+          <Text style={styles.loadingHint}>Cargando rutas…</Text>
         </View>
-      ) : groups.length === 0 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyText}>No hay rutas con demanda para mostrar.</Text>
-          <Text style={styles.emptySub}>
-            Eso no significa que no haya viajes: usá Viajes disponibles o Buscar viajes arriba para ver viajes publicados.
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={groups}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() => parentNav?.navigate('PassengerRouteGroupDetail', { groupId: item.id })}
-              accessibilityLabel={`Ruta ${item.origin_city ?? 'Origen'} a ${item.destination_city ?? 'Destino'}, ${item.passenger_count} pasajeros`}
-              accessibilityRole="button"
-            >
-              <Text style={styles.origin} numberOfLines={1}>
+      ) : null}
+    </View>
+  );
+
+  const emptyBody = (
+    <View style={styles.empty}>
+      <View style={styles.emptyIconWrap}>
+        <Ionicons name="map-outline" size={40} color="#cbd5e1" />
+      </View>
+      <Text style={styles.emptyText}>No hay rutas con demanda para mostrar</Text>
+      <Text style={styles.emptySub}>
+        Eso no significa que no haya viajes: usá Viajes disponibles o el buscador para ver publicaciones.
+      </Text>
+    </View>
+  );
+
+  return (
+    <View style={styles.container}>
+      <FlatList
+        data={groups}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={!loading && groups.length === 0 ? emptyBody : null}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.card}
+            onPress={() => parentNav?.navigate('PassengerRouteGroupDetail', { groupId: item.id })}
+            accessibilityLabel={`Ruta ${item.origin_city ?? 'Origen'} a ${item.destination_city ?? 'Destino'}, ${item.passenger_count} pasajeros`}
+            accessibilityRole="button"
+          >
+            <View style={styles.cardTopRow}>
+              <Text style={styles.origin} numberOfLines={2}>
                 {item.origin_city ?? 'Origen'} → {item.destination_city ?? 'Destino'}
               </Text>
-              <Text style={styles.meta}>
-                {formatDate(item.requested_date)} · {formatTime(item.requested_time)} · {item.passenger_count} pasajero(s)
-              </Text>
-              <Text style={styles.hint}>Tocá para unirte</Text>
-            </TouchableOpacity>
-          )}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
-          contentContainerStyle={styles.listContent}
-        />
-      )}
+              <Ionicons name="chevron-forward" size={22} color="#94a3b8" style={styles.cardChevron} />
+            </View>
+            <Text style={styles.meta}>
+              {formatDate(item.requested_date)} · {formatTime(item.requested_time)} · {item.passenger_count} pasajero(s)
+            </Text>
+            <Text style={styles.hint}>Tocá para ver detalle y unirte</Text>
+          </TouchableOpacity>
+        )}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              load();
+            }}
+            tintColor={PRIMARY}
+          />
+        }
+        contentContainerStyle={styles.listContent}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 120 },
-  topActions: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  btnReservas: {
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#ecfdf5',
-    borderWidth: 2,
-    borderColor: '#166534',
-    alignItems: 'center',
-    marginBottom: 14,
+  container: { flex: 1, backgroundColor: PAGE_BG },
+  headerBlock: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 4 },
+  kicker: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    color: '#64748b',
+    fontFamily: 'DMSans_700Bold',
+    marginBottom: 6,
   },
-  btnReservasText: { color: '#14532d', fontWeight: '800', fontSize: 14 },
-  btnOutline: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#166534',
+  leadTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+    fontFamily: 'DMSans_700Bold',
+    letterSpacing: -0.3,
+    marginBottom: 8,
+  },
+  leadSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    lineHeight: 20,
+    fontFamily: 'DMSans_400Regular',
+    marginBottom: 18,
+  },
+  searchCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#fff',
-    alignItems: 'center',
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e8eaed',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
   },
-  btnOutlineText: { color: '#166534', fontWeight: '700', fontSize: 14 },
-  btnSolid: {
+  searchCardIcon: { marginRight: 12 },
+  searchCardPlaceholder: { flex: 1, fontSize: 15, color: '#9ca3af', fontFamily: 'DMSans_400Regular' },
+  quickRow: { flexDirection: 'row', gap: 12, marginBottom: 22 },
+  quickTile: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#166534',
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 10,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#eef0f3',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
   },
-  btnSolidText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  intro: { fontSize: 14, color: '#6b7280', marginBottom: 16 },
-  apiError: { fontSize: 13, color: '#b91c1c', marginBottom: 8 },
-  listContent: { paddingBottom: 24 },
+  quickIconSquare: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: ICON_TILE_BG,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  quickTileLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'center',
+    fontFamily: 'DMSans_700Bold',
+  },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    color: '#64748b',
+    fontFamily: 'DMSans_700Bold',
+    marginBottom: 8,
+  },
+  intro: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 19,
+    marginBottom: 12,
+    fontFamily: 'DMSans_400Regular',
+  },
+  apiError: { fontSize: 13, color: '#b91c1c', marginBottom: 8, fontFamily: 'DMSans_500Medium' },
+  centered: { alignItems: 'center', paddingVertical: 28 },
+  loadingHint: { marginTop: 12, fontSize: 14, color: '#64748b', fontFamily: 'DMSans_500Medium' },
+  listContent: { paddingHorizontal: 18, paddingBottom: 28, flexGrow: 1 },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
+    borderRadius: 18,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#eef0f3',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
   },
-  origin: { fontSize: 15, fontWeight: '600', color: '#111' },
-  meta: { fontSize: 13, color: '#6b7280', marginTop: 8 },
-  hint: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
+  cardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 8,
+  },
+  cardChevron: { marginTop: 2 },
+  origin: { flex: 1, fontSize: 16, fontWeight: '800', color: '#0f172a', fontFamily: 'DMSans_700Bold', lineHeight: 22 },
+  meta: { fontSize: 13, color: '#64748b', marginTop: 8, fontFamily: 'DMSans_400Regular' },
+  hint: { fontSize: 12, color: PRIMARY, marginTop: 10, fontWeight: '700', fontFamily: 'DMSans_600SemiBold' },
   empty: { alignItems: 'center', paddingVertical: 24, paddingHorizontal: 8 },
-  emptyText: { fontSize: 16, color: '#6b7280', textAlign: 'center' },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#eef0f3',
+  },
+  emptyText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#475569',
+    textAlign: 'center',
+    fontFamily: 'DMSans_700Bold',
+  },
   emptySub: {
     fontSize: 14,
-    color: '#9ca3af',
+    color: '#94a3b8',
     textAlign: 'center',
-    marginTop: 12,
-    lineHeight: 20,
-    paddingHorizontal: 8,
+    marginTop: 10,
+    lineHeight: 21,
+    paddingHorizontal: 4,
+    fontFamily: 'DMSans_400Regular',
   },
 });

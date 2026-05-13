@@ -7,6 +7,7 @@ node_modules/
 .expo/
 dist/
 dist-apks/
+dist-aab/
 web-build/
 expo-env.d.ts
 
@@ -49,3 +50,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# módulo local (Gradle)
+modules/xhare-navigation/android/build/

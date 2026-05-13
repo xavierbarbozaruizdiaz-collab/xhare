@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -56,6 +57,10 @@ const DRIVER_DOCUMENTS: Array<{ type: DriverDocumentType; label: string }> = [
   { type: 'dinatran_permit', label: 'Habilitación DINATRAN' },
   { type: 'cedula_verde', label: 'Cédula verde' },
 ];
+
+const PRIMARY = '#1a5c38';
+const PAGE_BG = '#f7f8fa';
+const ICON_TILE_BG = '#edf7f1';
 
 export function SettingsScreen() {
   const navigation = useNavigation<Nav>();
@@ -451,15 +456,18 @@ export function SettingsScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {session?.email ? (
-        <Text style={styles.email}>{session.email}</Text>
+        <View style={styles.heroEmail}>
+          <Ionicons name="mail-outline" size={18} color="#64748b" style={styles.heroEmailIcon} />
+          <Text style={styles.email}>{session.email}</Text>
+        </View>
       ) : null}
 
-      <Text style={styles.sectionTitle}>Perfil</Text>
+      <Text style={[styles.sectionLabel, styles.sectionLabelFirst]}>PERFIL</Text>
       {loadingProfilePhotos ? (
         <View style={styles.profileCard}>
-          <ActivityIndicator size="small" color="#166534" />
+          <ActivityIndicator size="small" color={PRIMARY} />
           <Text style={styles.profileHint}>Cargando fotos...</Text>
         </View>
       ) : (
@@ -535,8 +543,8 @@ export function SettingsScreen() {
 
       {flavor === 'driver' ? (
         <>
-          <Text style={styles.sectionTitle}>Navegación externa</Text>
-          <Text style={styles.hint}>Al tocar "Abrir en Maps / Waze" en un viaje se usará:</Text>
+          <Text style={styles.sectionLabel}>NAVEGACIÓN EXTERNA</Text>
+          <Text style={styles.hint}>Al tocar &quot;Abrir en Maps / Waze&quot; en un viaje se usará:</Text>
           {NAV_OPTIONS.map((opt) => {
             const available =
               opt.value === 'browser'
@@ -566,7 +574,7 @@ export function SettingsScreen() {
                   <Text style={styles.radioSub}>No detectada en el dispositivo</Text>
                 ) : null}
               </View>
-              {navPref === opt.value ? <Text style={styles.radioCheck}>✓</Text> : null}
+              {navPref === opt.value ? <Ionicons name="checkmark-circle" size={22} color={PRIMARY} /> : null}
             </TouchableOpacity>
             );
           })}
@@ -575,10 +583,10 @@ export function SettingsScreen() {
 
       {flavor === 'driver' ? (
         <>
-          <Text style={styles.sectionTitle}>Documentos del conductor</Text>
+          <Text style={styles.sectionLabel}>DOCUMENTOS DEL CONDUCTOR</Text>
           {loadingDocuments ? (
             <View style={styles.profileCard}>
-              <ActivityIndicator size="small" color="#166534" />
+              <ActivityIndicator size="small" color={PRIMARY} />
               <Text style={styles.profileHint}>Cargando documentos...</Text>
             </View>
           ) : (
@@ -630,50 +638,64 @@ export function SettingsScreen() {
         </>
       ) : null}
 
-      <Text style={styles.sectionTitle}>Permisos</Text>
-      <View style={styles.permRow}>
-        <Text style={styles.permLabel}>Ubicación: {locationStatus}</Text>
-        <TouchableOpacity style={styles.permBtn} onPress={handleRequestLocation}>
-          <Text style={styles.permBtnText}>Solicitar</Text>
-        </TouchableOpacity>
+      <Text style={styles.sectionLabel}>PERMISOS</Text>
+      <View style={styles.settingsCard}>
+        <View style={styles.permRow}>
+          <View style={styles.permTextCol}>
+            <Text style={styles.permTitle}>Ubicación</Text>
+            <Text style={styles.permStatus}>{locationStatus}</Text>
+          </View>
+          <TouchableOpacity style={styles.permBtn} onPress={handleRequestLocation}>
+            <Text style={styles.permBtnText}>Solicitar</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <Text style={styles.sectionTitle}>Cuenta</Text>
+      <Text style={styles.sectionLabel}>CUENTA</Text>
       <TouchableOpacity
-        style={styles.linkRow}
+        style={styles.linkCard}
         onPress={() => parentNav?.navigate('Messages')}
         accessibilityLabel="Mensajes"
         accessibilityHint="Ver conversaciones y chat"
         accessibilityRole="button"
       >
+        <View style={styles.linkIconSquare}>
+          <Ionicons name="chatbubble-ellipses-outline" size={22} color={PRIMARY} />
+        </View>
         <Text style={styles.linkLabel}>Mensajes</Text>
-        <Text style={styles.linkArrow}>→</Text>
+        <Ionicons name="chevron-forward" size={22} color="#94a3b8" />
       </TouchableOpacity>
       {flavor === 'driver' ? (
         <TouchableOpacity
-          style={styles.linkRow}
+          style={styles.linkCard}
           onPress={() => parentNav?.navigate('DriverTripRequests')}
           accessibilityLabel="Solicitudes de viaje de pasajeros"
           accessibilityRole="button"
         >
+          <View style={styles.linkIconSquare}>
+            <Ionicons name="document-text-outline" size={22} color={PRIMARY} />
+          </View>
           <Text style={styles.linkLabel}>Solicitudes de viaje</Text>
-          <Text style={styles.linkArrow}>→</Text>
+          <Ionicons name="chevron-forward" size={22} color="#94a3b8" />
         </TouchableOpacity>
       ) : (
         <TouchableOpacity
-          style={styles.linkRow}
+          style={styles.linkCard}
           onPress={() => parentNav?.navigate('MyTripRequests')}
           accessibilityLabel="Mis solicitudes de trayecto"
           accessibilityHint="Solicitudes guardadas cuando no había viajes publicados"
           accessibilityRole="button"
         >
+          <View style={styles.linkIconSquare}>
+            <Ionicons name="document-text-outline" size={22} color={PRIMARY} />
+          </View>
           <Text style={styles.linkLabel}>Mis solicitudes</Text>
-          <Text style={styles.linkArrow}>→</Text>
+          <Ionicons name="chevron-forward" size={22} color="#94a3b8" />
         </TouchableOpacity>
       )}
 
       <TouchableOpacity
-        style={[styles.button, signingOut && styles.buttonDisabled]}
+        style={[styles.signOutBtn, signingOut && styles.buttonDisabled]}
         onPress={handleSignOut}
         disabled={signingOut}
         accessibilityLabel="Cerrar sesión"
@@ -683,7 +705,7 @@ export function SettingsScreen() {
         {signingOut ? (
           <ActivityIndicator color="#fff" size="small" />
         ) : (
-          <Text style={styles.buttonText}>Cerrar sesión</Text>
+          <Text style={styles.signOutBtnText}>Cerrar sesión</Text>
         )}
       </TouchableOpacity>
     </ScrollView>
@@ -691,60 +713,105 @@ export function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { padding: 24, paddingBottom: 40 },
-  email: { fontSize: 14, color: '#666', marginBottom: 24 },
-  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#111', marginTop: 16, marginBottom: 8 },
-  profileCard: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 12,
+  container: { flex: 1, backgroundColor: PAGE_BG },
+  content: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 40 },
+  heroEmail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: '#fff',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    padding: 12,
-    gap: 12,
-    marginBottom: 8,
+    borderColor: '#eef0f3',
   },
-  photoBlock: { gap: 6 },
+  heroEmailIcon: { marginTop: 1 },
+  email: { fontSize: 14, color: '#475569', flex: 1, fontFamily: 'DMSans_500Medium' },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    color: '#64748b',
+    fontFamily: 'DMSans_700Bold',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  sectionLabelFirst: { marginTop: 6 },
+  settingsCard: {
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#eef0f3',
+    padding: 16,
+    marginBottom: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  profileCard: {
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#eef0f3',
+    padding: 16,
+    gap: 14,
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  photoBlock: { gap: 8 },
   avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
-  photoLabel: { fontSize: 13, color: '#374151', fontWeight: '600' },
+  photoLabel: { fontSize: 13, color: '#334155', fontWeight: '700', fontFamily: 'DMSans_700Bold' },
   profilePhoto: {
     width: 84,
     height: 84,
     borderRadius: 42,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
+    backgroundColor: PAGE_BG,
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
   },
   vehiclePhoto: {
     width: '100%',
     height: 140,
-    borderRadius: 10,
-    backgroundColor: '#fff',
+    borderRadius: 16,
+    backgroundColor: PAGE_BG,
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: '#e2e8f0',
   },
   photoPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  photoPlaceholderText: { color: '#6b7280', fontSize: 12 },
+  photoPlaceholderText: { color: '#64748b', fontSize: 12, fontFamily: 'DMSans_400Regular' },
   smallActionBtn: {
-    backgroundColor: '#166534',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    backgroundColor: PRIMARY,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    shadowColor: PRIMARY,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  smallActionBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  smallActionBtnText: { color: '#fff', fontSize: 13, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
   docRow: {
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    gap: 6,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e2e8f0',
+    gap: 8,
   },
   docMain: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  docTitle: { fontSize: 14, color: '#111827', fontWeight: '700', flex: 1 },
-  docMeta: { fontSize: 12, color: '#6b7280' },
-  docReviewNote: { fontSize: 12, color: '#92400e', lineHeight: 16 },
+  docTitle: { fontSize: 14, color: '#0f172a', fontWeight: '800', flex: 1, fontFamily: 'DMSans_700Bold' },
+  docMeta: { fontSize: 12, color: '#64748b', fontFamily: 'DMSans_400Regular' },
+  docReviewNote: { fontSize: 12, color: '#92400e', lineHeight: 18, fontFamily: 'DMSans_400Regular' },
   docBadge: {
     borderRadius: 999,
     paddingHorizontal: 10,
@@ -754,48 +821,80 @@ const styles = StyleSheet.create({
   docBadgePending: { backgroundColor: '#fef3c7' },
   docBadgeApproved: { backgroundColor: '#dcfce7' },
   docBadgeRejected: { backgroundColor: '#fee2e2' },
-  docBadgeText: { fontSize: 11, fontWeight: '700', color: '#374151' },
-  profileHint: { fontSize: 12, color: '#6b7280' },
-  hint: { fontSize: 13, color: '#666', marginBottom: 12 },
+  docBadgeText: { fontSize: 11, fontWeight: '800', color: '#374151', fontFamily: 'DMSans_700Bold' },
+  profileHint: { fontSize: 12, color: '#64748b', lineHeight: 17, fontFamily: 'DMSans_400Regular' },
+  hint: { fontSize: 13, color: '#64748b', marginBottom: 12, lineHeight: 19, fontFamily: 'DMSans_400Regular' },
   radioRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: 8,
-    marginBottom: 8,
-    backgroundColor: '#f9fafb',
+    borderRadius: 16,
+    marginBottom: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#eef0f3',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
-  radioRowActive: { backgroundColor: '#dcfce7', borderWidth: 1, borderColor: '#166534' },
+  radioRowActive: { backgroundColor: '#ecfdf5', borderWidth: 2, borderColor: PRIMARY },
   radioRowDisabled: { opacity: 0.55 },
-  radioLabelDisabled: { color: '#64748b' },
-  radioSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  radioLabel: { fontSize: 15, color: '#111' },
-  radioCheck: { color: '#166534', fontWeight: '700' },
-  permRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  permLabel: { fontSize: 14, color: '#374151' },
-  permBtn: { paddingVertical: 8, paddingHorizontal: 14, backgroundColor: '#166534', borderRadius: 8 },
-  permBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  linkRow: {
+  radioLabelDisabled: { color: '#94a3b8' },
+  radioSub: { fontSize: 12, color: '#64748b', marginTop: 2, fontFamily: 'DMSans_400Regular' },
+  radioLabel: { fontSize: 15, color: '#0f172a', fontWeight: '600', fontFamily: 'DMSans_600SemiBold' },
+  permRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  permTextCol: { flex: 1, minWidth: 0 },
+  permTitle: { fontSize: 13, fontWeight: '800', color: '#0f172a', fontFamily: 'DMSans_700Bold' },
+  permStatus: { fontSize: 13, color: '#64748b', marginTop: 4, fontFamily: 'DMSans_400Regular' },
+  permBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: PRIMARY,
+    borderRadius: 14,
+  },
+  permBtnText: { color: '#fff', fontSize: 14, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  linkCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 14,
     paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: 8,
-    marginBottom: 8,
-    backgroundColor: '#f9fafb',
+    borderRadius: 18,
+    marginBottom: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#eef0f3',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
   },
-  linkLabel: { fontSize: 15, color: '#111' },
-  linkArrow: { fontSize: 16, color: '#6b7280' },
-  buttonDisabled: { opacity: 0.7 },
-  button: {
-    backgroundColor: '#dc2626',
-    borderRadius: 8,
-    paddingVertical: 14,
+  linkIconSquare: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: ICON_TILE_BG,
     alignItems: 'center',
-    marginTop: 24,
+    justifyContent: 'center',
   },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  linkLabel: { flex: 1, fontSize: 15, fontWeight: '800', color: '#0f172a', fontFamily: 'DMSans_700Bold' },
+  buttonDisabled: { opacity: 0.65 },
+  signOutBtn: {
+    backgroundColor: '#dc2626',
+    borderRadius: 16,
+    paddingVertical: 15,
+    alignItems: 'center',
+    marginTop: 20,
+    shadowColor: '#dc2626',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  signOutBtnText: { color: '#fff', fontSize: 16, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
 });

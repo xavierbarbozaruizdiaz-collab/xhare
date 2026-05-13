@@ -569,7 +569,7 @@ export async function fetchRideForReserve(rideId: string): Promise<{
   const { data: rideRow, error: rideError } = await supabase
     .from('rides')
     .select(`
-      id, driver_id, status, available_seats, total_seats, price_per_seat,
+      id, driver_id, status, share_code, available_seats, total_seats, price_per_seat,
       origin_lat, origin_lng, origin_label, destination_lat, destination_lng, destination_label,
       route_name,
       departure_time, base_route_polyline, max_deviation_km,
@@ -712,6 +712,7 @@ function buildTripRequestRow(params: {
   passengerDesiredPricePerSeatGs?: number | null;
   internalQuoteAcknowledged?: boolean | null;
   passengerFavoriteSlot?: string | null;
+  passengerRouteNameHint?: string | null;
 }): Record<string, unknown> {
   const kind = params.pricingKind === 'long_distance' ? 'long_distance' : 'internal';
   const row: Record<string, unknown> = {
@@ -748,6 +749,8 @@ function buildTripRequestRow(params: {
   if (params.passengerFavoriteSlot?.trim()) {
     row.passenger_favorite_slot = params.passengerFavoriteSlot.trim().slice(0, 120);
   }
+  const routeHint = params.passengerRouteNameHint?.trim();
+  if (routeHint) row.passenger_route_name_hint = routeHint.slice(0, 200);
   const hex = tripRequestSuperHexPair(
     params.originLat,
     params.originLng,
@@ -801,6 +804,8 @@ export async function saveTripRequest(params: {
   passengerDesiredPricePerSeatGs?: number | null;
   internalQuoteAcknowledged?: boolean | null;
   passengerFavoriteSlot?: string | null;
+  /** Opcional: referencia al nombre del viaje publicado por el conductor. */
+  passengerRouteNameHint?: string | null;
   /** Solo vía API Next: desvincular solicitud agrupada previa del mismo favorito/fecha/hora. */
   confirmLeaveGroupedFavorite?: boolean;
   /** Favorito diario: otras fechas YYYY-MM-DD (misma hora/slot) para agrupar demanda con anticipación. */

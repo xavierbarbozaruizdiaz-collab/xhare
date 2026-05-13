@@ -2,9 +2,11 @@ import React, { Component, useEffect, type ErrorInfo, type ReactNode } from 'rea
 import { LogBox, ScrollView, StyleSheet, Text } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
 import { AuthProvider } from './src/auth/AuthContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { PushRegistrationEffect } from './src/push/PushRegistrationEffect';
+import { LoadingScreen } from './src/ui/LoadingScreen';
 
 type EbProps = { children: ReactNode };
 type EbState = { error: Error | null; componentStack: string | null };
@@ -56,6 +58,13 @@ const styles = StyleSheet.create({
 });
 
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    DMSans_400Regular,
+    DMSans_500Medium,
+    DMSans_600SemiBold,
+    DMSans_700Bold,
+  });
+
   useEffect(() => {
     if (!__DEV__) return;
     // Expo Dev Client (RN 0.83 / bridgeless): al arrancar puede intentar keep-awake
@@ -65,6 +74,20 @@ export default function App() {
       'The current activity is no longer available',
     ]);
   }, []);
+
+  useEffect(() => {
+    if (fontError) console.error('[App] fonts', fontError);
+  }, [fontError]);
+
+  if (!fontsLoaded) {
+    return (
+      <RootErrorBoundary>
+        <SafeAreaProvider>
+          <LoadingScreen />
+        </SafeAreaProvider>
+      </RootErrorBoundary>
+    );
+  }
 
   return (
     <RootErrorBoundary>

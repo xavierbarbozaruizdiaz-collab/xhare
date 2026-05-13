@@ -35,7 +35,7 @@ Checklist ejecutado antes de pasar a otro proyecto.
 | Login / recuperar contraseña | LoginScreen | "¿Olvidaste tu contraseña?" + reset por email |
 | Buscar viajes / reservar | PassengerScreen, BookRideScreen | Paradas + precio por tramo cuando hay ride_stops |
 | Publicar / editar viaje | PublishRideScreen, EditRideScreen | Waypoints, flexibilidad, trip_request_id, from_ride_id |
-| Conductor: viajes y solicitudes | DriverScreen, DriverTripRequestsScreen | Tabs Próximos/Finalizados, "Solicitudes", "Volver a agendar" |
+| Conductor: viajes y solicitudes | HomeScreen (panel), MyPublishedRidesScreen, DriverTripRequestsScreen | Inicio → accesos; Mis viajes; solicitudes |
 | Configurar vehículo | VehicleSetupScreen | Ajustes → Configurar vehículo |
 | Mensajes y chat | MessagesScreen, ChatScreen | Realtime |
 | Ofertas Busco/Tengo | OfferScreen, OfferBusco, OfferTengo, New | Ajustes → Viajes a oferta |

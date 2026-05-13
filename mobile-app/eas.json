@@ -22,7 +22,7 @@
     "production": {
       "environment": "production",
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "apk"
       },
       "env": {
         "APP_FLAVOR": "passenger",
@@ -32,7 +32,7 @@
     "production_passenger": {
       "environment": "production",
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "apk"
       },
       "env": {
         "APP_FLAVOR": "passenger",
@@ -40,6 +40,36 @@
       }
     },
     "production_driver": {
+      "environment": "production",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_FLAVOR": "driver",
+        "EXPO_PUBLIC_APP_FLAVOR": "driver"
+      }
+    },
+    "production_aab": {
+      "environment": "production",
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "APP_FLAVOR": "passenger",
+        "EXPO_PUBLIC_APP_FLAVOR": "passenger"
+      }
+    },
+    "production_passenger_aab": {
+      "environment": "production",
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "APP_FLAVOR": "passenger",
+        "EXPO_PUBLIC_APP_FLAVOR": "passenger"
+      }
+    },
+    "production_driver_aab": {
       "environment": "production",
       "android": {
         "buildType": "app-bundle"

@@ -30,6 +30,7 @@ import { buildRideIdToDemandGroupMap, fetchDemandRouteDetail } from '../backend/
 import { env } from '../core/env';
 import { getAppFlavor } from '../core/flavor';
 import { getPositionAlongPolyline, snapToPolyline, type Point as GeoPoint } from '../lib/geo';
+import { datePickerDisplay, timePickerDisplay } from '../lib/datePickerUi';
 import { PublishRouteMapModal, type PublishMapMode } from '../components/PublishRouteMapModal';
 import type { MainStackParamList } from '../navigation/types';
 import { MAX_DRIVER_PUBLISH_WAYPOINTS } from '../core/publishRouteLimits';
@@ -1865,7 +1866,7 @@ export function PublishRideScreen() {
                   })()
             }
             mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+            display={datePickerDisplay()}
             minimumDate={(() => {
               const t = new Date();
               t.setHours(0, 0, 0, 0);
@@ -1874,7 +1875,15 @@ export function PublishRideScreen() {
             onChange={(event, date) => {
               if (Platform.OS === 'android') setShowDatePicker(false);
               if (event.type === 'dismissed') setShowDatePicker(false);
-              if (event.type === 'set' && date) setDepartureDate(toLocalYyyyMmDd(date));
+              if (event.type === 'set' && date) {
+                const min = (() => {
+                  const t = new Date();
+                  t.setHours(0, 0, 0, 0);
+                  return t;
+                })();
+                const picked = date < min ? min : date;
+                setDepartureDate(toLocalYyyyMmDd(picked));
+              }
             }}
           />
           {Platform.OS === 'ios' ? (
@@ -1911,7 +1920,7 @@ export function PublishRideScreen() {
               return d;
             })()}
             mode="time"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+            display={timePickerDisplay()}
             is24Hour
             onChange={(event, date) => {
               if (Platform.OS === 'android') setShowTimePicker(false);

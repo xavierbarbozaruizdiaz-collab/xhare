@@ -18,6 +18,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { searchRides } from '../rides/api';
+import { clampDateNotBeforeLocalDay, datePickerDisplay, startOfLocalDay, timePickerDisplay } from '../lib/datePickerUi';
 import type { MainStackParamList } from '../navigation/types';
 import { isEnvConfigured } from '../backend/supabase';
 
@@ -135,16 +136,21 @@ export function AvailableRidesScreen() {
       ) : null}
       {showDatePicker ? (
         <DateTimePicker
-          value={dateYmd.trim() ? new Date(dateYmd + 'T12:00:00') : new Date()}
+          value={
+            dateYmd.trim()
+              ? clampDateNotBeforeLocalDay(new Date(dateYmd + 'T12:00:00'), new Date())
+              : startOfLocalDay()
+          }
           mode="date"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          display={datePickerDisplay()}
+          minimumDate={startOfLocalDay()}
           onChange={(ev, d) => {
             if (ev.type === 'dismissed') {
               setShowDatePicker(false);
               return;
             }
             if (Platform.OS !== 'ios') setShowDatePicker(false);
-            if (d) setDateYmd(toYmdLocal(d));
+            if (d) setDateYmd(toYmdLocal(clampDateNotBeforeLocalDay(d, new Date())));
           }}
         />
       ) : null}
@@ -169,7 +175,7 @@ export function AvailableRidesScreen() {
             return d;
           })()}
           mode="time"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          display={timePickerDisplay()}
           onChange={(ev, d) => {
             if (ev.type === 'dismissed') {
               setShowTimePicker(false);

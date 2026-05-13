@@ -15,6 +15,8 @@ import {
   AppState,
   Platform,
   ActivityIndicator,
+  Animated,
+  Easing,
   type AppStateStatus,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -23,7 +25,9 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth/AuthContext';
+import type { SessionProfile } from '../auth/session';
 import type { MainTabParamList } from '../navigation/types';
+import { fetchMyConversations } from '../api/messages';
 import { getAppFlavor } from '../core/flavor';
 import {
   fetchPassengerHomeFavoritesCopy,
@@ -31,6 +35,7 @@ import {
   DEFAULT_PASSENGER_HOME_FAVORITES_TITLE,
   DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE,
 } from '../backend/passengerUiSettings';
+import { fetchDriverHomeHowTo, DEFAULT_DRIVER_HOME_HOW_TO } from '../backend/driverUiSettings';
 import { pushPassengerHomeMapShortcuts } from '../backend/passengerHomeMapShortcutSync';
 import {
   loadPassengerFavorites,
@@ -56,6 +61,7 @@ import {
 } from '../lib/bookingLead';
 import { fetchRoute } from '../backend/routeApi';
 import { distanceMeters } from '../lib/geo';
+import { clampDateNotBeforeLocalDay, datePickerDisplay, startOfLocalDay, timePickerDisplay } from '../lib/datePickerUi';
 import {
   loadActivePricingSettings,
   computeEffectivePricing,
@@ -71,6 +77,7 @@ import {
   findEnRouteRideIdForFavorite,
   findPassengerActiveRideShortcut,
   fetchMyRides,
+  fetchMyBookings,
 } from '../rides/api';
 import { supabase } from '../backend/supabase';
 import { updateRideStatus } from '../backend/rideStatus';
@@ -112,6 +119,76 @@ const MODAL_DEST_ICONS: IonName[] = [
   'restaurant-outline',
 ];
 
+const PASSENGER_PRIMARY = '#1a5c38';
+const PASSENGER_PRIMARY_MID = '#2d8a5e';
+const PASSENGER_PAGE_BG = '#f7f8fa';
+const PASSENGER_QUICK_ICON_BG = '#edf7f1';
+
+/** Misma lectura visual que las pills del inicio (emojis donde aplica). */
+function emojiForModalIon(name: IonName): string | null {
+  switch (name) {
+    case 'home-outline':
+      return '🏠';
+    case 'car-outline':
+      return '🚗';
+    case 'bus-outline':
+      return '🚌';
+    case 'walk-outline':
+      return '🚶';
+    case 'cafe-outline':
+      return '☕';
+    case 'navigate-outline':
+      return '🧭';
+    case 'location-outline':
+      return '📍';
+    case 'train-outline':
+      return '🚆';
+    case 'briefcase-outline':
+      return '💼';
+    case 'school-outline':
+      return '🎓';
+    case 'library-outline':
+      return '📚';
+    case 'business-outline':
+      return '🏢';
+    case 'barbell-outline':
+      return '💪';
+    case 'airplane-outline':
+      return '✈️';
+    case 'medical-outline':
+      return '🏥';
+    case 'cart-outline':
+      return '🛒';
+    case 'restaurant-outline':
+      return '🍽️';
+    default:
+      return null;
+  }
+}
+
+function filledIonFromOutline(name: IonName): IonName {
+  const s = String(name);
+  if (s.endsWith('-outline')) {
+    return s.slice(0, s.length - '-outline'.length) as IonName;
+  }
+  return name;
+}
+
+function ModalRouteGlyph({ name }: { name: IonName }) {
+  const em = emojiForModalIon(name);
+  if (em) {
+    return <Text style={styles.modalRouteEmoji}>{em}</Text>;
+  }
+  return <Ionicons name={filledIonFromOutline(name)} size={28} color={PASSENGER_PRIMARY} />;
+}
+
+function emojiPairForPresetIcons(from: string, to: string): { a: string; b: string } | null {
+  const a = emojiForModalIon(from as IonName);
+  const b = emojiForModalIon(to as IonName);
+  if (a && b) return { a, b };
+  return null;
+}
+
 function FavoritePairIcons({
   slot,
   iconSize = 22,
@@ -124,11 +201,23 @@ function FavoritePairIcons({
   const preset = getFavoritePreset(slot);
   const from = (preset?.from ?? 'git-network-outline') as IonName;
   const to = (preset?.to ?? 'location-outline') as IonName;
+  const emPair = emojiPairForPresetIcons(from, to);
+  if (emPair) {
+    return (
+      <View style={styles.emojiPill}>
+        <View style={styles.emojiPillInner}>
+          <Text style={styles.emojiPillChar}>{emPair.a}</Text>
+          <Text style={styles.emojiPillChar}>→</Text>
+          <Text style={styles.emojiPillChar}>{emPair.b}</Text>
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={styles.pairIconRow}>
-      <Ionicons name={from} size={iconSize} color="#14532d" />
+      <Ionicons name={from} size={iconSize} color={PASSENGER_PRIMARY} />
       <Ionicons name="arrow-forward" size={arrowSize} color="#6b7280" style={styles.pairArrow} />
-      <Ionicons name={to} size={iconSize} color="#14532d" />
+      <Ionicons name={to} size={iconSize} color={PASSENGER_PRIMARY} />
     </View>
   );
 }
@@ -136,6 +225,82 @@ function FavoritePairIcons({
 type HomeTabNav = BottomTabNavigationProp<MainTabParamList, 'Home'>;
 type ParentNav = { navigate: (name: string, params?: object) => void };
 const HOME_FIXED_SLOTS: PassengerFavoriteSlot[] = ['home_to_work', 'work_to_home'];
+
+function passengerGreetingLine(): string {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) return 'Buenos días';
+  if (h >= 12 && h < 20) return 'Buenas tardes';
+  return 'Buenas noches';
+}
+
+function userInitialFromSession(s: SessionProfile | null): string {
+  const name = String(s?.full_name ?? '').trim();
+  if (name) return name.charAt(0).toUpperCase();
+  const em = String(s?.email ?? '').trim();
+  if (em) return em.charAt(0).toUpperCase();
+  return '?';
+}
+
+function formatFavoriteActiveSummary(snap: PassengerFavoriteSnapshot | undefined): string | null {
+  if (!snap || !isFavoriteEnabled(snap)) return null;
+  const ymd = String(snap.scheduledDateYmd ?? snap.date ?? '').trim();
+  const iso = snap.nextTriggerAtIso?.trim();
+  if (isScheduleDailySnap(snap)) {
+    if (iso) {
+      const d = new Date(iso);
+      if (!Number.isNaN(d.getTime())) {
+        return `Activo para ${d.toLocaleDateString('es-PY', { weekday: 'long', day: 'numeric', month: 'short' })}`;
+      }
+      return 'Activo (recordatorio diario)';
+    }
+  }
+  if (ymd) {
+    const d = new Date(ymd + 'T12:00:00');
+    if (!Number.isNaN(d.getTime())) {
+      return `Activo para ${d.toLocaleDateString('es-PY', { weekday: 'long', day: 'numeric', month: 'short' })}`;
+    }
+  }
+  return 'Activo';
+}
+
+function rideFromBookingRow(row: Record<string, unknown>): Record<string, unknown> | null {
+  const r = row.ride;
+  if (Array.isArray(r)) return (r[0] as Record<string, unknown>) ?? null;
+  return r && typeof r === 'object' ? (r as Record<string, unknown>) : null;
+}
+
+function isHistoryBookingRow(row: Record<string, unknown>, ride: Record<string, unknown> | null): boolean {
+  const bst = String(row.status ?? '');
+  const rst = ride?.status != null ? String(ride.status) : '';
+  if (bst === 'completed' || bst === 'cancelled') return true;
+  if (rst === 'completed' || rst === 'cancelled') return true;
+  return false;
+}
+
+function countActiveBookings(rows: unknown[]): number {
+  let n = 0;
+  for (const raw of rows) {
+    const row = raw as Record<string, unknown>;
+    const ride = rideFromBookingRow(row);
+    if (!isHistoryBookingRow(row, ride)) n++;
+  }
+  return n;
+}
+
+function HomePulseDot() {
+  const op = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(op, { toValue: 0.35, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(op, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [op]);
+  return <Animated.View style={[styles.pulseDot, { opacity: op }]} />;
+}
 
 /** Inicio: siempre Casa↔Trabajo; debajo, otros presets que ya tengan datos guardados. */
 function listHomeFavoriteSlotsToShow(
@@ -309,6 +474,14 @@ export function HomeScreen() {
     Partial<Record<PassengerFavoriteSlot, { perSeatGs: number; distanceKm: number } | null>>
   >({});
   const [driverTemplateRows, setDriverTemplateRows] = useState<DriverHomeTemplateRow[]>([]);
+  const [homeMessagesBadge, setHomeMessagesBadge] = useState(0);
+  const [homeBookingsBadge, setHomeBookingsBadge] = useState(0);
+  const [driverTripsCompletedCount, setDriverTripsCompletedCount] = useState(0);
+  const [driverRatingAvg, setDriverRatingAvg] = useState<number | null>(null);
+  const [driverPassengersServedCount, setDriverPassengersServedCount] = useState(0);
+  const [driverPendingTripRequestsBadge, setDriverPendingTripRequestsBadge] = useState(0);
+  const [driverHomeMessagesBadge, setDriverHomeMessagesBadge] = useState(0);
+  const [driverHomeHowTo, setDriverHomeHowTo] = useState(DEFAULT_DRIVER_HOME_HOW_TO);
 
   const homeFavoriteSlots = useMemo(() => listHomeFavoriteSlotsToShow(favorites), [favorites]);
   const selectedFromIcon = (MODAL_ORIGIN_ICONS[fromIconIndex] ?? MODAL_ORIGIN_ICONS[0]) as string;
@@ -330,6 +503,60 @@ export function HomeScreen() {
     void loadDriverHomeTemplateRows(userId).then(setDriverTemplateRows);
   }, [userId, isPassengerFlavor]);
 
+  const refreshDriverHomeSummary = useCallback(async () => {
+    if (!session?.id || isPassengerFlavor) return;
+    const uid = session.id;
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const [convos, completedRidesRes, profileRes, pendingReqRes] = await Promise.all([
+        fetchMyConversations(uid),
+        supabase.from('rides').select('id').eq('driver_id', uid).eq('status', 'completed'),
+        supabase.from('profiles').select('rating_average').eq('id', uid).maybeSingle(),
+        supabase
+          .from('trip_requests')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending')
+          .gte('requested_date', today),
+      ]);
+      if (completedRidesRes.error) {
+        setDriverTripsCompletedCount(0);
+        setDriverPassengersServedCount(0);
+      } else {
+        const ids = (completedRidesRes.data ?? [])
+          .map((r) => String((r as { id?: unknown }).id ?? '').trim())
+          .filter(Boolean);
+        setDriverTripsCompletedCount(ids.length);
+        if (ids.length === 0) {
+          setDriverPassengersServedCount(0);
+        } else {
+          const { count: bookCount, error: bookErr } = await supabase
+            .from('bookings')
+            .select('id', { count: 'exact', head: true })
+            .in('ride_id', ids);
+          setDriverPassengersServedCount(!bookErr && typeof bookCount === 'number' ? bookCount : 0);
+        }
+      }
+      const unread = convos.reduce((acc, c) => acc + Math.max(0, Number(c.unread_count) || 0), 0);
+      setDriverHomeMessagesBadge(unread);
+      const ra = (profileRes.data as { rating_average?: number | null } | null)?.rating_average;
+      setDriverRatingAvg(ra != null && Number.isFinite(Number(ra)) ? Number(ra) : null);
+      setDriverPendingTripRequestsBadge(typeof pendingReqRes.count === 'number' ? pendingReqRes.count : 0);
+    } catch {
+      setDriverHomeMessagesBadge(0);
+      setDriverTripsCompletedCount(0);
+      setDriverRatingAvg(null);
+      setDriverPassengersServedCount(0);
+      setDriverPendingTripRequestsBadge(0);
+    }
+  }, [session?.id, isPassengerFlavor]);
+
+  const goDriverNewRoutePublish = useCallback(() => {
+    parentNav?.navigate('PublishRide', {
+      createDriverTemplate: true,
+      publishKind: 'internal',
+    });
+  }, [parentNav]);
+
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
       if (next === 'active' && userId) {
@@ -350,7 +577,12 @@ export function HomeScreen() {
     useCallback(() => {
       if (isPassengerFlavor) return;
       refreshDriverTemplates();
-    }, [isPassengerFlavor, refreshDriverTemplates])
+      void refreshDriverHomeSummary();
+      void (async () => {
+        const copy = await fetchDriverHomeHowTo();
+        setDriverHomeHowTo(copy);
+      })();
+    }, [isPassengerFlavor, refreshDriverTemplates, refreshDriverHomeSummary])
   );
 
   useFocusEffect(
@@ -471,6 +703,33 @@ export function HomeScreen() {
         cancelled = true;
       };
     }, [session, isPassengerFlavor])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!session?.id || !isPassengerFlavor) return;
+      let cancelled = false;
+      void (async () => {
+        try {
+          const [convos, bookings] = await Promise.all([
+            fetchMyConversations(session.id),
+            fetchMyBookings(session.id),
+          ]);
+          if (cancelled) return;
+          const unread = convos.reduce((acc, c) => acc + Math.max(0, Number(c.unread_count) || 0), 0);
+          setHomeMessagesBadge(unread);
+          setHomeBookingsBadge(countActiveBookings(bookings));
+        } catch {
+          if (!cancelled) {
+            setHomeMessagesBadge(0);
+            setHomeBookingsBadge(0);
+          }
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [session?.id, isPassengerFlavor])
   );
 
   const goFavorite = useCallback(
@@ -997,70 +1256,112 @@ export function HomeScreen() {
 
   return (
     <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={styles.scrollContent}
+      style={[styles.scroll, session ? styles.scrollPassengerPage : null]}
+      contentContainerStyle={[styles.scrollContent, session ? styles.scrollContentPassengerPage : null]}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.card}>
-        {role === 'driver_pending' && (
-          <View style={styles.bannerWarning}>
-            <Text style={styles.bannerText}>
-              Tu cuenta de conductor esta en revision. Cuando sea aprobada podras publicar viajes.
-            </Text>
-          </View>
-        )}
-        {role === 'admin' && (
-          <View style={styles.bannerInfo}>
-            <Text style={styles.bannerText}>Para administrar precios, facturacion y metricas usa el panel web.</Text>
-          </View>
-        )}
+      {isPassengerFlavor && session ? (
+        <View style={styles.passengerShell}>
+          {role === 'driver_pending' && (
+            <View style={styles.bannerWarning}>
+              <Text style={styles.bannerText}>
+                Tu cuenta de conductor esta en revision. Cuando sea aprobada podras publicar viajes.
+              </Text>
+            </View>
+          )}
+          {role === 'admin' && (
+            <View style={styles.bannerInfo}>
+              <Text style={styles.bannerText}>Para administrar precios, facturacion y metricas usa el panel web.</Text>
+            </View>
+          )}
 
-        {isPassengerFlavor && session ? (
-          <>
-            <Text style={styles.welcomePassenger}>
+          <View style={styles.homeHeaderRow}>
+            <View style={styles.homeHeaderTextCol}>
+              <Text style={styles.homeGreetingLine}>
+                {passengerGreetingLine()} <Text>👋</Text>
+              </Text>
+              <Text style={styles.homeGreetingQuestion}>¿A dónde vas hoy?</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.homeAvatar}
+              onPress={() => navigation.navigate('Settings')}
+              accessibilityRole="button"
+              accessibilityLabel="Ajustes y perfil"
+            >
+              <Text style={styles.homeAvatarLetter}>{userInitialFromSession(session)}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.heroCard}>
+            <View style={[styles.heroBlob, styles.heroBlob1]} />
+            <View style={[styles.heroBlob, styles.heroBlob2]} />
+            <Text style={styles.heroEyebrow}>VIAJÁ INTELIGENTE</Text>
+            <Text style={styles.heroTitle} numberOfLines={4}>
               {favoritesTitle}
             </Text>
-            <Text style={styles.subLead}>{favoritesSubtitle}</Text>
-            {activeHomeRideId ? (
-              <TouchableOpacity
-                style={styles.activeRideShortcutBtn}
-                onPress={() => parentNav?.navigate('RideDetail', { rideId: activeHomeRideId })}
-                accessibilityRole="button"
-                accessibilityLabel="Abrir viaje actual"
-              >
-                <Ionicons name="navigate-circle-outline" size={20} color="#fff" />
-                <Text style={styles.activeRideShortcutBtnText}>Ir a mi viaje actual</Text>
-              </TouchableOpacity>
-            ) : null}
+            <Text style={styles.heroSubtitle} numberOfLines={5}>
+              {favoritesSubtitle}
+            </Text>
+            <TouchableOpacity
+              style={styles.heroCtaBtn}
+              onPress={openAddFavorite}
+              accessibilityRole="button"
+              accessibilityLabel="Programar viaje"
+            >
+              <Ionicons name="add" size={22} color={PASSENGER_PRIMARY} />
+              <Text style={styles.heroCtaText}>Programar viaje</Text>
+            </TouchableOpacity>
+          </View>
 
-            <View style={styles.favoritesBox}>
-              <TouchableOpacity
-                style={styles.favoritesPrimaryBtn}
-                onPress={openAddFavorite}
-                accessibilityRole="button"
-                accessibilityLabel="Programa tu próximo viaje"
-              >
-                <Ionicons name="add-circle-outline" size={22} color="#fff" style={styles.favoritesPrimaryIcon} />
-                <Text style={styles.favoritesPrimaryBtnText}>Programa tu próximo viaje</Text>
-              </TouchableOpacity>
+          {activeHomeRideId ? (
+            <TouchableOpacity
+              style={[styles.activeRideShortcutBtn, styles.activeRideShortcutBtnPassenger]}
+              onPress={() => parentNav?.navigate('RideDetail', { rideId: activeHomeRideId })}
+              accessibilityRole="button"
+              accessibilityLabel="Abrir viaje actual"
+            >
+              <Ionicons name="navigate-circle-outline" size={20} color="#fff" />
+              <Text style={styles.activeRideShortcutBtnText}>Ir a mi viaje actual</Text>
+            </TouchableOpacity>
+          ) : null}
 
-              <ScrollView
-                style={styles.favoriteStackScroll}
-                contentContainerStyle={styles.favoriteStackContent}
-                nestedScrollEnabled
-                showsVerticalScrollIndicator
-              >
-                {homeFavoriteSlots.map((slot) => {
+          <TouchableOpacity
+            style={styles.searchCard}
+            onPress={() => parentNav?.navigate('SearchPublishedRides', {})}
+            accessibilityRole="button"
+            accessibilityLabel="Buscar viajes"
+          >
+            <Ionicons name="search" size={20} color="#9ca3af" style={styles.searchCardIcon} />
+            <Text style={styles.searchCardPlaceholder}>Buscá un código o ruta…</Text>
+          </TouchableOpacity>
+
+          <View style={styles.routesSectionHeaderRow}>
+            <Text style={styles.routesSectionTitle}>RUTAS GUARDADAS</Text>
+            <TouchableOpacity onPress={openAddFavorite} accessibilityRole="button" accessibilityLabel="Agregar ruta">
+              <Text style={styles.routesSectionAdd}>+ Agregar</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.routesListWrap}>
+            <ScrollView
+              style={styles.favoriteStackScroll}
+              contentContainerStyle={styles.favoriteStackContent}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+              {homeFavoriteSlots.map((slot) => {
                   const snap = favorites[slot];
                   const enabled = isFavoriteEnabled(snap);
                   const switchShowsOn =
                     enabled || (activateOpen && activateSlot === slot);
                   const configured = favoriteHasConfig(snap);
+                  const activeSummary = formatFavoriteActiveSummary(snap);
+                  const isActiveCard = configured && enabled;
                   return (
                     <TouchableOpacity
                       key={slot}
-                      style={styles.favoriteRow}
+                      style={[styles.passengerRouteCard, isActiveCard && styles.passengerRouteCardActive]}
                       onPress={() => goFavorite(slot)}
                       accessibilityRole="button"
                       accessibilityLabel={`Favorito ${favoritePairLabel(slot)}`}
@@ -1073,29 +1374,35 @@ export function HomeScreen() {
                       >
                         <Ionicons name="close" size={12} color="#b91c1c" />
                       </TouchableOpacity>
-                      <View style={styles.favoriteRowLeft}>
-                        <View style={styles.favoriteRowTitleRow}>
-                          <FavoritePairIcons slot={slot} iconSize={20} arrowSize={16} />
-                          {configured && enabled ? (
-                            <View style={styles.favoriteActiveBadge}>
-                              <Text style={styles.favoriteActiveBadgeText}>Activo</Text>
+                      <View style={styles.passengerRouteBody}>
+                        <View style={styles.passengerRouteTopRow}>
+                          <FavoritePairIcons slot={slot} iconSize={18} arrowSize={14} />
+                          {!configured ? (
+                            <View style={styles.warnPill}>
+                              <Text style={styles.warnPillText}>⚙ Sin configurar</Text>
                             </View>
                           ) : null}
                         </View>
-                        <Text style={styles.favoriteRowLabel}>{favoritePairLabel(slot)}</Text>
-                        <Text style={styles.favoriteRowTime}>{scheduleLabel(snap)}</Text>
+                        <Text style={styles.passengerRouteName}>{favoritePairLabel(slot)}</Text>
+                        <Text style={styles.passengerRouteMeta}>{scheduleLabel(snap)}</Text>
                         {snap?.rideKind === 'long_distance' ? (
-                          <Text style={styles.favoriteRowCostMuted}>Costo: se negocia con conductor</Text>
+                          <Text style={styles.passengerRouteCostMuted}>Costo: se negocia con conductor</Text>
                         ) : favoriteCostBySlot[slot] != null ? (
-                          <Text style={styles.favoriteRowCost}>
-                            Costo estimado: {Number(favoriteCostBySlot[slot]?.perSeatGs ?? 0).toLocaleString('es-PY')} Gs
+                          <Text style={styles.passengerRouteCost}>
+                            ₲ {Number(favoriteCostBySlot[slot]?.perSeatGs ?? 0).toLocaleString('es-PY')} estim.
                           </Text>
                         ) : (
-                          <Text style={styles.favoriteRowCostMuted}>Costo estimado: no disponible</Text>
+                          <Text style={styles.passengerRouteCostMuted}>Costo estimado: no disponible</Text>
                         )}
+                        {activeSummary ? (
+                          <View style={styles.activeStrip}>
+                            <HomePulseDot />
+                            <Text style={styles.activeStripText}>{activeSummary}</Text>
+                          </View>
+                        ) : null}
                       </View>
                       <View
-                        style={styles.favoriteRowRight}
+                        style={styles.passengerRouteSwitchCol}
                         onStartShouldSetResponder={() => true}
                         onTouchEnd={(e) => e.stopPropagation()}
                       >
@@ -1108,15 +1415,15 @@ export function HomeScreen() {
                             }
                             void quickActivatePassengerFavoriteOrOpenModal(slot);
                           }}
-                          trackColor={{ false: '#d1d5db', true: '#86efac' }}
-                          thumbColor={switchShowsOn ? '#166534' : '#f3f4f6'}
+                          trackColor={{ false: '#e5e7eb', true: '#b6e2c9' }}
+                          thumbColor={switchShowsOn ? PASSENGER_PRIMARY : '#f9fafb'}
                         />
                       </View>
                     </TouchableOpacity>
                   );
                 })}
-              </ScrollView>
-            </View>
+            </ScrollView>
+          </View>
 
             <Modal
               visible={addFavoriteOpen}
@@ -1127,6 +1434,7 @@ export function HomeScreen() {
               <View style={styles.modalRoot}>
                 <Pressable style={styles.modalBackdrop} onPress={() => setAddFavoriteOpen(false)} />
                 <SafeAreaView style={styles.modalSheet} edges={['bottom']}>
+                  <View style={styles.modalGrabber} accessible={false} importantForAccessibility="no" />
                   <View style={styles.modalHeader}>
                     <Text style={styles.modalTitle}>Elige el trayecto a guardar</Text>
                     <TouchableOpacity onPress={() => setAddFavoriteOpen(false)} hitSlop={12} accessibilityRole="button">
@@ -1146,10 +1454,10 @@ export function HomeScreen() {
                           accessibilityRole="button"
                           accessibilityLabel="Icono origen anterior"
                         >
-                          <Ionicons name="chevron-up" size={22} color="#14532d" />
+                          <Ionicons name="chevron-up" size={22} color={PASSENGER_PRIMARY} />
                         </TouchableOpacity>
                         <View style={styles.modalIconBox}>
-                          <Ionicons name={selectedFromIcon as IonName} size={30} color="#14532d" />
+                          <ModalRouteGlyph name={selectedFromIcon as IonName} />
                         </View>
                         <TouchableOpacity
                           style={styles.modalArrowBtn}
@@ -1157,11 +1465,11 @@ export function HomeScreen() {
                           accessibilityRole="button"
                           accessibilityLabel="Icono origen siguiente"
                         >
-                          <Ionicons name="chevron-down" size={22} color="#14532d" />
+                          <Ionicons name="chevron-down" size={22} color={PASSENGER_PRIMARY} />
                         </TouchableOpacity>
                       </View>
                       <View style={styles.modalMiddleArrowBadge}>
-                        <Ionicons name="arrow-forward" size={30} color="#166534" style={styles.modalMiddleArrow} />
+                        <Ionicons name="arrow-forward" size={28} color={PASSENGER_PRIMARY} style={styles.modalMiddleArrow} />
                       </View>
 
                       <View style={styles.modalSelectorColumn}>
@@ -1171,10 +1479,10 @@ export function HomeScreen() {
                           accessibilityRole="button"
                           accessibilityLabel="Icono destino anterior"
                         >
-                          <Ionicons name="chevron-up" size={22} color="#14532d" />
+                          <Ionicons name="chevron-up" size={22} color={PASSENGER_PRIMARY} />
                         </TouchableOpacity>
                         <View style={styles.modalIconBox}>
-                          <Ionicons name={selectedToIcon as IonName} size={30} color="#14532d" />
+                          <ModalRouteGlyph name={selectedToIcon as IonName} />
                         </View>
                         <TouchableOpacity
                           style={styles.modalArrowBtn}
@@ -1182,7 +1490,7 @@ export function HomeScreen() {
                           accessibilityRole="button"
                           accessibilityLabel="Icono destino siguiente"
                         >
-                          <Ionicons name="chevron-down" size={22} color="#14532d" />
+                          <Ionicons name="chevron-down" size={22} color={PASSENGER_PRIMARY} />
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -1255,14 +1563,19 @@ export function HomeScreen() {
                     <DateTimePicker
                       value={new Date((activateModalDate.trim() || toYmdLocal(new Date())) + 'T12:00:00')}
                       mode="date"
-                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      display={datePickerDisplay()}
+                      minimumDate={startOfLocalDay()}
                       onChange={(ev, picked) => {
                         if (ev.type === 'dismissed') {
                           setActivateModalShowDate(false);
                           return;
                         }
                         if (Platform.OS !== 'ios') setActivateModalShowDate(false);
-                        if (picked) setActivateModalDate(toYmdLocal(picked));
+                        if (picked) {
+                          setActivateModalDate(
+                            toYmdLocal(clampDateNotBeforeLocalDay(picked, new Date()))
+                          );
+                        }
                       }}
                     />
                   ) : null}
@@ -1288,7 +1601,7 @@ export function HomeScreen() {
                         return d;
                       })()}
                       mode="time"
-                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      display={timePickerDisplay()}
                       onChange={(ev, picked) => {
                         if (ev.type === 'dismissed') {
                           setActivateModalShowTime(false);
@@ -1367,80 +1680,152 @@ export function HomeScreen() {
             </Modal>
 
             {homeShortcutsVisible ? (
-              <>
-                <TouchableOpacity
-                  style={styles.fakeSearch}
-                  onPress={() => parentNav?.navigate('SearchPublishedRides', {})}
-                  accessibilityRole="button"
-                  accessibilityLabel="Buscar viajes"
-                >
-                  <Ionicons name="search" size={20} color="#9ca3af" style={styles.fakeSearchIcon} />
-                  <Text style={styles.fakeSearchPlaceholder}>Ingrese código o nombre de ruta</Text>
-                </TouchableOpacity>
-
-                <View style={styles.rowTwo}>
-                  <TouchableOpacity style={styles.btnMint} onPress={() => parentNav?.navigate('SearchPublishedRides', {})} accessibilityRole="button">
-                    <Text style={styles.btnMintText}>Buscar viajes</Text>
+              <View style={styles.quickActionsWrap}>
+                <Text style={styles.quickActionsTitle}>ACCIONES RÁPIDAS</Text>
+                <View style={styles.quickGridRow}>
+                  <TouchableOpacity
+                    style={styles.quickTile}
+                    onPress={() => parentNav?.navigate('SaveTripRequest', undefined)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Crear viaje o solicitud de trayecto"
+                  >
+                    <View style={styles.quickIconSquare}>
+                      <Ionicons name="add-circle-outline" size={26} color={PASSENGER_PRIMARY} />
+                    </View>
+                    <Text style={styles.quickTileLabel}>Crear viaje</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.btnMint} onPress={() => parentNav?.navigate('MyBookings')} accessibilityRole="button">
-                    <Text style={styles.btnMintText}>Mis reservas</Text>
+                  <TouchableOpacity
+                    style={styles.quickTile}
+                    onPress={() => parentNav?.navigate('MyBookings')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Mis reservas"
+                  >
+                    {homeBookingsBadge > 0 ? (
+                      <View style={styles.quickBadge} accessibilityLabel={`${homeBookingsBadge} reservas activas`}>
+                        <Text style={styles.quickBadgeText}>{homeBookingsBadge > 99 ? '99+' : homeBookingsBadge}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.quickIconSquare}>
+                      <Ionicons name="calendar-outline" size={24} color={PASSENGER_PRIMARY} />
+                    </View>
+                    <Text style={styles.quickTileLabel}>Mis reservas</Text>
                   </TouchableOpacity>
                 </View>
-
-                <View style={styles.rowTwo}>
-                  <TouchableOpacity style={styles.btnMint} onPress={() => parentNav?.navigate('Messages')} accessibilityRole="button">
-                    <View style={styles.btnMintInner}>
-                      <Ionicons name="chatbubble-ellipses-outline" size={20} color="#14532d" />
-                      <Text style={styles.btnMintText}>Mensajes</Text>
+                <View style={styles.quickGridRow}>
+                  <TouchableOpacity
+                    style={styles.quickTile}
+                    onPress={() => parentNav?.navigate('Messages')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Mensajes"
+                  >
+                    {homeMessagesBadge > 0 ? (
+                      <View style={styles.quickBadge} accessibilityLabel={`${homeMessagesBadge} mensajes sin leer`}>
+                        <Text style={styles.quickBadgeText}>{homeMessagesBadge > 99 ? '99+' : homeMessagesBadge}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.quickIconSquare}>
+                      <Ionicons name="chatbubble-ellipses-outline" size={24} color={PASSENGER_PRIMARY} />
                     </View>
+                    <Text style={styles.quickTileLabel}>Mensajes</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.btnMint} onPress={() => parentNav?.navigate('MyTripRequests')} accessibilityRole="button">
-                    <View style={styles.btnMintInner}>
-                      <Ionicons name="document-text-outline" size={20} color="#14532d" />
-                      <Text style={styles.btnMintText}>Mis solicitudes</Text>
+                  <TouchableOpacity
+                    style={styles.quickTile}
+                    onPress={() => parentNav?.navigate('MyTripRequests')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Solicitudes"
+                  >
+                    <View style={styles.quickIconSquare}>
+                      <Ionicons name="document-text-outline" size={24} color={PASSENGER_PRIMARY} />
                     </View>
+                    <Text style={styles.quickTileLabel}>Solicitudes</Text>
                   </TouchableOpacity>
                 </View>
-              </>
+              </View>
             ) : null}
-          </>
+        </View>
         ) : null}
 
         {!isPassengerFlavor && session ? (
-          <>
-            <Text style={styles.welcomePassenger}>Inicio de conductor</Text>
-            <Text style={styles.subLead}>
-              Gestiona tus viajes publicados y responde solicitudes desde este panel rapido.
-            </Text>
+          <View style={styles.driverShell}>
+            {role === 'driver_pending' && (
+              <View style={styles.bannerWarning}>
+                <Text style={styles.bannerText}>
+                  Tu cuenta de conductor esta en revision. Cuando sea aprobada podras publicar viajes.
+                </Text>
+              </View>
+            )}
+            {role === 'admin' && (
+              <View style={styles.bannerInfo}>
+                <Text style={styles.bannerText}>Para administrar precios, facturacion y metricas usa el panel web.</Text>
+              </View>
+            )}
+
+            <View style={styles.driverHeaderRow}>
+              <View style={styles.driverHeaderTextCol}>
+                <Text style={styles.driverGreetingMuted}>Bienvenido de vuelta</Text>
+                <Text style={styles.driverPanelTitle}>Panel conductor</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Settings')}
+                accessibilityRole="button"
+                accessibilityLabel="Ir a ajustes"
+                activeOpacity={0.85}
+                style={styles.driverAvatarTouch}
+              >
+                <View style={styles.driverAvatarGradient}>
+                  <Text style={styles.driverAvatarLetterWhite}>{userInitialFromSession(session)}</Text>
+                </View>
+                {driverHomeMessagesBadge + driverPendingTripRequestsBadge > 0 ? (
+                  <View style={styles.driverAvatarNotifyDot} />
+                ) : null}
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.driverStatsRow}>
+              <View style={styles.driverStatCard}>
+                <Text style={styles.driverStatValue}>{driverTripsCompletedCount}</Text>
+                <Text style={styles.driverStatLabel}>Viajes</Text>
+              </View>
+              <View style={styles.driverStatCard}>
+                <Text style={styles.driverStatValue}>
+                  {driverRatingAvg != null ? `${driverRatingAvg.toFixed(1)}★` : '—'}
+                </Text>
+                <Text style={styles.driverStatLabel}>Calificación</Text>
+              </View>
+              <View style={styles.driverStatCard}>
+                <Text style={styles.driverStatValue}>{driverPassengersServedCount}</Text>
+                <Text style={styles.driverStatLabel}>Pasajeros</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              onPress={goDriverNewRoutePublish}
+              activeOpacity={0.92}
+              style={styles.driverPrimaryGradientOuter}
+              accessibilityRole="button"
+              accessibilityLabel="Publicar nueva ruta"
+            >
+              <View style={styles.driverPrimaryGradientInner}>
+                <Ionicons name="add" size={22} color="#fff" />
+                <Text style={styles.driverPrimaryGradientLabel}>Publicar nueva ruta</Text>
+              </View>
+            </TouchableOpacity>
+
             {activeHomeRideId ? (
               <TouchableOpacity
-                style={styles.activeRideShortcutBtn}
+                style={styles.driverActiveRideBtn}
                 onPress={() => parentNav?.navigate('RideDetail', { rideId: activeHomeRideId })}
                 accessibilityRole="button"
                 accessibilityLabel="Abrir viaje en curso"
               >
                 <Ionicons name="navigate-circle-outline" size={20} color="#fff" />
-                <Text style={styles.activeRideShortcutBtnText}>Ir al viaje en curso</Text>
+                <Text style={styles.driverActiveRideBtnText}>Ir al viaje en curso</Text>
               </TouchableOpacity>
             ) : null}
 
-            <View style={styles.driverQuickBox}>
-              <TouchableOpacity
-                style={styles.driverPrimaryBtn}
-                onPress={() =>
-                  parentNav?.navigate('PublishRide', {
-                    createDriverTemplate: true,
-                    publishKind: 'internal',
-                  })
-                }
-                accessibilityRole="button"
-                accessibilityLabel="Publicá tu primera ruta"
-              >
-                <Ionicons name="car-sport-outline" size={20} color="#fff" style={styles.driverPrimaryIcon} />
-                <Text style={styles.driverPrimaryBtnText}>PUBLICA TU PRIMERA RUTA</Text>
-              </TouchableOpacity>
-
-              {driverTemplateRows.length > 0 ? (
+            {driverTemplateRows.length > 0 ? (
+              <View style={styles.driverTemplatesCard}>
+                <Text style={styles.driverTemplatesCardTitle}>Tus rutas</Text>
                 <ScrollView
                   style={styles.driverTemplateScroll}
                   contentContainerStyle={styles.favoriteStackContent}
@@ -1604,65 +1989,122 @@ export function HomeScreen() {
                                 });
                               })();
                             }}
-                            trackColor={{ false: '#d1d5db', true: '#86efac' }}
-                            thumbColor={switchOn ? '#166534' : '#f3f4f6'}
+                            trackColor={{ false: '#d1d5db', true: '#c6e6d3' }}
+                            thumbColor={switchOn ? PASSENGER_PRIMARY : '#f9fafb'}
                           />
                         </View>
                       </TouchableOpacity>
                     );
                   })}
                 </ScrollView>
-              ) : null}
+              </View>
+            ) : (
+              <>
+                <View style={styles.driverEmptyCard}>
+                  <View style={styles.driverEmptyIllustration}>
+                    <View style={styles.driverEmptyRouteCol}>
+                      <View style={styles.driverEmptyRouteDot} />
+                      <View style={styles.driverEmptyRouteLine} />
+                      <View style={styles.driverEmptyRouteDotSmall} />
+                    </View>
+                    <Ionicons name="car-sport-outline" size={40} color={PASSENGER_PRIMARY} />
+                  </View>
+                  <Text style={styles.driverEmptyTitle}>Aún no tenés viajes activos</Text>
+                  <Text style={styles.driverEmptySubtitle}>
+                    Publicá tu primera ruta y empezá a recibir pasajeros
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.driverEmptyCta}
+                    onPress={goDriverNewRoutePublish}
+                    accessibilityRole="button"
+                    accessibilityLabel="Crear mi primera ruta"
+                  >
+                    <Ionicons name="add" size={18} color={PASSENGER_PRIMARY} />
+                    <Text style={styles.driverEmptyCtaText}>Crear mi primera ruta</Text>
+                  </TouchableOpacity>
+                </View>
 
-              <View style={styles.rowTwo}>
+                <View style={styles.driverHowToCard}>
+                  <Text style={styles.driverHowToKicker}>{driverHomeHowTo.title}</Text>
+                  {driverHomeHowTo.lines.map((line, idx) => (
+                    <Text key={`howto-${idx}`} style={styles.driverHowToLine}>
+                      {line}
+                    </Text>
+                  ))}
+                </View>
+              </>
+            )}
+
+            <Text style={styles.driverQuickSectionTitle}>ACCIONES RÁPIDAS</Text>
+            <View style={styles.quickActionsWrap}>
+              <View style={styles.quickGridRow}>
                 <TouchableOpacity
-                  style={styles.btnMint}
+                  style={styles.quickTile}
                   onPress={() => parentNav?.navigate('DriverTripRequests')}
                   accessibilityRole="button"
+                  accessibilityLabel="Solicitudes de trayecto"
                 >
-                  <View style={styles.btnMintInner}>
-                    <Ionicons name="document-text-outline" size={20} color="#14532d" />
-                    <Text style={styles.btnMintText}>Solicitudes</Text>
+                  {driverPendingTripRequestsBadge > 0 ? (
+                    <View
+                      style={styles.quickBadge}
+                      accessibilityLabel={`${driverPendingTripRequestsBadge} solicitudes pendientes`}
+                    >
+                      <Text style={styles.quickBadgeText}>
+                        {driverPendingTripRequestsBadge > 99 ? '99+' : driverPendingTripRequestsBadge}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.quickIconSquare}>
+                    <Ionicons name="document-text-outline" size={24} color={PASSENGER_PRIMARY} />
                   </View>
+                  <Text style={styles.quickTileLabel}>Solicitudes</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.btnMint}
+                  style={styles.quickTile}
                   onPress={() => parentNav?.navigate('MyPublishedRides')}
                   accessibilityRole="button"
+                  accessibilityLabel="Mis viajes publicados"
                 >
-                  <View style={styles.btnMintInner}>
-                    <Ionicons name="list-outline" size={20} color="#14532d" />
-                    <Text style={styles.btnMintText}>Mis viajes</Text>
+                  <View style={styles.quickIconSquare}>
+                    <Ionicons name="list-outline" size={24} color={PASSENGER_PRIMARY} />
                   </View>
+                  <Text style={styles.quickTileLabel}>Mis viajes</Text>
                 </TouchableOpacity>
               </View>
-
-              <View style={styles.rowTwo}>
+              <View style={styles.quickGridRow}>
                 <TouchableOpacity
-                  style={styles.btnMint}
+                  style={styles.quickTile}
                   onPress={() => parentNav?.navigate('Messages')}
                   accessibilityRole="button"
+                  accessibilityLabel="Mensajes"
                 >
-                  <View style={styles.btnMintInner}>
-                    <Ionicons name="chatbubble-ellipses-outline" size={20} color="#14532d" />
-                    <Text style={styles.btnMintText}>Mensajes</Text>
+                  {driverHomeMessagesBadge > 0 ? (
+                    <View style={styles.quickBadge} accessibilityLabel={`${driverHomeMessagesBadge} sin leer`}>
+                      <Text style={styles.quickBadgeText}>
+                        {driverHomeMessagesBadge > 99 ? '99+' : driverHomeMessagesBadge}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.quickIconSquare}>
+                    <Ionicons name="chatbubble-ellipses-outline" size={24} color={PASSENGER_PRIMARY} />
                   </View>
+                  <Text style={styles.quickTileLabel}>Mensajes</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.btnMint}
-                  onPress={() => navigation.navigate('Driver')}
+                  style={styles.quickTile}
+                  onPress={() => navigation.navigate('Settings')}
                   accessibilityRole="button"
+                  accessibilityLabel="Panel conductor y cuenta"
                 >
-                  <View style={styles.btnMintInner}>
-                    <Ionicons name="speedometer-outline" size={20} color="#14532d" />
-                    <Text style={styles.btnMintText}>Panel conductor</Text>
+                  <View style={styles.quickIconSquare}>
+                    <Ionicons name="speedometer-outline" size={24} color={PASSENGER_PRIMARY} />
                   </View>
+                  <Text style={styles.quickTileLabel}>Panel conductor</Text>
                 </TouchableOpacity>
               </View>
             </View>
-          </>
+          </View>
         ) : null}
-      </View>
     </ScrollView>
   );
 }
@@ -1670,6 +2112,427 @@ export function HomeScreen() {
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: '#f0fdf4' },
   scrollContent: { flexGrow: 1, padding: 20, paddingBottom: 32 },
+  scrollPassengerPage: { backgroundColor: PASSENGER_PAGE_BG },
+  scrollContentPassengerPage: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 28 },
+  passengerShell: { flexGrow: 1 },
+  driverShell: { flexGrow: 1 },
+  driverHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  driverHeaderTextCol: { flex: 1, paddingRight: 12 },
+  driverGreetingMuted: {
+    fontSize: 13,
+    color: '#94a3b8',
+    fontFamily: 'DMSans_400Regular',
+    marginBottom: 4,
+  },
+  driverPanelTitle: { fontSize: 24, fontWeight: '800', color: '#111827', fontFamily: 'DMSans_700Bold' },
+  driverAvatarTouch: { position: 'relative' },
+  driverAvatarGradient: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: PASSENGER_PRIMARY,
+  },
+  driverAvatarLetterWhite: { fontSize: 20, fontWeight: '800', color: '#fff', fontFamily: 'DMSans_700Bold' },
+  driverAvatarNotifyDot: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#ef4444',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  driverStatsRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  driverStatCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  driverStatValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: PASSENGER_PRIMARY,
+    fontFamily: 'DMSans_700Bold',
+  },
+  driverStatLabel: { fontSize: 12, color: '#64748b', marginTop: 4, fontFamily: 'DMSans_400Regular' },
+  driverPrimaryGradientOuter: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    marginBottom: 14,
+    shadowColor: 'rgba(26,92,56,0.28)',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 1,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  driverPrimaryGradientInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    backgroundColor: PASSENGER_PRIMARY,
+  },
+  driverPrimaryGradientLabel: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+    fontFamily: 'DMSans_700Bold',
+  },
+  driverActiveRideBtn: {
+    marginBottom: 16,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: PASSENGER_PRIMARY,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  driverActiveRideBtnText: { color: '#fff', fontSize: 15, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  driverTemplatesCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 14,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  driverTemplatesCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#64748b',
+    marginBottom: 10,
+    letterSpacing: 0.6,
+    fontFamily: 'DMSans_700Bold',
+  },
+  driverEmptyCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 22,
+    marginBottom: 14,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#d1d5db',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  driverEmptyIllustration: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 },
+  driverEmptyRouteCol: { alignItems: 'center', height: 72, justifyContent: 'space-between', paddingVertical: 2 },
+  driverEmptyRouteDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: PASSENGER_PRIMARY_MID },
+  driverEmptyRouteLine: { flex: 1, width: 3, backgroundColor: '#c6e6d3', marginVertical: 4, borderRadius: 2 },
+  driverEmptyRouteDotSmall: { width: 6, height: 6, borderRadius: 3, backgroundColor: PASSENGER_PRIMARY },
+  driverEmptyTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'center',
+    fontFamily: 'DMSans_700Bold',
+  },
+  driverEmptySubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: 8,
+    marginBottom: 16,
+    fontFamily: 'DMSans_400Regular',
+  },
+  driverEmptyCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: PASSENGER_QUICK_ICON_BG,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+  },
+  driverEmptyCtaText: { fontSize: 15, fontWeight: '800', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_700Bold' },
+  driverHowToCard: {
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 18,
+    backgroundColor: PASSENGER_PRIMARY,
+  },
+  driverHowToKicker: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    color: 'rgba(255,255,255,0.85)',
+    marginBottom: 10,
+    fontFamily: 'DMSans_700Bold',
+  },
+  driverHowToLine: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+    lineHeight: 20,
+    marginBottom: 6,
+    fontFamily: 'DMSans_600SemiBold',
+  },
+  driverQuickSectionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: '#94a3b8',
+    marginBottom: 10,
+    fontFamily: 'DMSans_700Bold',
+  },
+  homeHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  homeHeaderTextCol: { flex: 1, paddingRight: 12 },
+  homeGreetingLine: { fontSize: 22, fontWeight: '700', color: '#111827', fontFamily: 'DMSans_700Bold' },
+  homeGreetingQuestion: { fontSize: 15, color: '#64748b', marginTop: 4, fontFamily: 'DMSans_400Regular' },
+  homeAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: PASSENGER_QUICK_ICON_BG,
+    borderWidth: 2,
+    borderColor: '#c6e6d3',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeAvatarLetter: { fontSize: 18, fontWeight: '800', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_700Bold' },
+  heroCard: {
+    borderRadius: 22,
+    padding: 22,
+    marginBottom: 18,
+    backgroundColor: PASSENGER_PRIMARY,
+    overflow: 'hidden',
+    minHeight: 176,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  heroBlob: {
+    position: 'absolute',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: PASSENGER_PRIMARY_MID,
+    opacity: 0.22,
+  },
+  heroBlob1: { top: -48, right: -36 },
+  heroBlob2: { bottom: -56, left: -44 },
+  heroEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    color: 'rgba(255,255,255,0.72)',
+    marginBottom: 8,
+    fontFamily: 'DMSans_600SemiBold',
+  },
+  heroTitle: { fontSize: 20, fontWeight: '800', color: '#fff', lineHeight: 26, fontFamily: 'DMSans_700Bold' },
+  heroSubtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.92)',
+    marginTop: 8,
+    lineHeight: 20,
+    fontFamily: 'DMSans_400Regular',
+  },
+  heroCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#fff',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    marginTop: 16,
+    gap: 6,
+  },
+  heroCtaText: { fontSize: 15, fontWeight: '800', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_700Bold' },
+  searchCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 22,
+    borderWidth: 1,
+    borderColor: '#e8eaed',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  searchCardIcon: { marginRight: 12 },
+  searchCardPlaceholder: { flex: 1, fontSize: 15, color: '#9ca3af', fontFamily: 'DMSans_400Regular' },
+  routesSectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  routesSectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    color: '#64748b',
+    fontFamily: 'DMSans_700Bold',
+  },
+  routesSectionAdd: { fontSize: 13, fontWeight: '800', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_700Bold' },
+  routesListWrap: { marginBottom: 6 },
+  passengerRouteCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  passengerRouteCardActive: {
+    borderWidth: 2,
+    borderColor: '#c6e6d3',
+    shadowColor: PASSENGER_PRIMARY,
+    shadowOpacity: 0.14,
+    shadowRadius: 14,
+    elevation: 3,
+  },
+  passengerRouteBody: { flex: 1, minWidth: 0, paddingRight: 6 },
+  passengerRouteTopRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 6 },
+  emojiPill: {
+    backgroundColor: '#e5e7eb',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  emojiPillInner: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  emojiPillChar: { fontSize: 14 },
+  warnPill: { backgroundColor: '#fef3c7', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  warnPillText: { fontSize: 11, fontWeight: '700', color: '#92400e', fontFamily: 'DMSans_600SemiBold' },
+  passengerRouteName: { fontSize: 15, fontWeight: '800', color: '#111827', fontFamily: 'DMSans_700Bold' },
+  passengerRouteMeta: { fontSize: 12, color: '#6b7280', marginTop: 2, fontFamily: 'DMSans_400Regular' },
+  passengerRouteCost: { fontSize: 13, fontWeight: '700', color: PASSENGER_PRIMARY, marginTop: 4, fontFamily: 'DMSans_700Bold' },
+  passengerRouteCostMuted: { fontSize: 12, color: '#9ca3af', marginTop: 4, fontFamily: 'DMSans_400Regular' },
+  passengerRouteSwitchCol: { justifyContent: 'flex-start', paddingTop: 2 },
+  activeStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#dcfce7',
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    gap: 8,
+  },
+  activeStripText: { fontSize: 12, fontWeight: '700', color: PASSENGER_PRIMARY, flex: 1, fontFamily: 'DMSans_600SemiBold' },
+  pulseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: PASSENGER_PRIMARY },
+  quickActionsWrap: { marginTop: 8, marginBottom: 8 },
+  quickActionsTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    color: '#64748b',
+    marginBottom: 12,
+    fontFamily: 'DMSans_700Bold',
+  },
+  quickGridRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  quickTile: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    position: 'relative',
+    borderWidth: 1,
+    borderColor: '#eef0f3',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  quickIconSquare: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: PASSENGER_QUICK_ICON_BG,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  quickTileLabel: { fontSize: 13, fontWeight: '800', color: '#111827', textAlign: 'center', fontFamily: 'DMSans_700Bold' },
+  quickBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  quickBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  activeRideShortcutBtnPassenger: {
+    marginBottom: 14,
+    backgroundColor: PASSENGER_PRIMARY,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
+  },
   card: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -1753,31 +2616,67 @@ const styles = StyleSheet.create({
   favoriteRowCostMuted: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   driverTemplateScroll: { maxHeight: 360, marginBottom: 4 },
   modalRoot: { flex: 1, justifyContent: 'flex-end' },
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
-  modalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '60%', paddingBottom: 8 },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15, 23, 42, 0.48)' },
+  modalSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    maxHeight: '62%',
+    paddingBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 16,
+  },
+  modalGrabber: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#e2e8f0',
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 6,
+  },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 8,
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: '#eef0f3',
   },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: '#111', flex: 1, paddingRight: 8 },
-  modalClose: { fontSize: 16, fontWeight: '600', color: '#166534' },
-  modalHint: { fontSize: 13, color: '#6b7280', paddingHorizontal: 16, paddingVertical: 10, lineHeight: 18 },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+    flex: 1,
+    paddingRight: 8,
+    fontFamily: 'DMSans_700Bold',
+    letterSpacing: -0.2,
+  },
+  modalClose: { fontSize: 15, fontWeight: '700', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_600SemiBold' },
+  modalHint: {
+    fontSize: 13,
+    color: '#64748b',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    lineHeight: 19,
+    fontFamily: 'DMSans_400Regular',
+  },
   modalPickerWrap: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingHorizontal: 18,
+    paddingBottom: 18,
+    paddingTop: 4,
   },
   modalPickerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingVertical: 4,
-    paddingHorizontal: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
   },
   modalSelectorColumn: {
     alignItems: 'center',
@@ -1785,45 +2684,62 @@ const styles = StyleSheet.create({
     width: 84,
   },
   modalIconBox: {
-    width: 58,
-    height: 58,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-    backgroundColor: '#f0fdf4',
+    width: 60,
+    height: 60,
+    borderRadius: 16,
+    backgroundColor: '#e5e7eb',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  modalRouteEmoji: {
+    fontSize: 28,
+    lineHeight: 32,
+    textAlign: 'center',
+  },
   modalArrowBtn: {
-    width: 40,
-    height: 30,
+    width: 44,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },
   modalMiddleArrowBadge: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#bbf7d0',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: PASSENGER_QUICK_ICON_BG,
     borderWidth: 1,
-    borderColor: '#4ade80',
+    borderColor: '#b6e2c9',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 34,
   },
   modalMiddleArrow: { marginLeft: 1 },
-  modalCounterText: { textAlign: 'center', color: '#94a3b8', fontSize: 12, marginTop: 6, marginBottom: 14 },
+  modalCounterText: {
+    textAlign: 'center',
+    color: '#94a3b8',
+    fontSize: 12,
+    marginTop: 8,
+    marginBottom: 16,
+    fontFamily: 'DMSans_500Medium',
+  },
   modalSaveBtn: {
-    backgroundColor: '#14532d',
-    borderRadius: 10,
+    backgroundColor: PASSENGER_PRIMARY,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
+    paddingVertical: 15,
+    shadowColor: PASSENGER_PRIMARY,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    elevation: 4,
   },
   modalSaveBtnText: {
     color: '#fff',
-    fontWeight: '700',
-    fontSize: 14,
+    fontWeight: '800',
+    fontSize: 15,
+    fontFamily: 'DMSans_700Bold',
+    letterSpacing: 0.2,
   },
   fakeSearch: {
     flexDirection: 'row',
@@ -1851,26 +2767,6 @@ const styles = StyleSheet.create({
   },
   btnMintInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   btnMintText: { fontSize: 14, fontWeight: '700', color: '#14532d' },
-  driverQuickBox: {
-    borderWidth: 1,
-    borderColor: '#86efac',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 16,
-    backgroundColor: '#f0fdf4',
-  },
-  driverPrimaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#14532d',
-    paddingVertical: 14,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    marginBottom: 12,
-  },
-  driverPrimaryIcon: { marginRight: 8 },
-  driverPrimaryBtnText: { color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 0.2, textAlign: 'center' },
   activeRideShortcutBtn: {
     marginBottom: 12,
     backgroundColor: '#1d4ed8',

@@ -3,6 +3,7 @@
  * Deep links: xhare://ride/{rideId} → RideDetail, xhare://chat/{conversationId} → Chat.
  */
 import React, { useEffect, useRef } from 'react';
+import { View } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -14,7 +15,6 @@ import { LoadingScreen } from '../ui/LoadingScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
-import { DriverScreen } from '../screens/DriverScreen';
 import { PassengerScreen } from '../screens/PassengerScreen';
 import { RideDetailScreen } from '../screens/RideDetailScreen';
 import { BookRideScreen } from '../screens/BookRideScreen';
@@ -46,7 +46,6 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
 
 const TAB_ICONS: Record<string, { active: string; inactive: string }> = {
   Home: { active: 'home', inactive: 'home-outline' },
-  Driver: { active: 'car', inactive: 'car-outline' },
   Passenger: { active: 'people', inactive: 'people-outline' },
   Settings: { active: 'settings', inactive: 'settings-outline' },
 };
@@ -57,29 +56,54 @@ function MainTabs() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: true,
-        tabBarLabelStyle: { fontSize: 12 },
-        tabBarActiveTintColor: '#166534',
+        tabBarLabelStyle: { fontSize: 12, fontFamily: 'DMSans_600SemiBold' },
+        tabBarActiveTintColor: '#1a5c38',
         tabBarInactiveTintColor: '#6b7280',
+        tabBarStyle: {
+          backgroundColor: '#fff',
+          borderTopColor: '#eef0f3',
+          paddingTop: 4,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -3 },
+          shadowOpacity: 0.08,
+          shadowRadius: 10,
+          elevation: 12,
+        },
         tabBarIcon: ({ focused, color, size }) => {
           const names = TAB_ICONS[route.name] ?? { active: 'ellipse', inactive: 'ellipse-outline' };
           const iconName = focused ? names.active : names.inactive;
-          return <Ionicons name={iconName as any} size={size ?? 24} color={color} />;
+          const active = '#1a5c38';
+          return (
+            <View
+              style={{
+                width: 56,
+                height: 46,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name={iconName as any} size={size ?? 24} color={focused ? active : color} />
+              {focused ? (
+                <View
+                  style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    width: 30,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: active,
+                  }}
+                />
+              ) : null}
+            </View>
+          );
         },
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ title: 'Inicio' }} />
-      {flavor === 'driver' ? (
-        <Tab.Screen
-          name="Driver"
-          component={DriverScreen}
-          options={{
-            title: 'Conductor',
-            tabBarLabel: 'Conductor',
-          }}
-        />
-      ) : (
+      {flavor === 'passenger' ? (
         <Tab.Screen name="Passenger" component={PassengerScreen} options={{ title: 'Pasajero' }} />
-      )}
+      ) : null}
       <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: 'Ajustes' }} />
     </Tab.Navigator>
   );

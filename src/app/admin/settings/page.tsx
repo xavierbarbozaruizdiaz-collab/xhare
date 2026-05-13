@@ -17,6 +17,34 @@ const SHORTCUTS_KEY = 'passenger_home_shortcuts_visible';
 const FAVORITES_TITLE_KEY = 'passenger_home_favorites_title';
 const FAVORITES_SUBTITLE_KEY = 'passenger_home_favorites_subtitle';
 const PASSENGER_PRICING_POLYLINE_VISIBLE_KEY = 'passenger_pricing_polyline_visible';
+const DRIVER_HOME_HOW_TO_KEY = 'driver_home_how_to';
+
+const DEFAULT_DRIVER_HOW_TO = {
+  title: '¿CÓMO EMPEZAR?',
+  lines: [
+    '1. Publicá una ruta con horario y cupos.',
+    '2. Los pasajeros reservan desde la app.',
+    '3. Confirmá el viaje, cobrá y sumá calificación.',
+  ],
+} as const;
+
+function normalizeDriverHowToAdmin(raw: unknown): { title: string; lines: string[] } {
+  const d = DEFAULT_DRIVER_HOW_TO;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { title: d.title, lines: [...d.lines] };
+  }
+  const o = raw as Record<string, unknown>;
+  const title = typeof o.title === 'string' && o.title.trim() ? o.title.trim() : d.title;
+  if (Array.isArray(o.lines)) {
+    const lines = o.lines
+      .map((x) => (typeof x === 'string' ? x.trim() : String(x ?? '').trim()))
+      .filter(Boolean);
+    if (lines.length > 0) {
+      return { title, lines };
+    }
+  }
+  return { title, lines: [...d.lines] };
+}
 
 function parseShortcutsVisible(raw: unknown): boolean {
   if (typeof raw === 'boolean') return raw;
@@ -43,6 +71,13 @@ export default function AdminSettingsPage() {
   const [favoritesCopyLoading, setFavoritesCopyLoading] = useState(true);
   const [favoritesCopySaving, setFavoritesCopySaving] = useState(false);
   const [favoritesCopyDone, setFavoritesCopyDone] = useState(false);
+  const [driverHowToTitle, setDriverHowToTitle] = useState('');
+  const [driverHowToLine1, setDriverHowToLine1] = useState('');
+  const [driverHowToLine2, setDriverHowToLine2] = useState('');
+  const [driverHowToLine3, setDriverHowToLine3] = useState('');
+  const [driverHowToLoading, setDriverHowToLoading] = useState(true);
+  const [driverHowToSaving, setDriverHowToSaving] = useState(false);
+  const [driverHowToDone, setDriverHowToDone] = useState(false);
   const [legalLoading, setLegalLoading] = useState(true);
   const [legalSaving, setLegalSaving] = useState(false);
   const [legalDone, setLegalDone] = useState(false);
@@ -190,6 +225,17 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     (async () => {
+      const { data } = await supabase.from('settings').select('value').eq('key', DRIVER_HOME_HOW_TO_KEY).maybeSingle();
+      const n = normalizeDriverHowToAdmin(data?.value);
+      setDriverHowToTitle(n.title);
+      setDriverHowToLine1(n.lines[0] ?? '');
+      setDriverHowToLine2(n.lines[1] ?? '');
+      setDriverHowToLine3(n.lines[2] ?? '');
+    })().finally(() => setDriverHowToLoading(false));
+  }, []);
+
+  useEffect(() => {
+    (async () => {
       const {
         termsContent,
         termsVersion,
@@ -297,6 +343,33 @@ export default function AdminSettingsPage() {
     }
     setFavoritesCopyDone(true);
     window.setTimeout(() => setFavoritesCopyDone(false), 2500);
+  }
+
+  async function handleDriverHowToSave(e: React.FormEvent) {
+    e.preventDefault();
+    setDriverHowToSaving(true);
+    setDriverHowToDone(false);
+    const nowIso = new Date().toISOString();
+    const lines = [driverHowToLine1, driverHowToLine2, driverHowToLine3].map((s) => s.trim()).filter(Boolean);
+    const title = driverHowToTitle.trim() || DEFAULT_DRIVER_HOW_TO.title;
+    const finalLines = lines.length > 0 ? lines : [...DEFAULT_DRIVER_HOW_TO.lines];
+    const value = { title, lines: finalLines };
+    const row = { key: DRIVER_HOME_HOW_TO_KEY, value, updated_at: nowIso };
+    let { error } = await supabase.from('settings').upsert(row, { onConflict: 'key' });
+    if (error) {
+      const updateRes = await supabase
+        .from('settings')
+        .update({ value, updated_at: nowIso })
+        .eq('key', DRIVER_HOME_HOW_TO_KEY);
+      error = updateRes.error;
+    }
+    setDriverHowToSaving(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setDriverHowToDone(true);
+    window.setTimeout(() => setDriverHowToDone(false), 2500);
   }
 
   async function handlePassengerPricingPolylineToggle(next: boolean) {
@@ -696,6 +769,70 @@ export default function AdminSettingsPage() {
               {favoritesCopySaving ? 'Guardando...' : 'Guardar textos'}
             </button>
             {favoritesCopyDone && <span className="ml-3 text-sm text-green-600">Guardado en Supabase.</span>}
+          </>
+        )}
+      </form>
+
+      <form onSubmit={handleDriverHowToSave} className="bg-white rounded-xl border border-gray-200 p-6 max-w-xl mt-10">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">App conductor — Cómo empezar (Inicio)</h2>
+        <p className="text-sm text-gray-600 mb-5">
+          Textos de la tarjeta verde cuando el conductor aún no tiene rutas activas. Los cambios aplican al volver a
+          Inicio en la app (con sesión iniciada).
+        </p>
+        {driverHowToLoading ? (
+          <div className="flex justify-center py-6">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600" />
+          </div>
+        ) : (
+          <>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Título (ej. ¿CÓMO EMPEZAR?)</label>
+              <input
+                type="text"
+                value={driverHowToTitle}
+                onChange={(e) => setDriverHowToTitle(e.target.value)}
+                placeholder={DEFAULT_DRIVER_HOW_TO.title}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Paso 1</label>
+              <input
+                type="text"
+                value={driverHowToLine1}
+                onChange={(e) => setDriverHowToLine1(e.target.value)}
+                placeholder={DEFAULT_DRIVER_HOW_TO.lines[0]}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Paso 2</label>
+              <input
+                type="text"
+                value={driverHowToLine2}
+                onChange={(e) => setDriverHowToLine2(e.target.value)}
+                placeholder={DEFAULT_DRIVER_HOW_TO.lines[1]}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Paso 3</label>
+              <input
+                type="text"
+                value={driverHowToLine3}
+                onChange={(e) => setDriverHowToLine3(e.target.value)}
+                placeholder={DEFAULT_DRIVER_HOW_TO.lines[2]}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={driverHowToSaving}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+            >
+              {driverHowToSaving ? 'Guardando...' : 'Guardar cómo empezar'}
+            </button>
+            {driverHowToDone && <span className="ml-3 text-sm text-green-600">Guardado en Supabase.</span>}
           </>
         )}
       </form>

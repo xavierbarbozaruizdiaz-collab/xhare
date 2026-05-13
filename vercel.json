@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/driver-no-show-sanctions",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/passenger-stale-bookings",
+      "schedule": "30 6 * * *"
     }
   ]
 }

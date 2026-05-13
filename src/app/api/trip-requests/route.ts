@@ -65,6 +65,8 @@ const insertBodySchema = z
      * Requiere `passenger_favorite_slot`. El servidor ignora duplicados de `requested_date` principal.
      */
     extra_requested_dates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(18).optional(),
+    /** Opcional: referencia al nombre del viaje (p. ej. alineado a `rides.route_name`). */
+    passenger_route_name_hint: z.string().max(200).optional(),
   })
   .superRefine((data, ctx) => {
     const olat = data.origin_lat;
@@ -200,6 +202,8 @@ export async function POST(request: NextRequest) {
     if (p.destination_barrio != null) row.destination_barrio = p.destination_barrio;
     if (p.route_polyline != null && p.route_polyline.length > 0) row.route_polyline = p.route_polyline;
     if (p.route_length_km != null) row.route_length_km = p.route_length_km;
+    const routeHint = p.passenger_route_name_hint?.trim();
+    if (routeHint) row.passenger_route_name_hint = routeHint.slice(0, 200);
 
     const favSlot = p.passenger_favorite_slot?.trim();
     if (favSlot) row.passenger_favorite_slot = favSlot.slice(0, 120);

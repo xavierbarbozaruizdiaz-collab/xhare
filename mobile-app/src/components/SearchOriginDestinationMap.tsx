@@ -24,7 +24,7 @@ import { fetchRoute } from '../backend/routeApi';
 import type { Point } from '../lib/geo';
 import { getLocationPermissionStatus, requestLocationPermission } from '../permissions';
 
-const GREEN = '#166534';
+const MAP_PRIMARY = '#1a5c38';
 
 const DEFAULT_REGION: Region = {
   latitude: -25.286,
@@ -81,6 +81,8 @@ type Props = {
   /** Radio de búsqueda alrededor del pin (según tipo de viaje en la pantalla de búsqueda). */
   proximityRadiusKm?: number;
   height?: number;
+  /** Si true, no muestra el bloque "Mapa" / hint (el padre ya lo explica, p. ej. favoritos). */
+  hideInlineTitles?: boolean;
 };
 
 function ModeChipRow(props: {
@@ -126,6 +128,7 @@ export function SearchOriginDestinationMap({
   onRouteEtaChange,
   proximityRadiusKm = 10,
   height = 220,
+  hideInlineTitles = false,
 }: Props) {
   const mapRef = useRef<MapView>(null);
   const onRouteEtaChangeRef = useRef(onRouteEtaChange);
@@ -285,7 +288,7 @@ export function SearchOriginDestinationMap({
   const mapChildren = (
     <>
       {osrmCoords.length >= 2 ? (
-        <Polyline coordinates={osrmCoords} strokeColor={GREEN} strokeWidth={4} />
+        <Polyline coordinates={osrmCoords} strokeColor={MAP_PRIMARY} strokeWidth={4} />
       ) : lineCoords.length >= 2 ? (
         <Polyline coordinates={lineCoords} strokeColor="#94a3b8" strokeWidth={3} />
       ) : null}
@@ -316,8 +319,12 @@ export function SearchOriginDestinationMap({
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.sectionLabel}>Mapa</Text>
-      <Text style={styles.hint}>Tocá el mapa para marcar origen y destino.</Text>
+      {!hideInlineTitles ? (
+        <>
+          <Text style={styles.sectionLabel}>Mapa</Text>
+          <Text style={styles.hint}>Tocá el mapa para marcar origen y destino.</Text>
+        </>
+      ) : null}
 
       <View style={[styles.previewShell, { height }]}>
         <MapView
@@ -397,16 +404,16 @@ export function SearchOriginDestinationMap({
               accessibilityRole="button"
               accessibilityLabel="Ir a mi ubicación"
             >
-              {locating ? <ActivityIndicator color={GREEN} /> : <Ionicons name="locate" size={26} color={GREEN} />}
+              {locating ? <ActivityIndicator color={MAP_PRIMARY} /> : <Ionicons name="locate" size={26} color={MAP_PRIMARY} />}
             </TouchableOpacity>
             {geocoding ? (
               <View style={styles.geoOverlay} pointerEvents="none">
-                <ActivityIndicator size="large" color={GREEN} />
+                <ActivityIndicator size="large" color={MAP_PRIMARY} />
               </View>
             ) : null}
             {routeLoading && !geocoding ? (
               <View style={styles.routeLoadingCorner} pointerEvents="none">
-                <ActivityIndicator size="small" color={GREEN} />
+                <ActivityIndicator size="small" color={MAP_PRIMARY} />
                 <Text style={styles.routeLoadingCornerText}>Ruta…</Text>
               </View>
             ) : null}
@@ -441,12 +448,14 @@ export function SearchOriginDestinationMap({
 const styles = StyleSheet.create({
   wrap: { marginBottom: 4 },
   sectionLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 4,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: '#64748b',
+    marginBottom: 6,
+    fontFamily: 'DMSans_700Bold',
   },
-  hint: { fontSize: 12, color: '#6b7280', lineHeight: 17, marginBottom: 10 },
+  hint: { fontSize: 13, color: '#64748b', lineHeight: 19, marginBottom: 12, fontFamily: 'DMSans_400Regular' },
   modeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   modeChip: {
     borderWidth: 1,
@@ -459,27 +468,27 @@ const styles = StyleSheet.create({
     minWidth: '42%',
     alignItems: 'center',
   },
-  modeChipActive: { borderColor: GREEN, backgroundColor: '#f0fdf4' },
-  modeChipText: { fontSize: 13, fontWeight: '600', color: '#374151' },
-  modeChipTextActive: { color: GREEN },
+  modeChipActive: { borderColor: MAP_PRIMARY, backgroundColor: '#edf7f1' },
+  modeChipText: { fontSize: 13, fontWeight: '600', color: '#374151', fontFamily: 'DMSans_600SemiBold' },
+  modeChipTextActive: { color: MAP_PRIMARY },
   modeBtn: {
     flexGrow: 1,
     minWidth: '42%',
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingVertical: 12,
+    borderRadius: 14,
     backgroundColor: '#e5e7eb',
     alignItems: 'center',
   },
-  modeBtnActive: { backgroundColor: GREEN },
-  modeBtnText: { fontSize: 13, fontWeight: '600', color: '#374151' },
-  modeBtnTextActive: { color: '#fff' },
+  modeBtnActive: { backgroundColor: MAP_PRIMARY },
+  modeBtnText: { fontSize: 13, fontWeight: '600', color: '#374151', fontFamily: 'DMSans_600SemiBold' },
+  modeBtnTextActive: { color: '#fff', fontFamily: 'DMSans_700Bold' },
   previewShell: {
     width: '100%',
-    borderRadius: 12,
+    borderRadius: 18,
     overflow: 'hidden',
     backgroundColor: '#e5e7eb',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#e8eaed',
     position: 'relative',
   },
   previewTap: { ...StyleSheet.absoluteFillObject },
@@ -489,17 +498,17 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(22,101,52,0.92)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    backgroundColor: 'rgba(26,92,56,0.94)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 999,
   },
-  previewChipText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  previewChipText: { color: '#fff', fontSize: 12, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
   previewRouteLoading: {
     position: 'absolute',
     top: 10,
     right: 10,
-    backgroundColor: 'rgba(22,101,52,0.9)',
+    backgroundColor: 'rgba(26,92,56,0.92)',
     borderRadius: 20,
     padding: 8,
   },
@@ -513,8 +522,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#e5e7eb',
   },
-  modalHeaderBtn: { fontSize: 17, fontWeight: '600', color: GREEN, minWidth: 48 },
-  modalHeaderTitle: { flex: 1, textAlign: 'center', fontSize: 15, fontWeight: '600', color: '#111' },
+  modalHeaderBtn: { fontSize: 17, fontWeight: '700', color: MAP_PRIMARY, minWidth: 48, fontFamily: 'DMSans_700Bold' },
+  modalHeaderTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+    fontFamily: 'DMSans_700Bold',
+  },
   modalHeaderSpacer: { minWidth: 48 },
   modalMapWrap: { flex: 1, position: 'relative' },
   modalMap: { ...StyleSheet.absoluteFillObject },
@@ -560,7 +576,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
-  routeLoadingCornerText: { fontSize: 12, fontWeight: '600', color: GREEN },
+  routeLoadingCornerText: { fontSize: 12, fontWeight: '700', color: MAP_PRIMARY, fontFamily: 'DMSans_700Bold' },
   modalFooter: {
     backgroundColor: '#fff',
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -587,5 +603,5 @@ const styles = StyleSheet.create({
   dotOrigin: { backgroundColor: '#ea580c' },
   dotDest: { backgroundColor: '#b91c1c' },
   clearRow: { marginTop: 8, gap: 6 },
-  clearLink: { fontSize: 13, color: GREEN, fontWeight: '600' },
+  clearLink: { fontSize: 13, color: MAP_PRIMARY, fontWeight: '700', fontFamily: 'DMSans_600SemiBold' },
 });

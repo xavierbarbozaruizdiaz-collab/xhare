@@ -1,7 +1,7 @@
 /**
  * Guardar solicitud de trayecto (trip_requests): origen/destino, fecha, tipo interno vs larga distancia y precio/confirmación.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -25,6 +25,7 @@ import {
 } from '../backend/geocodeApi';
 import { fetchRoute } from '../backend/routeApi';
 import { raceWithTimeout } from '../backend/withTimeout';
+import { clampDateNotBeforeLocalDay, datePickerDisplay, startOfLocalDay, timePickerDisplay, toYmdLocal } from '../lib/datePickerUi';
 import { distanceMeters } from '../lib/geo';
 import type { GeocodeSuggestion } from '../backend/geocodeApi';
 import type { MainStackParamList } from '../navigation/types';
@@ -39,6 +40,10 @@ import {
   totalFareFromBaseAndSeatsWithPricing,
 } from '../lib/pricing/segment-fare';
 import { isPickupAtLeastLeadAhead } from '../lib/bookingLead';
+import { Ionicons } from '@expo/vector-icons';
+import { SearchOriginDestinationMap, type SearchRouteEtaState } from '../components/SearchOriginDestinationMap';
+import type { Point } from '../lib/geo';
+import { formatEstimatedArrivalLine } from '../lib/routeEtaFormat';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'SaveTripRequest'>;
 
@@ -102,6 +107,45 @@ export function SaveTripRequestScreen() {
   const [internalTotalCost, setInternalTotalCost] = useState<number | null>(null);
   /** true cuando la distancia viene del backend de ruta; false si es aproximación por recta. */
   const [internalDistanceFromRoute, setInternalDistanceFromRoute] = useState(true);
+  const [tripMapExpanded, setTripMapExpanded] = useState(true);
+  const [routeEta, setRouteEta] = useState<SearchRouteEtaState>({
+    loading: false,
+    durationMinutes: null,
+    distanceKm: null,
+    polyline: null,
+  });
+  const [passengerRouteNameHint, setPassengerRouteNameHint] = useState(
+    typeof pre.passengerRouteNameHint === 'string' ? pre.passengerRouteNameHint : ''
+  );
+
+  const originGeo = useMemo<Point | null>(
+    () =>
+      originLat != null && originLng != null && Number.isFinite(originLat) && Number.isFinite(originLng)
+        ? { lat: originLat, lng: originLng }
+        : null,
+    [originLat, originLng]
+  );
+  const destGeo = useMemo<Point | null>(
+    () =>
+      destinationLat != null &&
+      destinationLng != null &&
+      Number.isFinite(destinationLat) &&
+      Number.isFinite(destinationLng)
+        ? { lat: destinationLat, lng: destinationLng }
+        : null,
+    [destinationLat, destinationLng]
+  );
+
+  const setOriginGeo = useCallback((p: Point | null) => {
+    setOriginLat(p?.lat ?? null);
+    setOriginLng(p?.lng ?? null);
+  }, []);
+  const setDestGeo = useCallback((p: Point | null) => {
+    setDestinationLat(p?.lat ?? null);
+    setDestinationLng(p?.lng ?? null);
+  }, []);
+
+  const mapProximityRadiusKm = pricingKind === 'long_distance' ? 50 : 1;
 
   useEffect(() => {
     if (originLat != null && originLng != null) {
@@ -220,13 +264,19 @@ export function SaveTripRequestScreen() {
     Number.isFinite(destinationLat) &&
     Number.isFinite(destinationLng);
 
+  const estimatedArrival = useMemo(
+    () =>
+      formatEstimatedArrivalLine(requestedDate, requestedTime, routeEta, hasValidCoords),
+    [requestedDate, requestedTime, routeEta, hasValidCoords]
+  );
+
   const submit = useCallback(async () => {
     if (!session?.id || !session.access_token) {
       Alert.alert('Sesión', 'Iniciá sesión.');
       return;
     }
     if (!hasValidCoords || !requestedDate.trim()) {
-      Alert.alert('Datos', 'Elegí origen y destino de la lista.');
+      Alert.alert('Datos', 'Elegí origen y destino en el mapa o desde las sugerencias.');
       return;
     }
     if (pricingKind === 'long_distance') {
@@ -289,6 +339,13 @@ export function SaveTripRequestScreen() {
         pricingKind,
         passengerDesiredPricePerSeatGs: desiredGs,
         internalQuoteAcknowledged: pricingKind === 'internal' ? true : null,
+        routePolyline:
+          routeEta.polyline && routeEta.polyline.length >= 2 ? routeEta.polyline : undefined,
+        routeLengthKm:
+          typeof routeEta.distanceKm === 'number' && Number.isFinite(routeEta.distanceKm)
+            ? routeEta.distanceKm
+            : undefined,
+        passengerRouteNameHint: passengerRouteNameHint.trim() || undefined,
       });
 
       if (!res.ok) {
@@ -317,6 +374,9 @@ export function SaveTripRequestScreen() {
     pricingKind,
     desiredPriceGs,
     navigation,
+    routeEta.polyline,
+    routeEta.distanceKm,
+    passengerRouteNameHint,
   ]);
 
   return (
@@ -325,6 +385,42 @@ export function SaveTripRequestScreen() {
         Si no hay viajes publicados que coincidan, guardá tu trayecto acá. Elegí si es interno (ya cotizado) o larga
         distancia (precio que querés pagar por asiento, negociable con el conductor).
       </Text>
+
+      <View style={styles.mapCollapsibleHeader}>
+        <View style={styles.mapCollapsibleHeaderText}>
+          <Text style={styles.mapCollapsibleTitle}>Mapa</Text>
+          <Text style={styles.mapCollapsibleHint}>
+            {tripMapExpanded
+              ? 'Marcá origen y destino en el mapa, o usá los campos de abajo con sugerencias.'
+              : 'Mostrá el mapa para ajustar puntos o ver la ruta.'}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.mapToggleBtn}
+          onPress={() => setTripMapExpanded((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={tripMapExpanded ? 'Ocultar mapa' : 'Mostrar mapa'}
+        >
+          <Ionicons
+            name={tripMapExpanded ? 'chevron-up-outline' : 'map-outline'}
+            size={tripMapExpanded ? 26 : 22}
+            color="#14532d"
+          />
+        </TouchableOpacity>
+      </View>
+      {tripMapExpanded ? (
+        <SearchOriginDestinationMap
+          origin={originGeo}
+          destination={destGeo}
+          onOriginChange={setOriginGeo}
+          onDestinationChange={setDestGeo}
+          onOriginLabelResolved={setOriginLabel}
+          onDestinationLabelResolved={setDestinationLabel}
+          onRouteEtaChange={setRouteEta}
+          proximityRadiusKm={mapProximityRadiusKm}
+          height={240}
+        />
+      ) : null}
 
       <Text style={styles.label}>Origen</Text>
       <TextInput
@@ -392,13 +488,24 @@ export function SaveTripRequestScreen() {
       </TouchableOpacity>
       {showDatePicker && (
         <DateTimePicker
-          value={requestedDate ? new Date(requestedDate + 'T12:00:00') : new Date()}
+          value={
+            requestedDate
+              ? new Date(requestedDate + 'T12:00:00')
+              : (() => {
+                  const t = startOfLocalDay();
+                  t.setHours(12, 0, 0, 0);
+                  return t;
+                })()
+          }
           mode="date"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          minimumDate={new Date()}
+          display={datePickerDisplay()}
+          minimumDate={startOfLocalDay()}
           onChange={(_, d) => {
             setShowDatePicker(Platform.OS === 'ios');
-            if (d) setRequestedDate(d.toISOString().slice(0, 10));
+            if (d) {
+              const clamped = clampDateNotBeforeLocalDay(d, new Date());
+              setRequestedDate(toYmdLocal(clamped));
+            }
           }}
         />
       )}
@@ -416,7 +523,7 @@ export function SaveTripRequestScreen() {
             return d;
           })()}
           mode="time"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          display={timePickerDisplay()}
           onChange={(_, d) => {
             setShowTimePicker(Platform.OS === 'ios');
             if (d) {
@@ -427,6 +534,26 @@ export function SaveTripRequestScreen() {
           }}
         />
       )}
+
+      <Text style={styles.label}>Llegada estimada en destino</Text>
+      <View style={styles.estimateRow} accessibilityRole="text">
+        <Text
+          style={estimatedArrival.isPlaceholder ? styles.estimatePlaceholder : styles.estimateValue}
+          selectable
+        >
+          {estimatedArrival.text}
+        </Text>
+      </View>
+
+      <Text style={styles.label}>Nombre del viaje (opcional)</Text>
+      <TextInput
+        style={styles.input}
+        value={passengerRouteNameHint}
+        onChangeText={setPassengerRouteNameHint}
+        placeholder="Si el conductor lo definió al publicar"
+        placeholderTextColor="#9ca3af"
+        maxLength={200}
+      />
 
       <Text style={styles.label}>Asientos</Text>
       <View style={styles.row}>
@@ -528,6 +655,37 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
   lead: { fontSize: 14, color: '#4b5563', marginBottom: 16, lineHeight: 20 },
+  mapCollapsibleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
+    paddingVertical: 4,
+  },
+  mapCollapsibleHeaderText: { flex: 1, minWidth: 0 },
+  mapCollapsibleTitle: { fontSize: 16, fontWeight: '800', color: '#14532d', marginBottom: 4 },
+  mapCollapsibleHint: { fontSize: 13, color: '#6b7280', lineHeight: 19 },
+  mapToggleBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#86efac',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  estimateRow: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 16,
+    backgroundColor: '#f9fafb',
+  },
+  estimateValue: { fontSize: 15, color: '#111827', lineHeight: 22 },
+  estimatePlaceholder: { fontSize: 14, color: '#9ca3af', lineHeight: 20 },
   label: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 6 },
   hint: { fontSize: 13, color: '#6b7280', marginBottom: 12, lineHeight: 18 },
   input: {

@@ -70,7 +70,7 @@ Lo que **ya está implementado** en móvil se indica como ✅.
 
 ### 8. (Opcional) Mis viajes – pestaña “Finalizados” ✅
 - **Web:** Vista separada o filtro “Finalizados” en Mis viajes.
-- **Móvil:** ✅ DriverScreen tiene pestañas “Próximos” y “Finalizados”.
+- **Móvil:** ✅ **Mis viajes publicados** (`MyPublishedRidesScreen`) agrupa estados (programados, no realizados, finalizados, etc.).
 
 ### 9. (Opcional) Admin
 - **Web:** Zona `/admin` (usuarios, conductores, viajes, facturación, etc.).

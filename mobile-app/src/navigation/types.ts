@@ -56,7 +56,7 @@ export type MainStackParamList = {
   JoinGroupMap: { groupId: string };
   Messages: undefined;
   Chat: { conversationId: string };
-  /** Guardar solicitud de trayecto (trip_requests). Prefill desde Buscar viajes. */
+  /** Guardar solicitud de trayecto (trip_requests). Prefill desde búsqueda o vacío. */
   SaveTripRequest:
     | {
         originLabel?: string;
@@ -68,13 +68,14 @@ export type MainStackParamList = {
         requestedDate?: string;
         requestedTime?: string;
         suggestedPricingKind?: 'internal' | 'long_distance';
+        /** Texto de “nombre de ruta” cuando no es código XH- (p. ej. prellenar referencia en crear solicitud). */
+        passengerRouteNameHint?: string;
       }
     | undefined;
 };
 
 export type MainTabParamList = {
   Home: undefined;
-  Driver: undefined;
   Passenger: undefined;
   Settings: undefined;
 };
