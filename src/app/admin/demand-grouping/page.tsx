@@ -10,6 +10,9 @@ export default function AdminDemandGroupingPage() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics>(null);
   const [diagLoading, setDiagLoading] = useState(false);
   const [diagErr, setDiagErr] = useState<string | null>(null);
+  const [executeLoading, setExecuteLoading] = useState(false);
+  const [executeErr, setExecuteErr] = useState<string | null>(null);
+  const [executeResult, setExecuteResult] = useState<Record<string, unknown> | null>(null);
 
   /** GET diagnostics?explain=1 — muestras geo (motivos) + classified listos para RPC. */
   const [includeExplain, setIncludeExplain] = useState(false);
@@ -54,6 +57,48 @@ export default function AdminDemandGroupingPage() {
     void loadDiagnostics();
   }, [ready, isAdmin, accessToken, loadDiagnostics, includeExplain]);
 
+  const runExecute = useCallback(async () => {
+    if (!accessToken) return;
+    setExecuteLoading(true);
+    setExecuteErr(null);
+    setExecuteResult(null);
+    try {
+      let token = accessToken;
+      let res = await fetch('/api/admin/demand-grouping/execute', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+      if (res.status === 401) {
+        token = (await refetch()) ?? '';
+        if (token) {
+          res = await fetch('/api/admin/demand-grouping/execute', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: '{}',
+          });
+        }
+      }
+      const body = (await res.json()) as Record<string, unknown>;
+      setExecuteResult(body);
+      if (!res.ok) {
+        setExecuteErr(typeof body.error === 'string' ? body.error : `Error HTTP ${res.status}`);
+      }
+      await loadDiagnostics();
+    } catch (e) {
+      setExecuteErr(e instanceof Error ? e.message : 'Error de red');
+    } finally {
+      setExecuteLoading(false);
+    }
+  }, [accessToken, refetch, loadDiagnostics]);
 
   if (!ready || !isAdmin) {
     return (
@@ -66,15 +111,38 @@ export default function AdminDemandGroupingPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Agrupación de demanda (HEX-only)</h1>
         <p className="text-sm text-gray-600 mt-1 max-w-3xl">
-          Runtime simplificado: se ejecuta solo el motor <strong>HEX</strong> y la corrida se hace <strong>solo por cron</strong>.
-          Los motores corridor/classified y geo_sync quedaron deshabilitados para evitar solapamientos. En
-          endpoint <code className="text-xs bg-gray-100 px-1 rounded">GET /api/cron/demand-grouping</code> con{' '}
+          Runtime simplificado: solo el motor <strong>HEX</strong>. Los motores corridor/classified y geo_sync quedaron
+          deshabilitados. Podés disparar una corrida desde este panel (botón abajo) o por{' '}
+          <code className="text-xs bg-gray-100 px-1 rounded">GET /api/cron/demand-grouping</code> con{' '}
           <code className="text-xs bg-gray-100 px-1 rounded">Authorization: Bearer CRON_SECRET</code> (o{' '}
-          <code className="text-xs bg-gray-100 px-1 rounded">DEMAND_ROUTES_SYNC_SECRET</code>) ejecuta el mismo pipeline. En Vercel{' '}
+          <code className="text-xs bg-gray-100 px-1 rounded">DEMAND_ROUTES_SYNC_SECRET</code>). En Vercel{' '}
           <strong>Hobby</strong> no se puede declarar un cron cada 5 min en <code className="text-xs bg-gray-100 px-1 rounded">vercel.json</code>{' '}
           (bloquea el deploy); usá plan <strong>Pro</strong> para crons frecuentes en Vercel o el workflow de GitHub{' '}
           <code className="text-xs bg-gray-100 px-1 rounded">.github/workflows/demand-grouping-cron.yml</code> con secrets del repo.
         </p>
+      </div>
+
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 shadow-sm">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Ejecutar agrupamiento ahora</h2>
+        <p className="text-sm text-gray-700 mb-3 max-w-3xl">
+          Corre el mismo pipeline que el cron (registro en <code className="text-xs bg-white px-1 rounded">demand_grouping_runs</code> con{' '}
+          <code className="text-xs bg-white px-1 rounded">trigger_source: manual</code>). Límite: hasta 4 veces cada 2 minutos por sesión
+          admin.
+        </p>
+        <button
+          type="button"
+          className="text-sm py-2.5 px-4 rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={executeLoading || !accessToken}
+          onClick={() => void runExecute()}
+        >
+          {executeLoading ? 'Ejecutando…' : 'Ejecutar agrupamiento HEX'}
+        </button>
+        {executeErr && <p className="text-sm text-red-700 mt-2">{executeErr}</p>}
+        {executeResult && (
+          <pre className="text-xs bg-gray-900 text-amber-100 p-3 rounded-lg overflow-x-auto max-h-[280px] overflow-y-auto mt-3">
+            {JSON.stringify(executeResult, null, 2)}
+          </pre>
+        )}
       </div>
 
       <details className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm text-slate-800">
@@ -134,7 +202,7 @@ export default function AdminDemandGroupingPage() {
       </div>
 
       <p className="text-xs text-gray-500">
-        El panel queda en modo lectura. La ejecución se realiza exclusivamente desde cron.
+        El diagnóstico es lectura; la ejecución puede ser manual (botón), cron o GitHub Actions.
       </p>
     </div>
   );
