@@ -160,8 +160,8 @@ export default function TestMigrationPage() {
       {/* Header */}
       <header className="bg-white shadow-sm">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <a href="/" className="text-2xl font-bold text-green-600">
-            Xhare
+          <a href="/" className="text-2xl font-bold text-[#20A050]">
+            ÑandeBus
           </a>
           <div className="flex gap-4">
             <a

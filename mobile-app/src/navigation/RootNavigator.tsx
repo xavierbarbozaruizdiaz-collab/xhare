@@ -10,6 +10,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { getAppFlavor } from '../core/flavor';
+import { appBrand } from '../ui/theme/brand';
 import { useAuth } from '../auth/AuthContext';
 import { LoadingScreen } from '../ui/LoadingScreen';
 import { LoginScreen } from '../screens/LoginScreen';
@@ -58,12 +59,12 @@ function MainTabs() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: true,
-        tabBarLabelStyle: { fontSize: 12, fontFamily: 'DMSans_600SemiBold' },
-        tabBarActiveTintColor: '#1a5c38',
-        tabBarInactiveTintColor: '#6b7280',
+        tabBarLabelStyle: { fontSize: 12, fontFamily: appBrand.fonts.semibold },
+        tabBarActiveTintColor: appBrand.colors.tabActive,
+        tabBarInactiveTintColor: appBrand.colors.textMuted,
         tabBarStyle: {
-          backgroundColor: '#fff',
-          borderTopColor: '#eef0f3',
+          backgroundColor: appBrand.colors.surface,
+          borderTopColor: appBrand.colors.border,
           paddingTop: 4,
           shadowColor: '#000',
           shadowOffset: { width: 0, height: -3 },
@@ -74,7 +75,7 @@ function MainTabs() {
         tabBarIcon: ({ focused, color, size }) => {
           const names = TAB_ICONS[route.name] ?? { active: 'ellipse', inactive: 'ellipse-outline' };
           const iconName = focused ? names.active : names.inactive;
-          const active = '#1a5c38';
+          const active = appBrand.colors.tabActive;
           return (
             <View
               style={{
@@ -113,7 +114,14 @@ function MainTabs() {
 
 function MainStackNavigator() {
   return (
-    <MainStack.Navigator screenOptions={{ headerShown: true }}>
+    <MainStack.Navigator
+      screenOptions={{
+        headerShown: true,
+        headerStyle: { backgroundColor: appBrand.colors.headerBg },
+        headerTintColor: appBrand.colors.headerTint,
+        headerTitleStyle: { fontFamily: appBrand.fonts.semibold, fontSize: 17 },
+      }}
+    >
       <MainStack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
       <MainStack.Screen
         name="RideDetail"

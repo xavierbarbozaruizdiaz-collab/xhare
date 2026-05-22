@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 import UserRoleBadge from '@/components/UserRoleBadge';
 import PageLoading from '@/components/PageLoading';
 import AppDrawer from '@/components/AppDrawer';
@@ -184,7 +185,7 @@ export default function MyBookingsPage() {
       </AppDrawer>
 
       <header className="bg-white shadow-sm border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40 p-4 flex justify-between items-center">
-        <Link href="/my-bookings" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
+        <BrandLink href="/my-bookings" className="text-lg font-bold text-[#20A050] shrink-0" />
         <div className="flex items-center gap-2">
           <UserRoleBadge />
           <button

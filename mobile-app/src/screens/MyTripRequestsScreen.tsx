@@ -1,6 +1,7 @@
 /**
  * Mis solicitudes de trayecto (pasajero). Lista trip_requests del usuario, cancelar pendientes, ver viaje si aceptada.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
@@ -36,7 +37,7 @@ function requestStatusConfig(status: string): { label: string; color: string } {
     grouping: { label: 'Agrupando', color: '#854d0e' },
     grouped: { label: 'En grupo', color: '#0369a1' },
     group_linked_pending: { label: 'Viaje publicado', color: '#0f766e' },
-    accepted: { label: 'Aceptada', color: '#15803d' },
+    accepted: { label: 'Aceptada', color: appBrand.colors.primaryMuted },
     expired: { label: 'Expirada', color: '#6b7280' },
     cancelled: { label: 'Cancelada', color: '#b91c1c' },
   };
@@ -250,7 +251,7 @@ export function MyTripRequestsScreen() {
   if (loading && requests.length === 0) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -293,7 +294,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   newRequestBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
@@ -326,7 +327,7 @@ const styles = StyleSheet.create({
   meta: { fontSize: 13, color: '#6b7280', marginTop: 8 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   primaryBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
@@ -342,6 +343,6 @@ const styles = StyleSheet.create({
   cancelBtnText: { color: '#b91c1c', fontWeight: '600', fontSize: 14 },
   empty: { alignItems: 'center', paddingVertical: 32 },
   emptyText: { fontSize: 16, color: '#6b7280', marginBottom: 16 },
-  searchLink: { backgroundColor: '#166534', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
+  searchLink: { backgroundColor: appBrand.colors.primary, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
   searchLinkText: { color: '#fff', fontWeight: '600', fontSize: 15 },
 });

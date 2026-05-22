@@ -1,6 +1,7 @@
 /**
  * Detalle de viaje: pasajero ve conductor y puede reservar; conductor ve resumen tipo publicación e Iniciar/Finalizar viaje.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -901,7 +902,7 @@ export function RideDetailScreen() {
       );
       return;
     }
-    const message = `Seguí mi viaje en Xhare (solo lectura). El enlace deja de actualizarse cuando baje del minibús:\n${url}`;
+    const message = `Seguí mi viaje en ÑandeBus (solo lectura). El enlace deja de actualizarse cuando baje del minibús:\n${url}`;
     void Share.share(Platform.OS === 'ios' ? { message, url } : { message });
   }, [ride?.share_code, passengerBooking?.id]);
 
@@ -1241,7 +1242,7 @@ export function RideDetailScreen() {
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -1802,7 +1803,7 @@ export function RideDetailScreen() {
                     accessibilityRole="button"
                     accessibilityLabel="Compartir enlace de seguimiento del viaje"
                   >
-                    <Ionicons name="share-social-outline" size={20} color="#14532d" />
+                    <Ionicons name="share-social-outline" size={20} color="appBrand.colors.primary" />
                     <Text style={styles.shareSafetyBtnText}>Compartir seguimiento</Text>
                   </TouchableOpacity>
                   <Text style={styles.shareSafetyHint}>
@@ -1839,7 +1840,7 @@ export function RideDetailScreen() {
                   <Ionicons
                     name={bookingDetailsExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
                     size={20}
-                    color="#14532d"
+                    color="appBrand.colors.primary"
                   />
                 </TouchableOpacity>
               </View>
@@ -2251,7 +2252,7 @@ export function RideDetailScreen() {
       <Modal visible={statusUpdating} transparent animationType="fade">
         <View style={styles.modalOverlay} pointerEvents="box-none">
           <View style={styles.modalCard}>
-            <ActivityIndicator size="large" color="#166534" />
+            <ActivityIndicator size="large" color="appBrand.colors.primary" />
             <Text style={styles.modalText}>Actualizando el viaje…</Text>
             <Text style={styles.modalSub}>Puede tardar unos segundos la primera vez.</Text>
           </View>
@@ -2287,21 +2288,21 @@ const styles = StyleSheet.create({
     marginTop: 14,
     marginBottom: 4,
   },
-  routeNameLine: { fontSize: 15, fontWeight: '700', color: '#14532d', marginBottom: 6 },
+  routeNameLine: { fontSize: 15, fontWeight: '700', color: appBrand.colors.primary, marginBottom: 6 },
   title: { fontSize: 18, fontWeight: '700', color: '#111', lineHeight: 24 },
   bodyLine: { fontSize: 15, color: '#111', fontWeight: '500' },
   bodyMuted: { fontSize: 13, color: '#6b7280', marginTop: 4, lineHeight: 18 },
   driverRevenueBox: {
     marginTop: 10,
     padding: 12,
-    backgroundColor: '#f0fdf4',
+    backgroundColor: appBrand.colors.greenLight,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#bbf7d0',
+    borderColor: appBrand.colors.greenLight,
   },
   driverRevenueBlockTitle: {
     fontSize: 11,
-    color: '#166534',
+    color: appBrand.colors.primary,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     fontWeight: '700',
@@ -2309,7 +2310,7 @@ const styles = StyleSheet.create({
   driverRevenueTotal: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#14532d',
+    color: appBrand.colors.primary,
     marginTop: 2,
   },
   driverRevenueMeta: {
@@ -2334,7 +2335,7 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   stopRowWrapDone: {
-    backgroundColor: '#ecfdf5',
+    backgroundColor: appBrand.colors.greenLight,
     borderColor: '#a7f3d0',
   },
   stopRowWrapCurrent: {
@@ -2342,7 +2343,7 @@ const styles = StyleSheet.create({
     borderColor: '#fcd34d',
   },
   stopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  stopOrder: { fontSize: 14, fontWeight: '700', color: '#166534', width: 22 },
+  stopOrder: { fontSize: 14, fontWeight: '700', color: appBrand.colors.primary, width: 22 },
   stopTextCol: { flex: 1, minWidth: 0 },
   stopKind: { fontSize: 11, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4 },
   stopLabel: { fontSize: 14, color: '#374151', lineHeight: 20 },
@@ -2419,7 +2420,7 @@ const styles = StyleSheet.create({
   arriveSectionLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#166534',
+    color: appBrand.colors.primary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginTop: 4,
@@ -2459,14 +2460,14 @@ const styles = StyleSheet.create({
   arriveTicketHero: {
     fontSize: 26,
     fontWeight: '800',
-    color: '#14532d',
+    color: appBrand.colors.primary,
     letterSpacing: 2,
     marginBottom: 4,
   },
   arriveTicketCode: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#14532d',
+    color: appBrand.colors.primary,
     letterSpacing: 1.5,
     marginBottom: 4,
   },
@@ -2491,7 +2492,7 @@ const styles = StyleSheet.create({
   arriveAmount: {
     marginTop: 5,
     fontSize: 13,
-    color: '#166534',
+    color: appBrand.colors.primary,
     fontWeight: '700',
   },
   arriveActions: {
@@ -2509,8 +2510,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   arriveChipActiveOk: {
-    backgroundColor: '#166534',
-    borderColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
+    borderColor: appBrand.colors.primary,
   },
   arriveChipActiveNo: {
     backgroundColor: '#b91c1c',
@@ -2546,7 +2547,7 @@ const styles = StyleSheet.create({
   },
   arriveConfirm: {
     flex: 1,
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
@@ -2596,7 +2597,7 @@ const styles = StyleSheet.create({
   miTicketBox: {
     backgroundColor: '#fff',
     borderWidth: 2,
-    borderColor: '#166534',
+    borderColor: appBrand.colors.primary,
     borderRadius: 12,
     padding: 14,
     marginBottom: 14,
@@ -2605,7 +2606,7 @@ const styles = StyleSheet.create({
   miTicketLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#166534',
+    color: appBrand.colors.primary,
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 6,
@@ -2613,13 +2614,13 @@ const styles = StyleSheet.create({
   miTicketCode: {
     fontSize: 32,
     fontWeight: '800',
-    color: '#14532d',
+    color: appBrand.colors.primary,
     letterSpacing: 2,
   },
   miTicketAmount: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#166534',
+    color: appBrand.colors.primary,
     marginTop: 10,
   },
   miTicketSeats: {
@@ -2636,15 +2637,15 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   bookingCard: {
-    backgroundColor: '#ecfdf5',
+    backgroundColor: appBrand.colors.greenLight,
     borderWidth: 1,
     borderColor: '#a7f3d0',
     padding: 16,
     borderRadius: 12,
     marginBottom: 16,
   },
-  bookingCardTitle: { fontSize: 17, fontWeight: '800', color: '#14532d', marginBottom: 6 },
-  bookingMeta: { fontSize: 13, color: '#166534', marginBottom: 8, fontWeight: '600' },
+  bookingCardTitle: { fontSize: 17, fontWeight: '800', color: appBrand.colors.primary, marginBottom: 6 },
+  bookingMeta: { fontSize: 13, color: appBrand.colors.primary, marginBottom: 8, fontWeight: '600' },
   bookingSummaryRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
   bookingSummaryCol: { flex: 1, minWidth: 0 },
   etaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 18 },
@@ -2662,8 +2663,8 @@ const styles = StyleSheet.create({
   },
   passengerEtaHint: {
     fontSize: 13,
-    color: '#14532d',
-    backgroundColor: '#ecfdf5',
+    color: appBrand.colors.primary,
+    backgroundColor: appBrand.colors.greenLight,
     borderWidth: 1,
     borderColor: '#86efac',
     borderRadius: 10,
@@ -2709,11 +2710,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 10,
     borderWidth: 1.5,
-    borderColor: '#15803d',
+    borderColor: appBrand.colors.primaryMuted,
     backgroundColor: '#fff',
   },
-  shareSafetyBtnText: { color: '#14532d', fontWeight: '700', fontSize: 15 },
-  shareSafetyHint: { fontSize: 12, color: '#166534', lineHeight: 17, marginBottom: 6, fontWeight: '500' },
+  shareSafetyBtnText: { color: appBrand.colors.primary, fontWeight: '700', fontSize: 15 },
+  shareSafetyHint: { fontSize: 12, color: appBrand.colors.primary, lineHeight: 17, marginBottom: 6, fontWeight: '500' },
   driverCardContactWrap: { marginTop: 14, width: '100%' },
   contactBtnInCard: {
     paddingVertical: 12,
@@ -2739,14 +2740,14 @@ const styles = StyleSheet.create({
   cardValue: { fontSize: 17, fontWeight: '600', marginTop: 4 },
   actions: { marginTop: 24, gap: 0 },
   primaryBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 8,
   },
   completeBtn: {
-    backgroundColor: '#15803d',
+    backgroundColor: appBrand.colors.primaryMuted,
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
@@ -2762,10 +2763,10 @@ const styles = StyleSheet.create({
   btnDisabled: { opacity: 0.6 },
   primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   secondaryBtn: { marginTop: 14, alignItems: 'center', paddingVertical: 10 },
-  secondaryText: { color: '#166534', fontWeight: '600', fontSize: 15 },
+  secondaryText: { color: appBrand.colors.primary, fontWeight: '600', fontSize: 15 },
   hint: { fontSize: 13, color: '#6b7280', marginTop: 12, lineHeight: 18 },
   muted: { marginTop: 16, color: '#6b7280' },
   errorText: { color: '#b91c1c', textAlign: 'center', marginBottom: 12 },
-  btn: { backgroundColor: '#166534', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
+  btn: { backgroundColor: appBrand.colors.primary, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
   btnText: { color: '#fff', fontWeight: '700' },
 });

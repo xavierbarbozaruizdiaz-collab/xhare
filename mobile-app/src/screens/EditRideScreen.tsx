@@ -1,6 +1,7 @@
 /**
  * Edit ride (driver): departure date, time, estimated duration.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -109,7 +110,7 @@ export function EditRideScreen() {
   if (loading && !ride) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -184,7 +185,7 @@ const styles = StyleSheet.create({
   },
   errorText: { color: '#b91c1c', marginBottom: 12 },
   button: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: 'center',
@@ -195,5 +196,5 @@ const styles = StyleSheet.create({
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   cancelBtn: { marginTop: 16, alignItems: 'center' },
   cancelBtnText: { color: '#666', fontSize: 15 },
-  link: { color: '#166534', marginTop: 12 },
+  link: { color: appBrand.colors.primary, marginTop: 12 },
 });

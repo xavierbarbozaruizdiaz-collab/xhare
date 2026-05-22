@@ -1,6 +1,7 @@
 /**
  * Conductor: larga distancia — mapa del trayecto (embebido + pantalla completa), ofertas y contraoferta.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -108,10 +109,10 @@ function TripOfferMapView({
       rotateEnabled={false}
     >
       {coords.length >= 2 && (
-        <Polyline coordinates={coords} strokeColor="#166534" strokeWidth={4} />
+        <Polyline coordinates={coords} strokeColor="appBrand.colors.primary" strokeWidth={4} />
       )}
       {origin ? (
-        <Marker coordinate={{ latitude: origin.lat, longitude: origin.lng }} title="Origen" pinColor="#166534" />
+        <Marker coordinate={{ latitude: origin.lat, longitude: origin.lng }} title="Origen" pinColor="appBrand.colors.primary" />
       ) : null}
       {destination ? (
         <Marker coordinate={{ latitude: destination.lat, longitude: destination.lng }} title="Destino" pinColor="#b91c1c" />
@@ -309,7 +310,7 @@ export function TripRequestLongDistanceOfferScreen() {
   if (loading && !trip && !loadError) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -348,7 +349,7 @@ export function TripRequestLongDistanceOfferScreen() {
             <View style={styles.mapWrap} collapsable={Platform.OS === 'android' ? false : undefined}>
               {mapLoading ? (
                 <View style={styles.mapLoading}>
-                  <ActivityIndicator color="#166534" />
+                  <ActivityIndicator color="appBrand.colors.primary" />
                   <Text style={styles.mapLoadingText}>Cargando ruta…</Text>
                 </View>
               ) : (
@@ -449,7 +450,7 @@ export function TripRequestLongDistanceOfferScreen() {
           {hasMapCoords ? (
             mapLoading ? (
               <View style={styles.modalMapLoading}>
-                <ActivityIndicator size="large" color="#166534" />
+                <ActivityIndicator size="large" color="appBrand.colors.primary" />
                 <Text style={styles.mapLoadingText}>Cargando ruta…</Text>
               </View>
             ) : (
@@ -487,7 +488,7 @@ const styles = StyleSheet.create({
   },
   route: { fontSize: 17, fontWeight: '700', color: '#111', marginBottom: 6 },
   meta: { fontSize: 14, color: '#6b7280', marginBottom: 8 },
-  passengerPrice: { fontSize: 14, color: '#14532d', fontWeight: '600', marginBottom: 16 },
+  passengerPrice: { fontSize: 14, color: appBrand.colors.primary, fontWeight: '600', marginBottom: 16 },
   section: { fontSize: 15, fontWeight: '700', color: '#374151', marginTop: 12, marginBottom: 8 },
   muted: { fontSize: 13, color: '#6b7280', lineHeight: 18, marginBottom: 8 },
   mapCard: { marginBottom: 8 },
@@ -520,11 +521,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
     borderWidth: 2,
-    borderColor: '#166534',
+    borderColor: appBrand.colors.primary,
     alignItems: 'center',
     backgroundColor: '#fff',
   },
-  fullscreenBtnText: { color: '#166534', fontSize: 15, fontWeight: '700' },
+  fullscreenBtnText: { color: appBrand.colors.primary, fontSize: 15, fontWeight: '700' },
   modalRoot: { flex: 1, backgroundColor: '#fff' },
   modalHeader: {
     flexDirection: 'row',
@@ -537,7 +538,7 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 17, fontWeight: '700', color: '#111' },
   modalCloseHit: { paddingVertical: 8, paddingHorizontal: 12 },
-  modalCloseText: { fontSize: 16, fontWeight: '600', color: '#166534' },
+  modalCloseText: { fontSize: 16, fontWeight: '600', color: appBrand.colors.primary },
   modalMap: { flex: 1, width: '100%' },
   modalMapLoading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   offerRow: {
@@ -552,7 +553,7 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     marginBottom: 8,
   },
-  offerRowMine: { borderColor: '#166534', backgroundColor: '#f0fdf4' },
+  offerRowMine: { borderColor: appBrand.colors.primary, backgroundColor: appBrand.colors.greenLight },
   offerName: { fontSize: 14, color: '#374151', flex: 1, marginRight: 8 },
   offerPrice: { fontSize: 14, fontWeight: '700', color: '#111' },
   input: {
@@ -567,7 +568,7 @@ const styles = StyleSheet.create({
     color: '#111',
   },
   primaryBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: 'center',
@@ -577,14 +578,14 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   outlineBtn: {
     borderWidth: 2,
-    borderColor: '#166534',
+    borderColor: appBrand.colors.primary,
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
     marginTop: 8,
   },
-  outlineBtnText: { color: '#166534', fontSize: 15, fontWeight: '600' },
+  outlineBtnText: { color: appBrand.colors.primary, fontSize: 15, fontWeight: '600' },
   hintFoot: { fontSize: 12, color: '#9ca3af', marginTop: 10, lineHeight: 17 },
   secondaryBtn: { marginTop: 12, paddingVertical: 10, paddingHorizontal: 20 },
-  secondaryBtnText: { color: '#166534', fontWeight: '600', fontSize: 15 },
+  secondaryBtnText: { color: appBrand.colors.primary, fontWeight: '600', fontSize: 15 },
 });

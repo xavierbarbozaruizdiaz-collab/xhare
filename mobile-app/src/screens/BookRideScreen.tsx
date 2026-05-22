@@ -2,6 +2,7 @@
  * Pasajero: reservar sobre la ruta publicada.
  * Gris: OSRM conductor + subidas/bajadas ya reservadas (una polyline). Verde: solo tramo del pasajero actual (A/B + extras + paradas del conductor en ese tramo).
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -680,7 +681,7 @@ export function BookRideScreen() {
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -737,7 +738,7 @@ export function BookRideScreen() {
       ) : (
         <>
           {(routeResolving || masterGreyResolving) && mapDisplayRoute.length < 2 ? (
-            <ActivityIndicator style={{ marginVertical: 20 }} size="large" color="#166534" />
+            <ActivityIndicator style={{ marginVertical: 20 }} size="large" color="appBrand.colors.primary" />
           ) : null}
           {mapDisplayRoute.length >= 2 ? (
             <>
@@ -883,7 +884,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 18,
     minWidth: 52,
-    backgroundColor: '#f0fdf4',
+    backgroundColor: appBrand.colors.greenLight,
   },
   seatStepHitDisabled: {
     backgroundColor: '#f3f4f6',
@@ -891,7 +892,7 @@ const styles = StyleSheet.create({
   seatStepSymbol: {
     fontSize: 24,
     fontWeight: '600',
-    color: '#166534',
+    color: appBrand.colors.primary,
     lineHeight: 28,
   },
   seatStepSymbolDisabled: {
@@ -910,19 +911,19 @@ const styles = StyleSheet.create({
     color: '#111827',
   },
   hintSmall: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
-  priceBox: { backgroundColor: '#ecfdf5', padding: 14, borderRadius: 10, marginTop: 16 },
-  priceLabel: { fontSize: 13, color: '#065f46' },
-  priceValue: { fontSize: 20, fontWeight: '800', color: '#166534', marginTop: 4 },
+  priceBox: { backgroundColor: appBrand.colors.greenLight, padding: 14, borderRadius: 10, marginTop: 16 },
+  priceLabel: { fontSize: 13, color: appBrand.colors.primaryMuted },
+  priceValue: { fontSize: 20, fontWeight: '800', color: appBrand.colors.primary, marginTop: 4 },
   etaSummaryBox: {
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#bbf7d0',
+    borderTopColor: appBrand.colors.greenLight,
     gap: 6,
   },
   etaSummaryText: {
     fontSize: 13,
-    color: '#14532d',
+    color: appBrand.colors.primary,
     lineHeight: 18,
     fontWeight: '500',
   },
@@ -931,9 +932,9 @@ const styles = StyleSheet.create({
   warnBox: { backgroundColor: '#fef3c7', padding: 12, borderRadius: 8, marginBottom: 12 },
   warnText: { color: '#92400e' },
   warnBoxText: { color: '#92400e', marginBottom: 8, fontSize: 13 },
-  link: { color: '#166534', fontWeight: '600', marginTop: 8 },
+  link: { color: appBrand.colors.primary, fontWeight: '600', marginTop: 8 },
   primaryBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
@@ -945,6 +946,6 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   secondaryBtn: { marginTop: 14, alignItems: 'center', paddingVertical: 10 },
   secondaryBtnText: { color: '#6b7280', fontSize: 15 },
-  btn: { marginTop: 16, backgroundColor: '#166534', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10 },
+  btn: { marginTop: 16, backgroundColor: appBrand.colors.primary, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10 },
   btnText: { color: '#fff', fontWeight: '700' },
 });

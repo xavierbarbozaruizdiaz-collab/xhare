@@ -4,6 +4,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { AdminAuthProvider, useAdminAuth } from './AdminAuthContext';
+import { APP_NAME_ADMIN } from '@/lib/brand';
 
 function AdminLayoutInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -41,8 +42,8 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
         <div className="max-w-6xl mx-auto px-4 py-3 min-w-0">
           <div className="flex items-center justify-between gap-2 mb-3 min-w-0">
-            <Link href="/admin" className="text-lg font-bold text-green-600 whitespace-nowrap min-w-0 truncate">
-              Xhare Admin
+            <Link href="/admin" className="text-lg font-bold text-[#20A050] whitespace-nowrap min-w-0 truncate">
+              {APP_NAME_ADMIN}
             </Link>
             <div className="flex items-center gap-2 flex-shrink-0">
               <Link href="/" className="text-sm text-gray-500 hover:text-green-600 whitespace-nowrap">

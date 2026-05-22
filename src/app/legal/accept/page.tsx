@@ -93,7 +93,7 @@ export default function LegalAcceptPage() {
       <div className="w-full max-w-lg bg-white rounded-lg shadow p-6">
         <h1 className="text-2xl font-bold text-green-700 mb-2">Aceptación legal requerida</h1>
         <p className="text-sm text-gray-600 mb-5">
-          Para continuar usando Xhare tenés que aceptar los documentos legales vigentes.
+          Para continuar usando ÑandeBus tenés que aceptar los documentos legales vigentes.
         </p>
         <ul className="list-disc pl-5 text-sm text-gray-700 space-y-1 mb-4">
           <li>

@@ -2,6 +2,7 @@
  * Pasajero: viajes publicados con cupos para un día (fecha editable, hora desde opcional).
  * Filtros completos → Buscar viajes.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
@@ -242,7 +243,7 @@ export function AvailableRidesScreen() {
       ) : null}
 
       {loading && list.length === 0 ? (
-        <ActivityIndicator style={{ marginTop: 20, marginBottom: 8 }} size="large" color="#166534" />
+        <ActivityIndicator style={{ marginTop: 20, marginBottom: 8 }} size="large" color="appBrand.colors.primary" />
       ) : null}
     </View>
   );
@@ -315,7 +316,7 @@ const styles = StyleSheet.create({
   },
   pickerValue: { fontSize: 16, color: '#111' },
   pickerPlaceholder: { fontSize: 16, color: '#9ca3af' },
-  clearTime: { fontSize: 13, color: '#166534', fontWeight: '600', marginBottom: 12 },
+  clearTime: { fontSize: 13, color: appBrand.colors.primary, fontWeight: '600', marginBottom: 12 },
   kindRow: { flexDirection: 'row', gap: 8, marginBottom: 12, flexWrap: 'wrap' },
   kindChip: {
     borderWidth: 1,
@@ -326,13 +327,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   kindChipActive: {
-    borderColor: '#166534',
-    backgroundColor: '#166534',
+    borderColor: appBrand.colors.primary,
+    backgroundColor: appBrand.colors.primary,
   },
   kindChipText: { fontSize: 13, color: '#374151', fontWeight: '600' },
   kindChipTextActive: { color: '#fff' },
   linkSearch: { marginBottom: 8 },
-  linkSearchText: { fontSize: 14, fontWeight: '600', color: '#166534' },
+  linkSearchText: { fontSize: 14, fontWeight: '600', color: appBrand.colors.primary },
   configError: { fontSize: 13, color: '#b91c1c', marginBottom: 8 },
   list: { paddingHorizontal: 16, paddingBottom: 32 },
   card: {
@@ -343,7 +344,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
-  cardRouteName: { fontSize: 14, fontWeight: '700', color: '#14532d', marginBottom: 4 },
+  cardRouteName: { fontSize: 14, fontWeight: '700', color: appBrand.colors.primary, marginBottom: 4 },
   cardTitle: { fontSize: 16, fontWeight: '600', color: '#111' },
   cardMeta: { fontSize: 13, color: '#6b7280', marginTop: 4 },
   empty: { textAlign: 'center', color: '#6b7280', marginTop: 16, lineHeight: 20, paddingHorizontal: 8 },

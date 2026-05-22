@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 import UserRoleBadge from '@/components/UserRoleBadge';
 import PageLoading from '@/components/PageLoading';
 
@@ -97,7 +98,7 @@ export default function MyTripRequestsPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm p-4 flex justify-between items-center">
-        <Link href="/" className="text-2xl font-bold text-green-600">Xhare</Link>
+        <BrandLink href="/" className="text-2xl font-bold text-[#20A050]" />
         <div className="flex items-center gap-4">
           <UserRoleBadge />
           <Link href="/search" className="px-4 py-2 text-gray-700 hover:text-green-600 font-medium">

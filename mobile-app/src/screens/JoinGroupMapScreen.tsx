@@ -2,6 +2,7 @@
  * Pasajero: unirse a una ruta con demanda. Marcar subida y bajada en el mapa (≤2 km del corredor, orden correcto).
  * Al confirmar: guarda trip_request con fecha/hora/ciudad del grupo para que el sync lo asigne.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
@@ -121,7 +122,7 @@ export function JoinGroupMapScreen() {
   if (loading && !detail) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -193,7 +194,7 @@ const styles = StyleSheet.create({
   hint: { fontSize: 14, color: '#6b7280', marginBottom: 12 },
   errorText: { color: '#b91c1c', marginTop: 8, textAlign: 'center' },
   confirmBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 8,
@@ -204,6 +205,6 @@ const styles = StyleSheet.create({
   confirmBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   doneTitle: { fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 12 },
   doneText: { fontSize: 15, color: '#374151', textAlign: 'center', marginBottom: 24 },
-  doneBtn: { backgroundColor: '#166534', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
+  doneBtn: { backgroundColor: appBrand.colors.primary, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
   doneBtnText: { color: '#fff', fontWeight: '600' },
 });

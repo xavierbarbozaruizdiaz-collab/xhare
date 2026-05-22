@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { appBrand } from '../ui/theme/brand';
 import { ActivityIndicator, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../backend/supabase';
 import { env } from '../core/env';
@@ -118,7 +119,7 @@ export function LegalAcceptanceScreen() {
       <View style={styles.card}>
         <Text style={styles.title}>Antes de continuar</Text>
         <Text style={styles.description}>
-          Para usar Xhare, tenés que aceptar los Términos y Condiciones y la Política de Privacidad.
+          Para usar ÑandeBus, tenés que aceptar los Términos y Condiciones y la Política de Privacidad.
         </Text>
 
         <TouchableOpacity
@@ -176,7 +177,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#166534',
+    color: appBrand.colors.primary,
     marginBottom: 10,
     textAlign: 'center',
   },
@@ -196,13 +197,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   linkButtonText: {
-    color: '#166534',
+    color: appBrand.colors.primary,
     fontWeight: '600',
     textAlign: 'center',
   },
   acceptButton: {
     marginTop: 8,
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',

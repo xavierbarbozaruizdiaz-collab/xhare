@@ -91,6 +91,7 @@ import {
   getDriverHomeTemplateRow,
   type DriverHomeTemplateRow,
 } from '../lib/driverHomeTemplates';
+import { appBrand } from '../ui/theme/brand';
 
 type IonName = ComponentProps<typeof Ionicons>['name'];
 
@@ -120,10 +121,8 @@ const MODAL_DEST_ICONS: IonName[] = [
   'restaurant-outline',
 ];
 
-const PASSENGER_PRIMARY = '#1a5c38';
-const PASSENGER_PRIMARY_MID = '#2d8a5e';
-const PASSENGER_PAGE_BG = '#f7f8fa';
-const PASSENGER_QUICK_ICON_BG = '#edf7f1';
+const PASSENGER_PAGE_BG = appBrand.colors.background;
+const PASSENGER_QUICK_ICON_BG = appBrand.colors.greenLight;
 
 /** Misma lectura visual que las pills del inicio (emojis donde aplica). */
 function emojiForModalIon(name: IonName): string | null {
@@ -180,7 +179,7 @@ function ModalRouteGlyph({ name }: { name: IonName }) {
   if (em) {
     return <Text style={styles.modalRouteEmoji}>{em}</Text>;
   }
-  return <Ionicons name={filledIonFromOutline(name)} size={28} color={PASSENGER_PRIMARY} />;
+  return <Ionicons name={filledIonFromOutline(name)} size={28} color={appBrand.colors.primary} />;
 }
 
 function emojiPairForPresetIcons(from: string, to: string): { a: string; b: string } | null {
@@ -216,9 +215,9 @@ function FavoritePairIcons({
   }
   return (
     <View style={styles.pairIconRow}>
-      <Ionicons name={from} size={iconSize} color={PASSENGER_PRIMARY} />
+      <Ionicons name={from} size={iconSize} color={appBrand.colors.primary} />
       <Ionicons name="arrow-forward" size={arrowSize} color="#6b7280" style={styles.pairArrow} />
-      <Ionicons name={to} size={iconSize} color={PASSENGER_PRIMARY} />
+      <Ionicons name={to} size={iconSize} color={appBrand.colors.primary} />
     </View>
   );
 }
@@ -1311,7 +1310,7 @@ export function HomeScreen() {
               accessibilityRole="button"
               accessibilityLabel="Programar viaje"
             >
-              <Ionicons name="add" size={22} color={PASSENGER_PRIMARY} />
+              <Ionicons name="add" size={22} color={appBrand.colors.primary} />
               <Text style={styles.heroCtaText}>Programar viaje</Text>
             </TouchableOpacity>
           </View>
@@ -1418,7 +1417,7 @@ export function HomeScreen() {
                             void quickActivatePassengerFavoriteOrOpenModal(slot);
                           }}
                           trackColor={{ false: '#e5e7eb', true: '#b6e2c9' }}
-                          thumbColor={switchShowsOn ? PASSENGER_PRIMARY : '#f9fafb'}
+                          thumbColor={switchShowsOn ? appBrand.colors.primary : '#f9fafb'}
                         />
                       </View>
                     </TouchableOpacity>
@@ -1456,7 +1455,7 @@ export function HomeScreen() {
                           accessibilityRole="button"
                           accessibilityLabel="Icono origen anterior"
                         >
-                          <Ionicons name="chevron-up" size={22} color={PASSENGER_PRIMARY} />
+                          <Ionicons name="chevron-up" size={22} color={appBrand.colors.primary} />
                         </TouchableOpacity>
                         <View style={styles.modalIconBox}>
                           <ModalRouteGlyph name={selectedFromIcon as IonName} />
@@ -1467,11 +1466,11 @@ export function HomeScreen() {
                           accessibilityRole="button"
                           accessibilityLabel="Icono origen siguiente"
                         >
-                          <Ionicons name="chevron-down" size={22} color={PASSENGER_PRIMARY} />
+                          <Ionicons name="chevron-down" size={22} color={appBrand.colors.primary} />
                         </TouchableOpacity>
                       </View>
                       <View style={styles.modalMiddleArrowBadge}>
-                        <Ionicons name="arrow-forward" size={28} color={PASSENGER_PRIMARY} style={styles.modalMiddleArrow} />
+                        <Ionicons name="arrow-forward" size={28} color={appBrand.colors.primary} style={styles.modalMiddleArrow} />
                       </View>
 
                       <View style={styles.modalSelectorColumn}>
@@ -1481,7 +1480,7 @@ export function HomeScreen() {
                           accessibilityRole="button"
                           accessibilityLabel="Icono destino anterior"
                         >
-                          <Ionicons name="chevron-up" size={22} color={PASSENGER_PRIMARY} />
+                          <Ionicons name="chevron-up" size={22} color={appBrand.colors.primary} />
                         </TouchableOpacity>
                         <View style={styles.modalIconBox}>
                           <ModalRouteGlyph name={selectedToIcon as IonName} />
@@ -1492,7 +1491,7 @@ export function HomeScreen() {
                           accessibilityRole="button"
                           accessibilityLabel="Icono destino siguiente"
                         >
-                          <Ionicons name="chevron-down" size={22} color={PASSENGER_PRIMARY} />
+                          <Ionicons name="chevron-down" size={22} color={appBrand.colors.primary} />
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -1540,7 +1539,7 @@ export function HomeScreen() {
                   </Text>
                   {activateRouteLoading ? (
                     <View style={styles.activateModalLoadingRow}>
-                      <ActivityIndicator size="small" color="#166534" />
+                      <ActivityIndicator size="small" color="appBrand.colors.primary" />
                       <Text style={styles.activateModalLoadingText}>Calculando la ruta en el mapa…</Text>
                     </View>
                   ) : null}
@@ -1692,7 +1691,7 @@ export function HomeScreen() {
                     accessibilityLabel="Crear viaje o solicitud de trayecto"
                   >
                     <View style={styles.quickIconSquare}>
-                      <Ionicons name="add-circle-outline" size={26} color={PASSENGER_PRIMARY} />
+                      <Ionicons name="add-circle-outline" size={26} color={appBrand.colors.primary} />
                     </View>
                     <Text style={styles.quickTileLabel}>Crear viaje</Text>
                   </TouchableOpacity>
@@ -1708,7 +1707,7 @@ export function HomeScreen() {
                       </View>
                     ) : null}
                     <View style={styles.quickIconSquare}>
-                      <Ionicons name="calendar-outline" size={24} color={PASSENGER_PRIMARY} />
+                      <Ionicons name="calendar-outline" size={24} color={appBrand.colors.primary} />
                     </View>
                     <Text style={styles.quickTileLabel}>Mis reservas</Text>
                   </TouchableOpacity>
@@ -1726,7 +1725,7 @@ export function HomeScreen() {
                       </View>
                     ) : null}
                     <View style={styles.quickIconSquare}>
-                      <Ionicons name="chatbubble-ellipses-outline" size={24} color={PASSENGER_PRIMARY} />
+                      <Ionicons name="chatbubble-ellipses-outline" size={24} color={appBrand.colors.primary} />
                     </View>
                     <Text style={styles.quickTileLabel}>Mensajes</Text>
                   </TouchableOpacity>
@@ -1737,7 +1736,7 @@ export function HomeScreen() {
                     accessibilityLabel="Solicitudes"
                   >
                     <View style={styles.quickIconSquare}>
-                      <Ionicons name="document-text-outline" size={24} color={PASSENGER_PRIMARY} />
+                      <Ionicons name="document-text-outline" size={24} color={appBrand.colors.primary} />
                     </View>
                     <Text style={styles.quickTileLabel}>Solicitudes</Text>
                   </TouchableOpacity>
@@ -1992,7 +1991,7 @@ export function HomeScreen() {
                               })();
                             }}
                             trackColor={{ false: '#d1d5db', true: '#c6e6d3' }}
-                            thumbColor={switchOn ? PASSENGER_PRIMARY : '#f9fafb'}
+                            thumbColor={switchOn ? appBrand.colors.primary : '#f9fafb'}
                           />
                         </View>
                       </TouchableOpacity>
@@ -2009,7 +2008,7 @@ export function HomeScreen() {
                       <View style={styles.driverEmptyRouteLine} />
                       <View style={styles.driverEmptyRouteDotSmall} />
                     </View>
-                    <Ionicons name="car-sport-outline" size={40} color={PASSENGER_PRIMARY} />
+                    <Ionicons name="car-sport-outline" size={40} color={appBrand.colors.primary} />
                   </View>
                   <Text style={styles.driverEmptyTitle}>Aún no tenés viajes activos</Text>
                   <Text style={styles.driverEmptySubtitle}>
@@ -2021,7 +2020,7 @@ export function HomeScreen() {
                     accessibilityRole="button"
                     accessibilityLabel="Crear mi primera ruta"
                   >
-                    <Ionicons name="add" size={18} color={PASSENGER_PRIMARY} />
+                    <Ionicons name="add" size={18} color={appBrand.colors.primary} />
                     <Text style={styles.driverEmptyCtaText}>Crear mi primera ruta</Text>
                   </TouchableOpacity>
                 </View>
@@ -2057,7 +2056,7 @@ export function HomeScreen() {
                     </View>
                   ) : null}
                   <View style={styles.quickIconSquare}>
-                    <Ionicons name="document-text-outline" size={24} color={PASSENGER_PRIMARY} />
+                    <Ionicons name="document-text-outline" size={24} color={appBrand.colors.primary} />
                   </View>
                   <Text style={styles.quickTileLabel}>Solicitudes</Text>
                 </TouchableOpacity>
@@ -2068,7 +2067,7 @@ export function HomeScreen() {
                   accessibilityLabel="Mis viajes publicados"
                 >
                   <View style={styles.quickIconSquare}>
-                    <Ionicons name="list-outline" size={24} color={PASSENGER_PRIMARY} />
+                    <Ionicons name="list-outline" size={24} color={appBrand.colors.primary} />
                   </View>
                   <Text style={styles.quickTileLabel}>Mis viajes</Text>
                 </TouchableOpacity>
@@ -2088,7 +2087,7 @@ export function HomeScreen() {
                     </View>
                   ) : null}
                   <View style={styles.quickIconSquare}>
-                    <Ionicons name="chatbubble-ellipses-outline" size={24} color={PASSENGER_PRIMARY} />
+                    <Ionicons name="chatbubble-ellipses-outline" size={24} color={appBrand.colors.primary} />
                   </View>
                   <Text style={styles.quickTileLabel}>Mensajes</Text>
                 </TouchableOpacity>
@@ -2099,7 +2098,7 @@ export function HomeScreen() {
                   accessibilityLabel="Panel conductor y cuenta"
                 >
                   <View style={styles.quickIconSquare}>
-                    <Ionicons name="speedometer-outline" size={24} color={PASSENGER_PRIMARY} />
+                    <Ionicons name="speedometer-outline" size={24} color={appBrand.colors.primary} />
                   </View>
                   <Text style={styles.quickTileLabel}>Panel conductor</Text>
                 </TouchableOpacity>
@@ -2112,7 +2111,7 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: '#f0fdf4' },
+  scroll: { flex: 1, backgroundColor: appBrand.colors.greenLight },
   scrollContent: { flexGrow: 1, padding: 20, paddingBottom: 32 },
   scrollPassengerPage: { backgroundColor: PASSENGER_PAGE_BG },
   scrollContentPassengerPage: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 28 },
@@ -2128,10 +2127,10 @@ const styles = StyleSheet.create({
   driverGreetingMuted: {
     fontSize: 13,
     color: '#94a3b8',
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
     marginBottom: 4,
   },
-  driverPanelTitle: { fontSize: 24, fontWeight: '800', color: '#111827', fontFamily: 'DMSans_700Bold' },
+  driverPanelTitle: { fontSize: 24, fontWeight: '800', color: '#111827', fontFamily: appBrand.fonts.semibold },
   driverAvatarTouch: { position: 'relative' },
   driverAvatarGradient: {
     width: 52,
@@ -2139,9 +2138,9 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: PASSENGER_PRIMARY,
+    backgroundColor: appBrand.colors.primary,
   },
-  driverAvatarLetterWhite: { fontSize: 20, fontWeight: '800', color: '#fff', fontFamily: 'DMSans_700Bold' },
+  driverAvatarLetterWhite: { fontSize: 20, fontWeight: '800', color: '#fff', fontFamily: appBrand.fonts.semibold },
   driverAvatarNotifyDot: {
     position: 'absolute',
     top: 0,
@@ -2170,10 +2169,10 @@ const styles = StyleSheet.create({
   driverStatValue: {
     fontSize: 22,
     fontWeight: '800',
-    color: PASSENGER_PRIMARY,
-    fontFamily: 'DMSans_700Bold',
+    color: appBrand.colors.primary,
+    fontFamily: appBrand.fonts.semibold,
   },
-  driverStatLabel: { fontSize: 12, color: '#64748b', marginTop: 4, fontFamily: 'DMSans_400Regular' },
+  driverStatLabel: { fontSize: 12, color: '#64748b', marginTop: 4, fontFamily: appBrand.fonts.regular },
   driverPrimaryGradientOuter: {
     borderRadius: 18,
     overflow: 'hidden',
@@ -2191,13 +2190,13 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 16,
     paddingHorizontal: 18,
-    backgroundColor: PASSENGER_PRIMARY,
+    backgroundColor: appBrand.colors.primary,
   },
   driverPrimaryGradientLabel: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '800',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   driverActiveRideBtn: {
     marginBottom: 16,
@@ -2208,14 +2207,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: PASSENGER_PRIMARY,
+    backgroundColor: appBrand.colors.primary,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 3,
   },
-  driverActiveRideBtnText: { color: '#fff', fontSize: 15, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  driverActiveRideBtnText: { color: '#fff', fontSize: 15, fontWeight: '800', fontFamily: appBrand.fonts.semibold },
   driverTemplatesCard: {
     backgroundColor: '#fff',
     borderRadius: 20,
@@ -2233,7 +2232,7 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginBottom: 10,
     letterSpacing: 0.6,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   driverEmptyCard: {
     backgroundColor: '#fff',
@@ -2252,15 +2251,15 @@ const styles = StyleSheet.create({
   },
   driverEmptyIllustration: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 },
   driverEmptyRouteCol: { alignItems: 'center', height: 72, justifyContent: 'space-between', paddingVertical: 2 },
-  driverEmptyRouteDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: PASSENGER_PRIMARY_MID },
+  driverEmptyRouteDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: appBrand.colors.primaryMuted },
   driverEmptyRouteLine: { flex: 1, width: 3, backgroundColor: '#c6e6d3', marginVertical: 4, borderRadius: 2 },
-  driverEmptyRouteDotSmall: { width: 6, height: 6, borderRadius: 3, backgroundColor: PASSENGER_PRIMARY },
+  driverEmptyRouteDotSmall: { width: 6, height: 6, borderRadius: 3, backgroundColor: appBrand.colors.primary },
   driverEmptyTitle: {
     fontSize: 17,
     fontWeight: '800',
     color: '#111827',
     textAlign: 'center',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   driverEmptySubtitle: {
     fontSize: 14,
@@ -2269,7 +2268,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 8,
     marginBottom: 16,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
   },
   driverEmptyCta: {
     flexDirection: 'row',
@@ -2280,12 +2279,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     borderRadius: 14,
   },
-  driverEmptyCtaText: { fontSize: 15, fontWeight: '800', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_700Bold' },
+  driverEmptyCtaText: { fontSize: 15, fontWeight: '800', color: appBrand.colors.primary, fontFamily: appBrand.fonts.semibold },
   driverHowToCard: {
     borderRadius: 20,
     padding: 18,
     marginBottom: 18,
-    backgroundColor: PASSENGER_PRIMARY,
+    backgroundColor: appBrand.colors.primary,
   },
   driverHowToKicker: {
     fontSize: 11,
@@ -2293,7 +2292,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     color: 'rgba(255,255,255,0.85)',
     marginBottom: 10,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   driverHowToLine: {
     fontSize: 14,
@@ -2301,7 +2300,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     lineHeight: 20,
     marginBottom: 6,
-    fontFamily: 'DMSans_600SemiBold',
+    fontFamily: appBrand.fonts.semibold,
   },
   driverQuickSectionTitle: {
     fontSize: 12,
@@ -2309,7 +2308,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     color: '#94a3b8',
     marginBottom: 10,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   homeHeaderRow: {
     flexDirection: 'row',
@@ -2318,8 +2317,8 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   homeHeaderTextCol: { flex: 1, paddingRight: 12 },
-  homeGreetingLine: { fontSize: 22, fontWeight: '700', color: '#111827', fontFamily: 'DMSans_700Bold' },
-  homeGreetingQuestion: { fontSize: 15, color: '#64748b', marginTop: 4, fontFamily: 'DMSans_400Regular' },
+  homeGreetingLine: { fontSize: 22, fontWeight: '700', color: '#111827', fontFamily: appBrand.fonts.semibold },
+  homeGreetingQuestion: { fontSize: 15, color: '#64748b', marginTop: 4, fontFamily: appBrand.fonts.regular },
   homeAvatar: {
     width: 48,
     height: 48,
@@ -2330,12 +2329,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  homeAvatarLetter: { fontSize: 18, fontWeight: '800', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_700Bold' },
+  homeAvatarLetter: { fontSize: 18, fontWeight: '800', color: appBrand.colors.primary, fontFamily: appBrand.fonts.semibold },
   heroCard: {
     borderRadius: 22,
     padding: 22,
     marginBottom: 18,
-    backgroundColor: PASSENGER_PRIMARY,
+    backgroundColor: appBrand.colors.primary,
     overflow: 'hidden',
     minHeight: 176,
     shadowColor: '#000',
@@ -2349,7 +2348,7 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: PASSENGER_PRIMARY_MID,
+    backgroundColor: appBrand.colors.primaryMuted,
     opacity: 0.22,
   },
   heroBlob1: { top: -48, right: -36 },
@@ -2360,16 +2359,16 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     color: 'rgba(255,255,255,0.72)',
     marginBottom: 8,
-    fontFamily: 'DMSans_600SemiBold',
+    fontFamily: appBrand.fonts.semibold,
   },
-  heroTitle: { fontSize: 20, fontWeight: '800', color: '#fff', lineHeight: 26, fontFamily: 'DMSans_700Bold' },
+  heroTitle: { fontSize: 20, fontWeight: '800', color: '#fff', lineHeight: 26, fontFamily: appBrand.fonts.semibold },
   heroSubtitle: {
     fontSize: 14,
     fontWeight: '500',
     color: 'rgba(255,255,255,0.92)',
     marginTop: 8,
     lineHeight: 20,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
   },
   heroCtaBtn: {
     flexDirection: 'row',
@@ -2382,7 +2381,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
     gap: 6,
   },
-  heroCtaText: { fontSize: 15, fontWeight: '800', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_700Bold' },
+  heroCtaText: { fontSize: 15, fontWeight: '800', color: appBrand.colors.primary, fontFamily: appBrand.fonts.semibold },
   searchCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2400,7 +2399,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   searchCardIcon: { marginRight: 12 },
-  searchCardPlaceholder: { flex: 1, fontSize: 15, color: '#9ca3af', fontFamily: 'DMSans_400Regular' },
+  searchCardPlaceholder: { flex: 1, fontSize: 15, color: '#9ca3af', fontFamily: appBrand.fonts.regular },
   routesSectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2412,9 +2411,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.9,
     color: '#64748b',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
-  routesSectionAdd: { fontSize: 13, fontWeight: '800', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_700Bold' },
+  routesSectionAdd: { fontSize: 13, fontWeight: '800', color: appBrand.colors.primary, fontFamily: appBrand.fonts.semibold },
   routesListWrap: { marginBottom: 6 },
   passengerRouteCard: {
     flexDirection: 'row',
@@ -2435,7 +2434,7 @@ const styles = StyleSheet.create({
   passengerRouteCardActive: {
     borderWidth: 2,
     borderColor: '#c6e6d3',
-    shadowColor: PASSENGER_PRIMARY,
+    shadowColor: appBrand.colors.primary,
     shadowOpacity: 0.14,
     shadowRadius: 14,
     elevation: 3,
@@ -2451,24 +2450,24 @@ const styles = StyleSheet.create({
   emojiPillInner: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   emojiPillChar: { fontSize: 14 },
   warnPill: { backgroundColor: '#fef3c7', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
-  warnPillText: { fontSize: 11, fontWeight: '700', color: '#92400e', fontFamily: 'DMSans_600SemiBold' },
-  passengerRouteName: { fontSize: 15, fontWeight: '800', color: '#111827', fontFamily: 'DMSans_700Bold' },
-  passengerRouteMeta: { fontSize: 12, color: '#6b7280', marginTop: 2, fontFamily: 'DMSans_400Regular' },
-  passengerRouteCost: { fontSize: 13, fontWeight: '700', color: PASSENGER_PRIMARY, marginTop: 4, fontFamily: 'DMSans_700Bold' },
-  passengerRouteCostMuted: { fontSize: 12, color: '#9ca3af', marginTop: 4, fontFamily: 'DMSans_400Regular' },
+  warnPillText: { fontSize: 11, fontWeight: '700', color: '#92400e', fontFamily: appBrand.fonts.semibold },
+  passengerRouteName: { fontSize: 15, fontWeight: '800', color: '#111827', fontFamily: appBrand.fonts.semibold },
+  passengerRouteMeta: { fontSize: 12, color: '#6b7280', marginTop: 2, fontFamily: appBrand.fonts.regular },
+  passengerRouteCost: { fontSize: 13, fontWeight: '700', color: appBrand.colors.primary, marginTop: 4, fontFamily: appBrand.fonts.semibold },
+  passengerRouteCostMuted: { fontSize: 12, color: '#9ca3af', marginTop: 4, fontFamily: appBrand.fonts.regular },
   passengerRouteSwitchCol: { justifyContent: 'flex-start', paddingTop: 2 },
   activeStrip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#dcfce7',
+    backgroundColor: appBrand.colors.greenLight,
     marginTop: 10,
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: 12,
     gap: 8,
   },
-  activeStripText: { fontSize: 12, fontWeight: '700', color: PASSENGER_PRIMARY, flex: 1, fontFamily: 'DMSans_600SemiBold' },
-  pulseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: PASSENGER_PRIMARY },
+  activeStripText: { fontSize: 12, fontWeight: '700', color: appBrand.colors.primary, flex: 1, fontFamily: appBrand.fonts.semibold },
+  pulseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: appBrand.colors.primary },
   quickActionsWrap: { marginTop: 8, marginBottom: 8 },
   quickActionsTitle: {
     fontSize: 11,
@@ -2476,7 +2475,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.9,
     color: '#64748b',
     marginBottom: 12,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   quickGridRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
   quickTile: {
@@ -2504,7 +2503,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 10,
   },
-  quickTileLabel: { fontSize: 13, fontWeight: '800', color: '#111827', textAlign: 'center', fontFamily: 'DMSans_700Bold' },
+  quickTileLabel: { fontSize: 13, fontWeight: '800', color: '#111827', textAlign: 'center', fontFamily: appBrand.fonts.semibold },
   quickBadge: {
     position: 'absolute',
     top: 8,
@@ -2518,10 +2517,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 2,
   },
-  quickBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  quickBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', fontFamily: appBrand.fonts.semibold },
   activeRideShortcutBtnPassenger: {
     marginBottom: 14,
-    backgroundColor: PASSENGER_PRIMARY,
+    backgroundColor: appBrand.colors.primary,
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 14,
@@ -2547,17 +2546,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#d1fae5',
   },
-  welcomePassenger: { fontSize: 20, fontWeight: '800', color: '#14532d', marginBottom: 8, lineHeight: 26 },
+  welcomePassenger: { fontSize: 20, fontWeight: '800', color: appBrand.colors.primary, marginBottom: 8, lineHeight: 26 },
   subLead: { fontSize: 14, color: '#4b5563', lineHeight: 21, marginBottom: 14 },
   bannerWarning: { backgroundColor: '#fef3c7', padding: 12, borderRadius: 8, marginBottom: 16, borderWidth: 1, borderColor: '#f59e0b' },
   bannerInfo: { backgroundColor: '#dbeafe', padding: 12, borderRadius: 8, marginBottom: 16, borderWidth: 1, borderColor: '#3b82f6' },
   bannerText: { fontSize: 14, color: '#1f2937' },
-  favoritesBox: { borderWidth: 1, borderColor: '#86efac', borderRadius: 14, padding: 14, marginBottom: 16, backgroundColor: '#f0fdf4' },
+  favoritesBox: { borderWidth: 1, borderColor: '#86efac', borderRadius: 14, padding: 14, marginBottom: 16, backgroundColor: appBrand.colors.greenLight },
   favoritesPrimaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#14532d',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 14,
     borderRadius: 10,
     marginBottom: 12,
@@ -2574,14 +2573,14 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   favoriteActiveBadge: {
-    backgroundColor: '#dcfce7',
+    backgroundColor: appBrand.colors.greenLight,
     borderWidth: 1,
     borderColor: '#86efac',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 999,
   },
-  favoriteActiveBadgeText: { fontSize: 11, fontWeight: '700', color: '#166534' },
+  favoriteActiveBadgeText: { fontSize: 11, fontWeight: '700', color: appBrand.colors.primary },
   favoriteStackScroll: { maxHeight: 360 },
   favoriteStackContent: { gap: 8, paddingBottom: 4 },
   favoriteRow: {
@@ -2589,7 +2588,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#bbf7d0',
+    borderColor: appBrand.colors.greenLight,
     borderRadius: 12,
     backgroundColor: '#fff',
     paddingVertical: 10,
@@ -2612,9 +2611,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 3,
   },
-  favoriteRowLabel: { fontSize: 13, fontWeight: '700', color: '#14532d', marginTop: 4 },
+  favoriteRowLabel: { fontSize: 13, fontWeight: '700', color: appBrand.colors.primary, marginTop: 4 },
   favoriteRowTime: { fontSize: 12, color: '#6b7280', marginTop: 2 },
-  favoriteRowCost: { fontSize: 12, color: '#166534', marginTop: 2, fontWeight: '700' },
+  favoriteRowCost: { fontSize: 12, color: appBrand.colors.primary, marginTop: 2, fontWeight: '700' },
   favoriteRowCostMuted: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   driverTemplateScroll: { maxHeight: 360, marginBottom: 4 },
   modalRoot: { flex: 1, justifyContent: 'flex-end' },
@@ -2656,17 +2655,17 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     flex: 1,
     paddingRight: 8,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
     letterSpacing: -0.2,
   },
-  modalClose: { fontSize: 15, fontWeight: '700', color: PASSENGER_PRIMARY, fontFamily: 'DMSans_600SemiBold' },
+  modalClose: { fontSize: 15, fontWeight: '700', color: appBrand.colors.primary, fontFamily: appBrand.fonts.semibold },
   modalHint: {
     fontSize: 13,
     color: '#64748b',
     paddingHorizontal: 20,
     paddingVertical: 12,
     lineHeight: 19,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
   },
   modalPickerWrap: {
     paddingHorizontal: 18,
@@ -2722,15 +2721,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 8,
     marginBottom: 16,
-    fontFamily: 'DMSans_500Medium',
+    fontFamily: appBrand.fonts.medium,
   },
   modalSaveBtn: {
-    backgroundColor: PASSENGER_PRIMARY,
+    backgroundColor: appBrand.colors.primary,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 15,
-    shadowColor: PASSENGER_PRIMARY,
+    shadowColor: appBrand.colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.22,
     shadowRadius: 10,
@@ -2740,7 +2739,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '800',
     fontSize: 15,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
     letterSpacing: 0.2,
   },
   fakeSearch: {
@@ -2759,7 +2758,7 @@ const styles = StyleSheet.create({
   rowTwo: { flexDirection: 'row', gap: 10, marginBottom: 10 },
   btnMint: {
     flex: 1,
-    backgroundColor: '#ecfdf5',
+    backgroundColor: appBrand.colors.greenLight,
     borderWidth: 1,
     borderColor: '#86efac',
     borderRadius: 10,
@@ -2768,7 +2767,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   btnMintInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  btnMintText: { fontSize: 14, fontWeight: '700', color: '#14532d' },
+  btnMintText: { fontSize: 14, fontWeight: '700', color: appBrand.colors.primary },
   activeRideShortcutBtn: {
     marginBottom: 12,
     backgroundColor: '#1d4ed8',
@@ -2798,7 +2797,7 @@ const styles = StyleSheet.create({
   },
   activateModalTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 8 },
   activateModalSubtitle: { fontSize: 14, color: '#4b5563', lineHeight: 20, marginBottom: 12 },
-  activateModalEm: { fontWeight: '700', color: '#14532d' },
+  activateModalEm: { fontWeight: '700', color: appBrand.colors.primary },
   activateModalLoadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2846,7 +2845,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   activateModalToggleTextWrap: { flex: 1, minWidth: 0 },
-  activateModalToggleTitle: { fontSize: 13, fontWeight: '700', color: '#14532d' },
+  activateModalToggleTitle: { fontSize: 13, fontWeight: '700', color: appBrand.colors.primary },
   activateModalToggleHint: { fontSize: 12, color: '#6b7280', marginTop: 2, lineHeight: 16 },
   activateModalActions: { flexDirection: 'row', gap: 10, marginTop: 16, justifyContent: 'flex-end' },
   activateModalBtn: {
@@ -2862,7 +2861,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   activateModalBtnGhostText: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  activateModalBtnPrimary: { backgroundColor: '#166534' },
+  activateModalBtnPrimary: { backgroundColor: appBrand.colors.primary },
   activateModalBtnPrimaryDisabled: { opacity: 0.55 },
   activateModalBtnPrimaryText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 });

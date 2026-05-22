@@ -3,6 +3,7 @@
  * Con API (reserva): gris = ruta publicada + subidas/bajadas ya reservadas (una polyline); verde = solo tramo del pasajero actual (A/paradas/B).
  * Sin fusión OSRM: verde = recorte de la misma polyline del conductor entre A y B.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
@@ -63,7 +64,7 @@ type Props = {
   showPricingRoute?: boolean;
 };
 
-const GREEN = '#166534';
+const GREEN = appBrand.colors.primary;
 /** Ruta publicada del conductor (referencia / corredor). */
 const BASE_ROUTE_COLOR = '#475569';
 const BASE_ROUTE_WIDTH = 4;

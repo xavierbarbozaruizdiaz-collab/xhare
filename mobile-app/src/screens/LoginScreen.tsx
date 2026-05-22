@@ -15,7 +15,9 @@ import {
   Platform,
   Alert,
   Linking,
+  Image,
 } from 'react-native';
+import { appBrand } from '../ui/theme/brand';
 import { supabase, isEnvConfigured } from '../backend/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { env } from '../core/env';
@@ -138,8 +140,13 @@ export function LoginScreen() {
       accessibilityLabel="Pantalla de inicio de sesión"
     >
       <View style={styles.card}>
-        <Text style={styles.title} accessibilityRole="header">Xhare</Text>
-        <Text style={styles.subtitle}>App móvil</Text>
+        <Image
+          source={appBrand.logo}
+          style={styles.logoImage}
+          resizeMode="contain"
+          accessibilityLabel={appBrand.appName}
+        />
+        <Text style={styles.tagline}>{appBrand.tagline}</Text>
 
         <TextInput
           style={styles.input}
@@ -230,12 +237,12 @@ export function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: appBrand.colors.background,
     justifyContent: 'center',
     padding: 24,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: appBrand.colors.surface,
     borderRadius: 12,
     padding: 24,
     shadowColor: '#000',
@@ -244,36 +251,37 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 3,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#166534',
-    textAlign: 'center',
+  logoImage: {
+    width: '100%',
+    height: 140,
     marginBottom: 4,
   },
-  subtitle: {
+  tagline: {
     fontSize: 14,
-    color: '#666',
+    color: appBrand.colors.textMuted,
+    fontFamily: appBrand.fonts.medium,
     textAlign: 'center',
     marginBottom: 24,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: appBrand.colors.border,
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
     marginBottom: 12,
-    color: '#111',
+    color: appBrand.colors.text,
+    fontFamily: appBrand.fonts.regular,
   },
   message: {
     fontSize: 13,
-    color: '#b91c1c',
+    color: appBrand.colors.danger,
     marginBottom: 12,
+    fontFamily: appBrand.fonts.regular,
   },
   messageSuccess: {
-    color: '#166534',
+    color: appBrand.colors.primary,
   },
   forgotLink: {
     marginTop: 12,
@@ -281,11 +289,11 @@ const styles = StyleSheet.create({
   },
   forgotLinkText: {
     fontSize: 14,
-    color: '#166534',
-    fontWeight: '500',
+    color: appBrand.colors.primary,
+    fontFamily: appBrand.fonts.medium,
   },
   button: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
@@ -296,17 +304,18 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   buttonText: {
-    color: '#fff',
+    color: appBrand.colors.white,
     fontSize: 16,
-    fontWeight: '600',
+    fontFamily: appBrand.fonts.semibold,
   },
   switch: {
     marginTop: 16,
     alignItems: 'center',
   },
   switchText: {
-    color: '#666',
+    color: appBrand.colors.textMuted,
     fontSize: 14,
+    fontFamily: appBrand.fonts.regular,
   },
   legalWrap: {
     marginTop: 12,
@@ -320,24 +329,25 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: '#9ca3af',
+    borderColor: appBrand.colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkboxChecked: {
-    backgroundColor: '#166534',
-    borderColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
+    borderColor: appBrand.colors.primary,
   },
   checkboxTick: {
-    color: '#fff',
+    color: appBrand.colors.white,
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: appBrand.fonts.semibold,
   },
   legalText: {
-    color: '#374151',
+    color: appBrand.colors.text,
     fontSize: 13,
     flex: 1,
     marginLeft: 8,
+    fontFamily: appBrand.fonts.regular,
   },
   legalLinksRow: {
     marginTop: 6,
@@ -346,12 +356,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   legalLink: {
-    color: '#166534',
+    color: appBrand.colors.primary,
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: appBrand.fonts.semibold,
     marginHorizontal: 6,
   },
   legalSeparator: {
-    color: '#9ca3af',
+    color: appBrand.colors.textMuted,
   },
 });

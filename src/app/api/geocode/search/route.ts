@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
+import { GEOCODE_USER_AGENT } from '@/lib/brand';
 
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
-const USER_AGENT = 'XhareTransporte/1.0 (https://github.com/xhare-transporte)';
+const USER_AGENT = GEOCODE_USER_AGENT;
 
 const GEOCODE_WINDOW_MS = 60_000;
 const GEOCODE_MAX_PER_WINDOW = 60;

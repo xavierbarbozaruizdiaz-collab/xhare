@@ -1,6 +1,7 @@
 /**
  * Chat con un usuario: mensajes + enviar + realtime.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useState, useRef } from 'react';
 import {
   View,
@@ -168,7 +169,7 @@ export function ChatScreen() {
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -245,7 +246,7 @@ const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   errorText: { color: '#6b7280', marginBottom: 16 },
   backBtn: { paddingVertical: 10, paddingHorizontal: 16 },
-  backBtnText: { color: '#166534', fontWeight: '600' },
+  backBtnText: { color: appBrand.colors.primary, fontWeight: '600' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -256,7 +257,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e5e7eb',
   },
   headerBack: { padding: 8, marginRight: 4 },
-  headerBackText: { fontSize: 18, color: '#166534', fontWeight: '600' },
+  headerBackText: { fontSize: 18, color: appBrand.colors.primary, fontWeight: '600' },
   headerAvatar: { width: 36, height: 36, borderRadius: 18, marginRight: 10 },
   headerAvatarPlaceholder: { backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
   headerAvatarLetter: { fontSize: 16, fontWeight: '700', color: '#6b7280' },
@@ -267,7 +268,7 @@ const styles = StyleSheet.create({
   messageRowMe: { alignItems: 'flex-end' },
   messageRowThem: { alignItems: 'flex-start' },
   bubble: { maxWidth: '85%', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 8 },
-  bubbleMe: { backgroundColor: '#166534' },
+  bubbleMe: { backgroundColor: appBrand.colors.primary },
   bubbleThem: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#e5e7eb' },
   bubbleText: { fontSize: 15, color: '#111' },
   bubbleTextMe: { color: '#fff' },
@@ -295,7 +296,7 @@ const styles = StyleSheet.create({
     color: '#111',
   },
   sendBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 20,

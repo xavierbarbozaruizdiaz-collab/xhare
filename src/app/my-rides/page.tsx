@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 import UserRoleBadge from '@/components/UserRoleBadge';
 import PageLoading from '@/components/PageLoading';
 import AppDrawer from '@/components/AppDrawer';
@@ -290,7 +291,7 @@ export default function MyRidesPage() {
 
       <header className="bg-white border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40 shadow-sm">
         <div className="flex items-center justify-between gap-2 py-2 min-h-[48px]">
-          <Link href="/my-rides" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
+          <BrandLink href="/my-rides" className="text-lg font-bold text-[#20A050] shrink-0" />
           <div className="flex items-center gap-2">
             <Link href="/publish" className="btn-primary text-sm py-2 px-3 shrink-0">
               Publicar viaje

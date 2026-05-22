@@ -1,6 +1,7 @@
 /**
  * Mapa para “Buscar viajes”: vista previa → pantalla completa con mapa interactivo y botones de modo.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -24,7 +25,7 @@ import { fetchRoute } from '../backend/routeApi';
 import type { Point } from '../lib/geo';
 import { getLocationPermissionStatus, requestLocationPermission } from '../permissions';
 
-const MAP_PRIMARY = '#1a5c38';
+const MAP_PRIMARY = appBrand.colors.primary;
 
 const DEFAULT_REGION: Region = {
   latitude: -25.286,
@@ -453,9 +454,9 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     color: '#64748b',
     marginBottom: 6,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
-  hint: { fontSize: 13, color: '#64748b', lineHeight: 19, marginBottom: 12, fontFamily: 'DMSans_400Regular' },
+  hint: { fontSize: 13, color: '#64748b', lineHeight: 19, marginBottom: 12, fontFamily: appBrand.fonts.regular },
   modeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   modeChip: {
     borderWidth: 1,
@@ -469,7 +470,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modeChipActive: { borderColor: MAP_PRIMARY, backgroundColor: '#edf7f1' },
-  modeChipText: { fontSize: 13, fontWeight: '600', color: '#374151', fontFamily: 'DMSans_600SemiBold' },
+  modeChipText: { fontSize: 13, fontWeight: '600', color: '#374151', fontFamily: appBrand.fonts.semibold },
   modeChipTextActive: { color: MAP_PRIMARY },
   modeBtn: {
     flexGrow: 1,
@@ -480,8 +481,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modeBtnActive: { backgroundColor: MAP_PRIMARY },
-  modeBtnText: { fontSize: 13, fontWeight: '600', color: '#374151', fontFamily: 'DMSans_600SemiBold' },
-  modeBtnTextActive: { color: '#fff', fontFamily: 'DMSans_700Bold' },
+  modeBtnText: { fontSize: 13, fontWeight: '600', color: '#374151', fontFamily: appBrand.fonts.semibold },
+  modeBtnTextActive: { color: '#fff', fontFamily: appBrand.fonts.semibold },
   previewShell: {
     width: '100%',
     borderRadius: 18,
@@ -503,7 +504,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 999,
   },
-  previewChipText: { color: '#fff', fontSize: 12, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  previewChipText: { color: '#fff', fontSize: 12, fontWeight: '800', fontFamily: appBrand.fonts.semibold },
   previewRouteLoading: {
     position: 'absolute',
     top: 10,
@@ -522,14 +523,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#e5e7eb',
   },
-  modalHeaderBtn: { fontSize: 17, fontWeight: '700', color: MAP_PRIMARY, minWidth: 48, fontFamily: 'DMSans_700Bold' },
+  modalHeaderBtn: { fontSize: 17, fontWeight: '700', color: MAP_PRIMARY, minWidth: 48, fontFamily: appBrand.fonts.semibold },
   modalHeaderTitle: {
     flex: 1,
     textAlign: 'center',
     fontSize: 15,
     fontWeight: '800',
     color: '#0f172a',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   modalHeaderSpacer: { minWidth: 48 },
   modalMapWrap: { flex: 1, position: 'relative' },
@@ -576,7 +577,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
-  routeLoadingCornerText: { fontSize: 12, fontWeight: '700', color: MAP_PRIMARY, fontFamily: 'DMSans_700Bold' },
+  routeLoadingCornerText: { fontSize: 12, fontWeight: '700', color: MAP_PRIMARY, fontFamily: appBrand.fonts.semibold },
   modalFooter: {
     backgroundColor: '#fff',
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -603,5 +604,5 @@ const styles = StyleSheet.create({
   dotOrigin: { backgroundColor: '#ea580c' },
   dotDest: { backgroundColor: '#b91c1c' },
   clearRow: { marginTop: 8, gap: 6 },
-  clearLink: { fontSize: 13, color: MAP_PRIMARY, fontWeight: '700', fontFamily: 'DMSans_600SemiBold' },
+  clearLink: { fontSize: 13, color: MAP_PRIMARY, fontWeight: '700', fontFamily: appBrand.fonts.semibold },
 });

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 import dynamic from 'next/dynamic';
 import UserRoleBadge from '@/components/UserRoleBadge';
 import AppDrawer from '@/components/AppDrawer';
@@ -500,7 +501,7 @@ export default function SearchPage() {
       </AppDrawer>
 
       <header className="bg-white shadow-sm border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40 p-4 flex justify-between items-center">
-        <Link href="/" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
+        <BrandLink href="/" className="text-lg font-bold text-[#20A050] shrink-0" />
         <div className="flex items-center gap-2">
           {user && <UserRoleBadge />}
           <button

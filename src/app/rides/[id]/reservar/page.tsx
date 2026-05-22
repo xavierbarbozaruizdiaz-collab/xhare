@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 import dynamic from 'next/dynamic';
 import type { MapPoint, ExtraStopPoint } from '@/components/PickupDropoffMap';
 import { formatProfileRatingLabel } from '@/lib/profile-rating';
@@ -530,7 +531,7 @@ export default function ReservarPage() {
     <div className="min-h-screen bg-gray-50 p-4">
       <header className="bg-white shadow-sm p-4 flex justify-between items-center mb-4 rounded-lg">
         <Link href={`/rides/${rideId}`} className="text-green-600 font-semibold">← Volver al viaje</Link>
-        <Link href="/" className="text-2xl font-bold text-green-600">Xhare</Link>
+        <BrandLink href="/" className="text-2xl font-bold text-[#20A050]" />
       </header>
       <div className="max-w-lg mx-auto space-y-4">
         <div className="bg-white rounded-xl shadow p-5">

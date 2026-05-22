@@ -1,11 +1,13 @@
 import React from 'react';
-import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Text, Image } from 'react-native';
+import { appBrand } from './theme/brand';
 
 export function LoadingScreen() {
   return (
     <View style={styles.container}>
-      <Text style={styles.logo}>Xhare</Text>
-      <ActivityIndicator size="large" color="#166534" style={styles.spinner} />
+      <Image source={appBrand.logo} style={styles.logoImage} resizeMode="contain" accessibilityLabel={appBrand.appName} />
+      <Text style={styles.tagline}>{appBrand.tagline}</Text>
+      <ActivityIndicator size="large" color={appBrand.colors.primary} style={styles.spinner} />
       <Text style={styles.text}>Cargando…</Text>
     </View>
   );
@@ -16,20 +18,28 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f0fdf4',
+    backgroundColor: appBrand.colors.background,
+    paddingHorizontal: 28,
   },
-  logo: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#166534',
-    marginBottom: 24,
-    letterSpacing: 0.5,
+  logoImage: {
+    width: '88%',
+    maxWidth: 340,
+    height: 200,
+    marginBottom: 8,
+  },
+  tagline: {
+    fontSize: 15,
+    color: appBrand.colors.textMuted,
+    fontFamily: appBrand.fonts.medium,
+    marginBottom: 28,
+    textAlign: 'center',
   },
   spinner: {
     marginBottom: 16,
   },
   text: {
     fontSize: 15,
-    color: '#15803d',
+    color: appBrand.colors.primaryMuted,
+    fontFamily: appBrand.fonts.regular,
   },
 });

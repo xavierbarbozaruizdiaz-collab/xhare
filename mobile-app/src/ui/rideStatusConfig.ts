@@ -1,11 +1,12 @@
 /**
  * Ride and booking status labels/colors for UI.
  */
+import { appBrand } from '../ui/theme/brand';
 export function rideStatusConfig(status: string): { label: string; color: string } {
   const map: Record<string, { label: string; color: string }> = {
     draft: { label: 'Borrador', color: '#6b7280' },
     awaiting_driver: { label: 'Disponible', color: '#0d9488' },
-    published: { label: 'Publicado', color: '#166534' },
+    published: { label: 'Publicado', color: appBrand.colors.primary },
     booked: { label: 'Con reservas', color: '#b45309' },
     en_route: { label: 'En camino', color: '#1d4ed8' },
     completed: { label: 'Completado', color: '#4b5563' },
@@ -17,7 +18,7 @@ export function rideStatusConfig(status: string): { label: string; color: string
 export function bookingStatusConfig(status: string): { label: string; color: string } {
   const map: Record<string, { label: string; color: string }> = {
     pending: { label: 'Pendiente', color: '#b45309' },
-    confirmed: { label: 'Confirmada', color: '#166534' },
+    confirmed: { label: 'Confirmada', color: appBrand.colors.primary },
     completed: { label: 'Completado', color: '#4b5563' },
     cancelled: { label: 'Cancelada', color: '#b91c1c' },
   };

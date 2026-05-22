@@ -1,6 +1,7 @@
 /**
  * Pasajero: detalle de una ruta con demanda; botón "Unirme a esta ruta" → JoinGroupMap.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -91,7 +92,7 @@ export function PassengerRouteGroupDetailScreen() {
   if (loading && !detail) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -127,7 +128,7 @@ export function PassengerRouteGroupDetailScreen() {
           zoomEnabled
         >
           {polylineCoords.length >= 2 && (
-            <Polyline coordinates={polylineCoords} strokeColor="#166534" strokeWidth={4} />
+            <Polyline coordinates={polylineCoords} strokeColor="appBrand.colors.primary" strokeWidth={4} />
           )}
           {(detail.passengers ?? []).map((p, i) => (
             <React.Fragment key={p.trip_request_id}>
@@ -163,7 +164,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   errorText: { color: '#b91c1c', marginBottom: 12, textAlign: 'center' },
-  retryBtn: { backgroundColor: '#166534', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
+  retryBtn: { backgroundColor: appBrand.colors.primary, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
   retryBtnText: { color: '#fff', fontWeight: '600' },
   meta: { marginBottom: 16 },
   title: { fontSize: 18, fontWeight: '600', color: '#111' },
@@ -171,7 +172,7 @@ const styles = StyleSheet.create({
   mapWrap: { width: '100%', height: 280, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#e5e7eb', marginBottom: 20 },
   map: { width: '100%', height: '100%' },
   primaryBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 8,

@@ -1,6 +1,7 @@
 /**
  * Pasajero: viajes en curso cerca (corona conductor + ruta OSRM a ≤1 km). Lista + mapa; Reservar → BookRide.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -25,7 +26,7 @@ import type { MainStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'NearbyEnRouteRides'>;
 
-const POLY_COLORS = ['#166534', '#1d4ed8', '#b45309', '#7c3aed', '#be123c', '#0f766e'];
+const POLY_COLORS = [appBrand.colors.primary, '#1d4ed8', '#b45309', '#7c3aed', '#be123c', '#0f766e'];
 
 function routeLabel(r: NearbyEnRouteRide): string {
   const o = r.origin_label?.trim() || 'Origen';
@@ -139,7 +140,7 @@ export function NearbyEnRouteRidesScreen() {
   if (loading && !userLoc) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
         <Text style={styles.hintLoad}>Obteniendo ubicación…</Text>
       </View>
     );
@@ -190,7 +191,7 @@ export function NearbyEnRouteRidesScreen() {
         {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
         {loading && userLoc ? (
           <View style={styles.inlineLoading}>
-            <ActivityIndicator color="#166534" />
+            <ActivityIndicator color="appBrand.colors.primary" />
             <Text style={styles.hintLoad}>Buscando…</Text>
           </View>
         ) : null}
@@ -203,7 +204,7 @@ export function NearbyEnRouteRidesScreen() {
         <FlatList
           data={rides}
           keyExtractor={(item) => item.id}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#166534']} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[appBrand.colors.primary]} />}
           renderItem={({ item }) => {
             const sel = item.id === selectedId;
             return (
@@ -245,7 +246,7 @@ const styles = StyleSheet.create({
   criteria: { fontSize: 12, color: '#64748b', marginBottom: 10, lineHeight: 17 },
   errorText: { color: '#b91c1c', textAlign: 'center', marginBottom: 12 },
   errorBanner: { color: '#b91c1c', marginBottom: 8, fontSize: 14 },
-  retryBtn: { backgroundColor: '#166534', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
+  retryBtn: { backgroundColor: appBrand.colors.primary, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
   retryBtnText: { color: '#fff', fontWeight: '600' },
   hintLoad: { marginTop: 8, color: '#64748b', fontSize: 14 },
   inlineLoading: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
@@ -258,13 +259,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     backgroundColor: '#fafafa',
   },
-  cardSelected: { borderColor: '#166534', backgroundColor: '#f0fdf4' },
+  cardSelected: { borderColor: appBrand.colors.primary, backgroundColor: appBrand.colors.greenLight },
   cardTitle: { fontSize: 15, fontWeight: '600', color: '#0f172a' },
   cardMeta: { fontSize: 13, color: '#64748b', marginTop: 4 },
   reserveBtn: {
     marginTop: 10,
     alignSelf: 'flex-start',
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 8,

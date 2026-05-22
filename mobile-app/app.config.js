@@ -100,18 +100,17 @@ const isDriver = flavor === 'driver';
 
 module.exports = {
   expo: {
-    name: isDriver ? 'Xhare Driver' : 'Xhare',
+    name: isDriver ? 'ÑandeBus Driver' : 'ÑandeBus',
     slug: 'xhare',
     scheme: 'xhare',
     version: '1.0.0',
     orientation: 'portrait',
-    // Debe ser cuadrado (Expo doctor); icon.png era rectangular.
-    icon: './assets/android-icon-foreground.png',
+    icon: isDriver ? './assets/brand/driver-icon.png' : './assets/brand/passenger-icon.png',
     userInterfaceStyle: 'light',
     splash: {
-      image: './assets/splash-icon.png',
+      image: isDriver ? './assets/brand/driver-logo.png' : './assets/brand/passenger-logo.png',
       resizeMode: 'contain',
-      backgroundColor: '#ffffff',
+      backgroundColor: isDriver ? '#F0F2F5' : '#F8F9FB',
     },
     extra: {
       eas: {
@@ -146,14 +145,8 @@ module.exports = {
     ],
     android: {
       adaptiveIcon: {
-        // Driver usa un ícono distinto (monochrome) para que el launcher muestre
-        // algo diferente, sin requerir assets nuevos.
-        backgroundColor: isDriver ? '#E8FFF1' : '#E6F4FE',
-        foregroundImage: isDriver
-          ? './assets/android-icon-monochrome.png'
-          : './assets/android-icon-foreground.png',
-        backgroundImage: './assets/android-icon-background.png',
-        monochromeImage: './assets/android-icon-monochrome.png',
+        backgroundColor: isDriver ? '#F0F2F5' : '#F8F9FB',
+        foregroundImage: isDriver ? './assets/brand/driver-icon.png' : './assets/brand/passenger-icon.png',
       },
       // Para poder instalar "driver" y "pasajero" simultáneamente en el emulador.
       package: isDriver ? 'com.xhare.driver' : 'com.xhare.app',

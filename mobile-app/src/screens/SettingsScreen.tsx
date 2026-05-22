@@ -2,6 +2,7 @@
  * Settings: cuenta, navegación, permisos, Mensajes; Mis solicitudes (pasajero) o Solicitudes de viaje (conductor), cerrar sesión.
  * Perfil/documentos: carga única por defecto; recarga solo si admin la habilita.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -58,7 +59,7 @@ const DRIVER_DOCUMENTS: Array<{ type: DriverDocumentType; label: string }> = [
   { type: 'cedula_verde', label: 'Cédula verde' },
 ];
 
-const PRIMARY = '#1a5c38';
+const PRIMARY = appBrand.colors.primary;
 const PAGE_BG = '#f7f8fa';
 const ICON_TILE_BG = '#edf7f1';
 
@@ -728,13 +729,13 @@ const styles = StyleSheet.create({
     borderColor: '#eef0f3',
   },
   heroEmailIcon: { marginTop: 1 },
-  email: { fontSize: 14, color: '#475569', flex: 1, fontFamily: 'DMSans_500Medium' },
+  email: { fontSize: 14, color: '#475569', flex: 1, fontFamily: appBrand.fonts.medium },
   sectionLabel: {
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.9,
     color: '#64748b',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
     marginTop: 20,
     marginBottom: 10,
   },
@@ -768,7 +769,7 @@ const styles = StyleSheet.create({
   },
   photoBlock: { gap: 8 },
   avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
-  photoLabel: { fontSize: 13, color: '#334155', fontWeight: '700', fontFamily: 'DMSans_700Bold' },
+  photoLabel: { fontSize: 13, color: '#334155', fontWeight: '700', fontFamily: appBrand.fonts.semibold },
   profilePhoto: {
     width: 84,
     height: 84,
@@ -789,7 +790,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  photoPlaceholderText: { color: '#64748b', fontSize: 12, fontFamily: 'DMSans_400Regular' },
+  photoPlaceholderText: { color: '#64748b', fontSize: 12, fontFamily: appBrand.fonts.regular },
   smallActionBtn: {
     backgroundColor: PRIMARY,
     borderRadius: 14,
@@ -801,7 +802,7 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  smallActionBtnText: { color: '#fff', fontSize: 13, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  smallActionBtnText: { color: '#fff', fontSize: 13, fontWeight: '800', fontFamily: appBrand.fonts.semibold },
   docRow: {
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -809,9 +810,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   docMain: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  docTitle: { fontSize: 14, color: '#0f172a', fontWeight: '800', flex: 1, fontFamily: 'DMSans_700Bold' },
-  docMeta: { fontSize: 12, color: '#64748b', fontFamily: 'DMSans_400Regular' },
-  docReviewNote: { fontSize: 12, color: '#92400e', lineHeight: 18, fontFamily: 'DMSans_400Regular' },
+  docTitle: { fontSize: 14, color: '#0f172a', fontWeight: '800', flex: 1, fontFamily: appBrand.fonts.semibold },
+  docMeta: { fontSize: 12, color: '#64748b', fontFamily: appBrand.fonts.regular },
+  docReviewNote: { fontSize: 12, color: '#92400e', lineHeight: 18, fontFamily: appBrand.fonts.regular },
   docBadge: {
     borderRadius: 999,
     paddingHorizontal: 10,
@@ -819,11 +820,11 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   docBadgePending: { backgroundColor: '#fef3c7' },
-  docBadgeApproved: { backgroundColor: '#dcfce7' },
+  docBadgeApproved: { backgroundColor: appBrand.colors.greenLight },
   docBadgeRejected: { backgroundColor: '#fee2e2' },
-  docBadgeText: { fontSize: 11, fontWeight: '800', color: '#374151', fontFamily: 'DMSans_700Bold' },
-  profileHint: { fontSize: 12, color: '#64748b', lineHeight: 17, fontFamily: 'DMSans_400Regular' },
-  hint: { fontSize: 13, color: '#64748b', marginBottom: 12, lineHeight: 19, fontFamily: 'DMSans_400Regular' },
+  docBadgeText: { fontSize: 11, fontWeight: '800', color: '#374151', fontFamily: appBrand.fonts.semibold },
+  profileHint: { fontSize: 12, color: '#64748b', lineHeight: 17, fontFamily: appBrand.fonts.regular },
+  hint: { fontSize: 13, color: '#64748b', marginBottom: 12, lineHeight: 19, fontFamily: appBrand.fonts.regular },
   radioRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -841,22 +842,22 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 1,
   },
-  radioRowActive: { backgroundColor: '#ecfdf5', borderWidth: 2, borderColor: PRIMARY },
+  radioRowActive: { backgroundColor: appBrand.colors.greenLight, borderWidth: 2, borderColor: PRIMARY },
   radioRowDisabled: { opacity: 0.55 },
   radioLabelDisabled: { color: '#94a3b8' },
-  radioSub: { fontSize: 12, color: '#64748b', marginTop: 2, fontFamily: 'DMSans_400Regular' },
-  radioLabel: { fontSize: 15, color: '#0f172a', fontWeight: '600', fontFamily: 'DMSans_600SemiBold' },
+  radioSub: { fontSize: 12, color: '#64748b', marginTop: 2, fontFamily: appBrand.fonts.regular },
+  radioLabel: { fontSize: 15, color: '#0f172a', fontWeight: '600', fontFamily: appBrand.fonts.semibold },
   permRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   permTextCol: { flex: 1, minWidth: 0 },
-  permTitle: { fontSize: 13, fontWeight: '800', color: '#0f172a', fontFamily: 'DMSans_700Bold' },
-  permStatus: { fontSize: 13, color: '#64748b', marginTop: 4, fontFamily: 'DMSans_400Regular' },
+  permTitle: { fontSize: 13, fontWeight: '800', color: '#0f172a', fontFamily: appBrand.fonts.semibold },
+  permStatus: { fontSize: 13, color: '#64748b', marginTop: 4, fontFamily: appBrand.fonts.regular },
   permBtn: {
     paddingVertical: 10,
     paddingHorizontal: 16,
     backgroundColor: PRIMARY,
     borderRadius: 14,
   },
-  permBtnText: { color: '#fff', fontSize: 14, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  permBtnText: { color: '#fff', fontSize: 14, fontWeight: '800', fontFamily: appBrand.fonts.semibold },
   linkCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -882,7 +883,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  linkLabel: { flex: 1, fontSize: 15, fontWeight: '800', color: '#0f172a', fontFamily: 'DMSans_700Bold' },
+  linkLabel: { flex: 1, fontSize: 15, fontWeight: '800', color: '#0f172a', fontFamily: appBrand.fonts.semibold },
   buttonDisabled: { opacity: 0.65 },
   signOutBtn: {
     backgroundColor: '#dc2626',
@@ -896,5 +897,5 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 3,
   },
-  signOutBtnText: { color: '#fff', fontSize: 16, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  signOutBtnText: { color: '#fff', fontSize: 16, fontWeight: '800', fontFamily: appBrand.fonts.semibold },
 });

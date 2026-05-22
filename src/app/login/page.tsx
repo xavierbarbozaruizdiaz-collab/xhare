@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { APP_NAME } from '@/lib/brand';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -177,7 +178,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md bg-white rounded-lg shadow p-6">
-        <h1 className="text-2xl font-bold text-center mb-6 text-green-600">Xhare</h1>
+        <h1 className="text-2xl font-bold text-center mb-6 text-[#20A050]">{APP_NAME}</h1>
         {sessionExpired && (
           <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm text-center">
             Tu sesión venció. Volvé a iniciar sesión.

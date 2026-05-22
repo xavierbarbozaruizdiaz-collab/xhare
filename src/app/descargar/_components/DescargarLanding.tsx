@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { InstallStepper } from './InstallStepper';
+import { APP_NAME } from '@/lib/brand';
 
 export type DescargarLandingProps = {
   passengerApkUrl: string;
@@ -275,8 +276,8 @@ export function DescargarLanding(props: DescargarLandingProps) {
     <div className={`min-h-screen ${shell}`}>
       <div className="mx-auto max-w-6xl px-4 pb-28 pt-6 sm:px-6 lg:px-8">
         <div className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 backdrop-blur-md ${topBar}`}>
-          <Link href="/" className="text-sm font-bold tracking-tight text-[#38b000]">
-            Xhare
+          <Link href="/" className="text-sm font-bold tracking-tight text-[#20A050]">
+            {APP_NAME}
           </Link>
         </div>
 
@@ -288,7 +289,7 @@ export function DescargarLanding(props: DescargarLandingProps) {
           >
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#7fe06a]">Central, Paraguay</p>
             <h1 className={`mt-3 text-3xl font-black leading-tight sm:text-4xl ${isDark ? 'text-white' : 'text-slate-900'}`}>
-              Xhare: tu tiempo y tu seguridad valen.
+              {APP_NAME}: tu tiempo y tu seguridad valen.
             </h1>
             <p className={`mt-4 text-base leading-relaxed sm:text-lg ${muted}`}>
               Pensada para el traslado diario en Central. Elegí cómo moverte hoy: como pasajero o como conductor.

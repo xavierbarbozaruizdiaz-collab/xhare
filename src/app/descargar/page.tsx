@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { createServiceClient } from '@/lib/supabase/server';
 import { DEFAULT_DOWNLOAD_VALUES, DOWNLOAD_SETTINGS_KEYS } from '@/lib/download-links';
+import { APP_NAME, pageTitle } from '@/lib/brand';
 import { DescargarLanding } from './_components/DescargarLanding';
 
 export const dynamic = 'force-dynamic';
@@ -22,11 +23,10 @@ function resolveMetadataBase(): URL {
 
 export const metadata: Metadata = {
   metadataBase: resolveMetadataBase(),
-  title: 'Descargar Xhare — Traslados en Central, Paraguay',
-  description:
-    'Descargá el APK oficial de Xhare para pasajeros y conductores. Canal seguro para operar en Central, Paraguay.',
+  title: pageTitle('Descargar — Traslados en Central, Paraguay'),
+  description: `Descargá el APK oficial de ${APP_NAME} para pasajeros y conductores. Canal seguro para operar en Central, Paraguay.`,
   openGraph: {
-    title: 'Xhare — Traslados en Central, Paraguay',
+    title: pageTitle('Traslados en Central, Paraguay'),
     description: 'Descarga oficial (Android APK) para pasajeros y conductores.',
     type: 'website',
     locale: 'es_PY',
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Xhare — Traslados en Central, Paraguay',
+    title: pageTitle('Traslados en Central, Paraguay'),
     description: 'Descarga oficial (Android APK) para pasajeros y conductores.',
   },
   alternates: {

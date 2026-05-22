@@ -1,6 +1,7 @@
 /**
  * Guardar solicitud de trayecto (trip_requests): origen/destino, fecha, tipo interno vs larga distancia y precio/confirmación.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -404,7 +405,7 @@ export function SaveTripRequestScreen() {
           <Ionicons
             name={tripMapExpanded ? 'chevron-up-outline' : 'map-outline'}
             size={tripMapExpanded ? 26 : 22}
-            color="#14532d"
+            color="appBrand.colors.primary"
           />
         </TouchableOpacity>
       </View>
@@ -663,13 +664,13 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   mapCollapsibleHeaderText: { flex: 1, minWidth: 0 },
-  mapCollapsibleTitle: { fontSize: 16, fontWeight: '800', color: '#14532d', marginBottom: 4 },
+  mapCollapsibleTitle: { fontSize: 16, fontWeight: '800', color: appBrand.colors.primary, marginBottom: 4 },
   mapCollapsibleHint: { fontSize: 13, color: '#6b7280', lineHeight: 19 },
   mapToggleBtn: {
     width: 48,
     height: 48,
     borderRadius: 12,
-    backgroundColor: '#ecfdf5',
+    backgroundColor: appBrand.colors.greenLight,
     borderWidth: 1,
     borderColor: '#86efac',
     alignItems: 'center',
@@ -720,7 +721,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stepperText: { fontSize: 20, color: '#166534', fontWeight: '600' },
+  stepperText: { fontSize: 20, color: appBrand.colors.primary, fontWeight: '600' },
   stepperValue: { fontSize: 18, fontWeight: '600', minWidth: 40, textAlign: 'center' },
   kindRow: { flexDirection: 'row', gap: 10, marginBottom: 12, flexWrap: 'wrap' },
   kindChip: {
@@ -731,13 +732,13 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     backgroundColor: '#fff',
   },
-  kindChipActive: { backgroundColor: '#166534', borderColor: '#166534' },
+  kindChipActive: { backgroundColor: appBrand.colors.primary, borderColor: appBrand.colors.primary },
   kindChipText: { fontSize: 14, fontWeight: '600', color: '#374151' },
   kindChipTextActive: { color: '#fff' },
   internalBox: { marginBottom: 16 },
-  internalEstimate: { fontSize: 14, color: '#14532d', fontWeight: '700', marginBottom: 6 },
+  internalEstimate: { fontSize: 14, color: appBrand.colors.primary, fontWeight: '700', marginBottom: 6 },
   internalEstimateMuted: { fontSize: 13, color: '#6b7280', lineHeight: 18 },
-  submitBtn: { backgroundColor: '#166534', paddingVertical: 14, borderRadius: 8, alignItems: 'center' },
+  submitBtn: { backgroundColor: appBrand.colors.primary, paddingVertical: 14, borderRadius: 8, alignItems: 'center' },
   submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

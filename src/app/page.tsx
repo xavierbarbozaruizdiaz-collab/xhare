@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase/client';
 import AppDrawer from '@/components/AppDrawer';
@@ -162,7 +163,7 @@ export default function Home() {
       <div className="min-h-screen bg-gray-50 app-mobile-shell">
         <header className="bg-white border-b border-gray-200 shadow-sm app-mobile-px app-mobile-header sticky top-0 z-40">
           <div className="flex justify-between items-center py-2 min-h-[48px]">
-            <Link href="/" className="text-lg font-bold text-green-600">Xhare</Link>
+            <BrandLink href="/" className="text-lg font-bold text-[#20A050]" />
             <Link href="/login" className="btn-primary text-sm py-2 min-h-[44px]">
               Iniciar sesión
             </Link>
@@ -292,7 +293,7 @@ export default function Home() {
       </AppDrawer>
 
       <header className="bg-white shadow-sm border-b border-gray-200 app-mobile-px app-mobile-header sticky top-0 z-40 p-4 flex justify-between items-center">
-        <Link href="/" className="text-lg font-bold text-green-600 shrink-0">Xhare</Link>
+        <BrandLink href="/" className="text-lg font-bold text-[#20A050] shrink-0" />
         <div className="flex items-center gap-2">
           <UserRoleBadge />
           <button

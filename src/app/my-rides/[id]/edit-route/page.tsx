@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 import PageLoading from '@/components/PageLoading';
 
 export default function EditRoutePage() {
@@ -39,7 +40,7 @@ export default function EditRoutePage() {
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <header className="bg-white shadow-sm p-4 flex justify-between items-center mb-4">
-        <Link href="/my-rides" className="text-2xl font-bold text-green-600">Xhare</Link>
+        <BrandLink href="/my-rides" className="text-2xl font-bold text-[#20A050]" />
       </header>
       <h1 className="text-2xl font-bold mb-4">Editar ruta del viaje</h1>
       <p className="text-gray-600">{ride.origin_label} → {ride.destination_label}</p>

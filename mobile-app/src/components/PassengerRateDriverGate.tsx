@@ -1,6 +1,7 @@
 /**
  * Popup global: pasajero califica al conductor tras bajada, en cualquier pantalla.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
@@ -195,7 +196,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: 10,
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     alignItems: 'center',
   },
   sendBtnDisabled: { opacity: 0.6 },

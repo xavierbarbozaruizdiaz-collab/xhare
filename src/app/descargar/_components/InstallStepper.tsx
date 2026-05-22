@@ -14,7 +14,7 @@ const STEPS = [
   },
   {
     title: 'Disfrutá',
-    body: 'Abrí Xhare, iniciá sesión y empezá. Si algo falla, usá el botón flotante de WhatsApp o la guía oficial (si está publicada).',
+    body: 'Abrí ÑandeBus, iniciá sesión y empezá. Si algo falla, usá el botón flotante de WhatsApp o la guía oficial (si está publicada).',
   },
 ] as const;
 

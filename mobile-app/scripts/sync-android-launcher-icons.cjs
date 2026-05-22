@@ -38,7 +38,8 @@ async function main() {
     isAdaptive: true,
   });
 
-  const splashSrc = path.join(projectRoot, 'assets', 'splash-icon.png');
+  const splashRel = exp.splash?.image?.replace(/^\.\//, '') ?? 'assets/brand/passenger-logo.png';
+  const splashSrc = path.join(projectRoot, splashRel);
   const splashDst = path.join(
     projectRoot,
     'android/app/src/main/res/drawable/splashscreen_logo.png',
@@ -46,6 +47,18 @@ async function main() {
   if (fs.existsSync(splashSrc)) {
     fs.mkdirSync(path.dirname(splashDst), { recursive: true });
     fs.copyFileSync(splashSrc, splashDst);
+  }
+  const splashBg = exp.splash?.backgroundColor;
+  if (splashBg) {
+    const colorsPath = path.join(projectRoot, 'android/app/src/main/res/values/colors.xml');
+    if (fs.existsSync(colorsPath)) {
+      let xml = fs.readFileSync(colorsPath, 'utf8');
+      xml = xml.replace(
+        /<color name="splashscreen_background">[^<]*<\/color>/,
+        `<color name="splashscreen_background">${splashBg}</color>`,
+      );
+      fs.writeFileSync(colorsPath, xml);
+    }
   }
 
   console.log(

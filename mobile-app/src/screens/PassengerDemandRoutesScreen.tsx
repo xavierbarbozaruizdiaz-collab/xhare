@@ -2,6 +2,7 @@
  * Pasajero: listado de rutas con demanda (lectura Supabase, misma fuente que conductor).
  * Tap → detalle → "Unirme a esta ruta" → marcar puntos en mapa.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
@@ -21,7 +22,7 @@ import type { MainStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'PassengerDemandRoutes'>;
 
-const PRIMARY = '#1a5c38';
+const PRIMARY = appBrand.colors.primary;
 const PAGE_BG = '#f7f8fa';
 const ICON_TILE_BG = '#edf7f1';
 
@@ -195,14 +196,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.9,
     color: '#64748b',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
     marginBottom: 6,
   },
   leadTitle: {
     fontSize: 22,
     fontWeight: '800',
     color: '#0f172a',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
     letterSpacing: -0.3,
     marginBottom: 8,
   },
@@ -210,7 +211,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#64748b',
     lineHeight: 20,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
     marginBottom: 18,
   },
   searchCard: {
@@ -230,7 +231,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   searchCardIcon: { marginRight: 12 },
-  searchCardPlaceholder: { flex: 1, fontSize: 15, color: '#9ca3af', fontFamily: 'DMSans_400Regular' },
+  searchCardPlaceholder: { flex: 1, fontSize: 15, color: '#9ca3af', fontFamily: appBrand.fonts.regular },
   quickRow: { flexDirection: 'row', gap: 12, marginBottom: 22 },
   quickTile: {
     flex: 1,
@@ -261,14 +262,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#111827',
     textAlign: 'center',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   sectionLabel: {
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.9,
     color: '#64748b',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
     marginBottom: 8,
   },
   intro: {
@@ -276,11 +277,11 @@ const styles = StyleSheet.create({
     color: '#64748b',
     lineHeight: 19,
     marginBottom: 12,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
   },
-  apiError: { fontSize: 13, color: '#b91c1c', marginBottom: 8, fontFamily: 'DMSans_500Medium' },
+  apiError: { fontSize: 13, color: '#b91c1c', marginBottom: 8, fontFamily: appBrand.fonts.medium },
   centered: { alignItems: 'center', paddingVertical: 28 },
-  loadingHint: { marginTop: 12, fontSize: 14, color: '#64748b', fontFamily: 'DMSans_500Medium' },
+  loadingHint: { marginTop: 12, fontSize: 14, color: '#64748b', fontFamily: appBrand.fonts.medium },
   listContent: { paddingHorizontal: 18, paddingBottom: 28, flexGrow: 1 },
   card: {
     backgroundColor: '#fff',
@@ -302,9 +303,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   cardChevron: { marginTop: 2 },
-  origin: { flex: 1, fontSize: 16, fontWeight: '800', color: '#0f172a', fontFamily: 'DMSans_700Bold', lineHeight: 22 },
-  meta: { fontSize: 13, color: '#64748b', marginTop: 8, fontFamily: 'DMSans_400Regular' },
-  hint: { fontSize: 12, color: PRIMARY, marginTop: 10, fontWeight: '700', fontFamily: 'DMSans_600SemiBold' },
+  origin: { flex: 1, fontSize: 16, fontWeight: '800', color: '#0f172a', fontFamily: appBrand.fonts.semibold, lineHeight: 22 },
+  meta: { fontSize: 13, color: '#64748b', marginTop: 8, fontFamily: appBrand.fonts.regular },
+  hint: { fontSize: 12, color: PRIMARY, marginTop: 10, fontWeight: '700', fontFamily: appBrand.fonts.semibold },
   empty: { alignItems: 'center', paddingVertical: 24, paddingHorizontal: 8 },
   emptyIconWrap: {
     width: 72,
@@ -322,7 +323,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#475569',
     textAlign: 'center',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   emptySub: {
     fontSize: 14,
@@ -331,6 +332,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
     lineHeight: 21,
     paddingHorizontal: 4,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
   },
 });

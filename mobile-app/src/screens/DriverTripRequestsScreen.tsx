@@ -2,6 +2,7 @@
  * Solicitudes de viaje (conductor): pestañas Viajes disponibles / Ofertas de viajes / De sistema.
  * "De sistema" agrupa rutas generadas por el motor de agrupación + viajes awaiting_driver.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -369,7 +370,7 @@ export function DriverTripRequestsScreen() {
   if (loading && !refreshing) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -527,14 +528,14 @@ const styles = StyleSheet.create({
   myRidesBtn: {
     backgroundColor: '#fff',
     borderWidth: 2,
-    borderColor: '#166534',
+    borderColor: appBrand.colors.primary,
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 10,
     alignItems: 'center',
     marginBottom: 12,
   },
-  myRidesBtnText: { color: '#166534', fontSize: 15, fontWeight: '700' },
+  myRidesBtnText: { color: appBrand.colors.primary, fontSize: 15, fontWeight: '700' },
   tabRow: {
     flexDirection: 'row',
     gap: 8,
@@ -551,11 +552,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tabBtnActive: {
-    borderColor: '#166534',
-    backgroundColor: '#f0fdf4',
+    borderColor: appBrand.colors.primary,
+    backgroundColor: appBrand.colors.greenLight,
   },
   tabBtnText: { fontSize: 12, fontWeight: '700', color: '#6b7280', textAlign: 'center' },
-  tabBtnTextActive: { color: '#14532d' },
+  tabBtnTextActive: { color: appBrand.colors.primary },
   intro: { fontSize: 14, color: '#6b7280', marginBottom: 12 },
   apiError: { fontSize: 13, color: '#b91c1c', marginBottom: 8 },
   systemSectionTitle: {
@@ -592,7 +593,7 @@ const styles = StyleSheet.create({
   meta: { fontSize: 13, color: '#6b7280', marginTop: 8 },
   hint: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
   primaryBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
@@ -619,7 +620,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     overflow: 'hidden',
   },
-  kindBadgeInternal: { backgroundColor: '#dcfce7', color: '#14532d' },
+  kindBadgeInternal: { backgroundColor: appBrand.colors.greenLight, color: appBrand.colors.primary },
   kindBadgeLong: { backgroundColor: '#ccfbf1', color: '#115e59' },
   empty: { alignItems: 'center', paddingVertical: 32 },
   emptyText: { fontSize: 15, color: '#6b7280', textAlign: 'center', lineHeight: 22 },

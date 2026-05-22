@@ -3,6 +3,7 @@
  * Crear solicitud (trip_request) se ofrece cuando no hay resultados o al final de la lista si hace falta.
  * Con `favoriteSlot`: flujo favorito (guardar trayecto).
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -52,7 +53,7 @@ type Nav = NativeStackNavigationProp<MainStackParamList, 'SearchPublishedRides'>
 const WEEKDAY_TOGGLE_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'] as const;
 const SEARCH_RESULTS_INITIAL_LIMIT = 10;
 
-const PRIMARY = '#1a5c38';
+const PRIMARY = appBrand.colors.primary;
 const PAGE_BG = '#f7f8fa';
 
 function toYmdLocal(d: Date): string {
@@ -1071,10 +1072,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.9,
     color: '#64748b',
     marginBottom: 6,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
     textTransform: 'uppercase',
   },
-  mapCollapsibleHint: { fontSize: 13, color: '#64748b', lineHeight: 19, fontFamily: 'DMSans_400Regular' },
+  mapCollapsibleHint: { fontSize: 13, color: '#64748b', lineHeight: 19, fontFamily: appBrand.fonts.regular },
   mapToggleBtn: {
     width: 48,
     height: 48,
@@ -1090,7 +1091,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.9,
     color: '#64748b',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
     marginBottom: 8,
     marginTop: 4,
   },
@@ -1101,7 +1102,7 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginBottom: 6,
     marginTop: 4,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   favoriteTimeHint: {
     fontSize: 12,
@@ -1109,7 +1110,7 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     marginBottom: 8,
     marginTop: -2,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
   },
   pickerRow: {
     borderWidth: 1,
@@ -1145,7 +1146,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 1,
   },
-  advancedToggleText: { fontSize: 14, fontWeight: '800', color: '#0f172a', fontFamily: 'DMSans_700Bold' },
+  advancedToggleText: { fontSize: 14, fontWeight: '800', color: '#0f172a', fontFamily: appBrand.fonts.semibold },
   dailyRow: {
     borderWidth: 1,
     borderColor: '#eef0f3',
@@ -1165,8 +1166,8 @@ const styles = StyleSheet.create({
   },
   dailyRowMuted: { opacity: 0.65 },
   dailyTextWrap: { flex: 1 },
-  dailyTitle: { fontSize: 15, fontWeight: '800', color: PRIMARY, fontFamily: 'DMSans_700Bold' },
-  dailyHint: { fontSize: 12, color: '#64748b', lineHeight: 17, marginTop: 4, fontFamily: 'DMSans_400Regular' },
+  dailyTitle: { fontSize: 15, fontWeight: '800', color: PRIMARY, fontFamily: appBrand.fonts.semibold },
+  dailyHint: { fontSize: 12, color: '#64748b', lineHeight: 17, marginTop: 4, fontFamily: appBrand.fonts.regular },
   weekdayBlock: {
     borderWidth: 1,
     borderColor: '#c6e6d3',
@@ -1176,8 +1177,8 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     backgroundColor: '#edf7f1',
   },
-  weekdayBlockTitle: { fontSize: 14, fontWeight: '800', color: PRIMARY, fontFamily: 'DMSans_700Bold' },
-  weekdayBlockHint: { fontSize: 12, color: '#475569', lineHeight: 17, marginTop: 6, fontFamily: 'DMSans_400Regular' },
+  weekdayBlockTitle: { fontSize: 14, fontWeight: '800', color: PRIMARY, fontFamily: appBrand.fonts.semibold },
+  weekdayBlockHint: { fontSize: 12, color: '#475569', lineHeight: 17, marginTop: 6, fontFamily: appBrand.fonts.regular },
   weekdayChipsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1196,7 +1197,7 @@ const styles = StyleSheet.create({
     borderColor: PRIMARY,
     backgroundColor: PRIMARY,
   },
-  weekdayChipText: { fontSize: 12, fontWeight: '800', color: '#475569', fontFamily: 'DMSans_700Bold' },
+  weekdayChipText: { fontSize: 12, fontWeight: '800', color: '#475569', fontFamily: appBrand.fonts.semibold },
   weekdayChipTextOn: { color: '#fff' },
   etaHint: {
     fontSize: 12,
@@ -1204,10 +1205,10 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     marginBottom: 10,
     marginTop: -4,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
   },
-  pickerValue: { fontSize: 16, color: '#0f172a', fontFamily: 'DMSans_600SemiBold' },
-  pickerPlaceholder: { fontSize: 16, color: '#94a3b8', fontFamily: 'DMSans_400Regular' },
+  pickerValue: { fontSize: 16, color: '#0f172a', fontFamily: appBrand.fonts.semibold },
+  pickerPlaceholder: { fontSize: 16, color: '#94a3b8', fontFamily: appBrand.fonts.regular },
   input: {
     borderWidth: 1,
     borderColor: '#e8eaed',
@@ -1218,9 +1219,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#fff',
     color: '#0f172a',
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
   },
-  clearLink: { fontSize: 13, color: PRIMARY, fontWeight: '700', marginBottom: 10, fontFamily: 'DMSans_600SemiBold' },
+  clearLink: { fontSize: 13, color: PRIMARY, fontWeight: '700', marginBottom: 10, fontFamily: appBrand.fonts.semibold },
   kindRow: { flexDirection: 'row', gap: 8, marginBottom: 12, flexWrap: 'wrap' },
   kindChip: {
     borderWidth: 1,
@@ -1234,8 +1235,8 @@ const styles = StyleSheet.create({
     borderColor: PRIMARY,
     backgroundColor: PRIMARY,
   },
-  kindChipText: { fontSize: 13, color: '#475569', fontWeight: '700', fontFamily: 'DMSans_600SemiBold' },
-  kindChipTextActive: { color: '#fff', fontFamily: 'DMSans_700Bold' },
+  kindChipText: { fontSize: 13, color: '#475569', fontWeight: '700', fontFamily: appBrand.fonts.semibold },
+  kindChipTextActive: { color: '#fff', fontFamily: appBrand.fonts.semibold },
   searchBtn: {
     backgroundColor: PRIMARY,
     paddingVertical: 15,
@@ -1252,7 +1253,7 @@ const styles = StyleSheet.create({
   searchBtnDisabled: { opacity: 0.7 },
   saveFavoriteBtnInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   saveFavoriteSpinner: { marginRight: 10 },
-  searchBtnText: { color: '#fff', fontWeight: '800', fontSize: 15, fontFamily: 'DMSans_700Bold' },
+  searchBtnText: { color: '#fff', fontWeight: '800', fontSize: 15, fontFamily: appBrand.fonts.semibold },
   loadMoreBtn: {
     borderWidth: 2,
     borderColor: PRIMARY,
@@ -1263,7 +1264,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     backgroundColor: '#fff',
   },
-  loadMoreBtnText: { color: PRIMARY, fontWeight: '800', fontFamily: 'DMSans_700Bold' },
+  loadMoreBtnText: { color: PRIMARY, fontWeight: '800', fontFamily: appBrand.fonts.semibold },
   postSearchCta: {
     marginTop: 8,
     marginBottom: 20,
@@ -1281,7 +1282,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 10,
     textAlign: 'center',
-    fontFamily: 'DMSans_600SemiBold',
+    fontFamily: appBrand.fonts.semibold,
   },
   postSearchCtaBtn: {
     borderWidth: 2,
@@ -1291,7 +1292,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: '#fff',
   },
-  postSearchCtaBtnText: { color: PRIMARY, fontWeight: '800', fontSize: 15, fontFamily: 'DMSans_700Bold' },
+  postSearchCtaBtnText: { color: PRIMARY, fontWeight: '800', fontSize: 15, fontFamily: appBrand.fonts.semibold },
   listSpinner: { marginTop: 28 },
   resultsHeaderCount: {
     fontSize: 11,
@@ -1300,7 +1301,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.9,
     marginTop: 8,
     marginBottom: 10,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   tripCard: {
     backgroundColor: '#fff',
@@ -1317,8 +1318,8 @@ const styles = StyleSheet.create({
   },
   tripCardHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
   tripCardTitleCol: { flex: 1, minWidth: 0 },
-  tripCardRouteName: { fontSize: 15, fontWeight: '800', color: PRIMARY, fontFamily: 'DMSans_700Bold' },
-  tripCardRouteNameMuted: { fontSize: 14, fontWeight: '700', color: '#94a3b8', fontFamily: 'DMSans_600SemiBold' },
+  tripCardRouteName: { fontSize: 15, fontWeight: '800', color: PRIMARY, fontFamily: appBrand.fonts.semibold },
+  tripCardRouteNameMuted: { fontSize: 14, fontWeight: '700', color: '#94a3b8', fontFamily: appBrand.fonts.semibold },
   tripDayPill: {
     backgroundColor: '#edf7f1',
     borderRadius: 12,
@@ -1327,9 +1328,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#c6e6d3',
   },
-  tripDayPillText: { fontSize: 12, fontWeight: '800', color: PRIMARY, fontFamily: 'DMSans_700Bold' },
+  tripDayPillText: { fontSize: 12, fontWeight: '800', color: PRIMARY, fontFamily: appBrand.fonts.semibold },
   tripTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8, marginBottom: 12 },
-  tripTimeText: { fontSize: 15, fontWeight: '800', color: '#0f172a', fontFamily: 'DMSans_700Bold' },
+  tripTimeText: { fontSize: 15, fontWeight: '800', color: '#0f172a', fontFamily: appBrand.fonts.semibold },
   tripJourneyRow: { flexDirection: 'row', alignItems: 'stretch', gap: 12 },
   tripJourneyRail: { width: 14, alignItems: 'center', paddingTop: 4 },
   tripDotOrigin: {
@@ -1350,8 +1351,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   tripJourneyCol: { flex: 1, minWidth: 0 },
-  tripPlaceTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a', lineHeight: 22, fontFamily: 'DMSans_700Bold' },
-  tripPlaceDetail: { fontSize: 12, color: '#64748b', lineHeight: 17, marginTop: 2, fontFamily: 'DMSans_400Regular' },
+  tripPlaceTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a', lineHeight: 22, fontFamily: appBrand.fonts.semibold },
+  tripPlaceDetail: { fontSize: 12, color: '#64748b', lineHeight: 17, marginTop: 2, fontFamily: appBrand.fonts.regular },
   tripJourneySpacer: { height: 14 },
   tripSeatsCaption: { fontSize: 12, fontWeight: '700', color: '#6b7280', marginTop: 14, marginBottom: 6 },
   tripSeatsRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -1364,7 +1365,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#e5e7eb',
   },
   tripSeatsBarFill: { minHeight: 8, alignSelf: 'stretch' },
-  tripSeatsFraction: { fontSize: 14, fontWeight: '800', color: PRIMARY, minWidth: 52, textAlign: 'right', fontFamily: 'DMSans_700Bold' },
+  tripSeatsFraction: { fontSize: 14, fontWeight: '800', color: PRIMARY, minWidth: 52, textAlign: 'right', fontFamily: appBrand.fonts.semibold },
   emptyBlock: {
     marginTop: 8,
     paddingVertical: 12,
@@ -1376,7 +1377,7 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     textAlign: 'center',
     marginBottom: 10,
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   emptyLead: {
     fontSize: 14,
@@ -1384,7 +1385,7 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     textAlign: 'center',
     marginBottom: 16,
-    fontFamily: 'DMSans_400Regular',
+    fontFamily: appBrand.fonts.regular,
   },
   emptySection: { marginBottom: 18 },
   emptySectionTitle: {
@@ -1422,7 +1423,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: PRIMARY,
     textAlign: 'center',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   emptyPrimaryBtn: {
     backgroundColor: PRIMARY,
@@ -1441,7 +1442,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#fff',
     textAlign: 'center',
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: appBrand.fonts.semibold,
   },
   emptyLinkBtnOutline: {
     borderWidth: 1,

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 
 function estimateDurationFromPolyline(points: Array<{ lat: number; lng: number }>): number {
   if (!points || points.length < 2) return 60;
@@ -130,7 +131,7 @@ export default function EditRidePage() {
     <div className="min-h-screen bg-gray-50 p-4">
       <header className="bg-white shadow-sm p-4 flex justify-between items-center mb-4 rounded-lg">
         <Link href={`/rides/${rideId}`} className="text-green-600 font-semibold">← Volver al viaje</Link>
-        <Link href="/" className="text-2xl font-bold text-green-600">Xhare</Link>
+        <BrandLink href="/" className="text-2xl font-bold text-[#20A050]" />
       </header>
       <div className="max-w-md mx-auto bg-white rounded-xl shadow p-6">
         <h1 className="text-xl font-bold mb-4">Editar horario del viaje</h1>

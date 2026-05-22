@@ -1,6 +1,7 @@
 /**
  * Lista de conversaciones (inbox). get_my_conversations → tap abre Chat.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
@@ -90,7 +91,7 @@ export function MessagesScreen() {
   if (loading && list.length === 0) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -138,7 +139,7 @@ const styles = StyleSheet.create({
   preview: { fontSize: 14, color: '#6b7280', marginTop: 2 },
   right: { alignItems: 'flex-end', marginLeft: 8 },
   time: { fontSize: 12, color: '#9ca3af' },
-  unreadBadge: { marginTop: 4, backgroundColor: '#166534', minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  unreadBadge: { marginTop: 4, backgroundColor: appBrand.colors.primary, minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   unreadText: { color: '#fff', fontSize: 11, fontWeight: '600' },
   empty: { flex: 1, padding: 24, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 16, color: '#374151', marginBottom: 8 },

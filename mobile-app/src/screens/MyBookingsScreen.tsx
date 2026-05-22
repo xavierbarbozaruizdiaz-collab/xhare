@@ -1,6 +1,7 @@
 /**
  * Pasajero: reservas activas vs historial (viajes concretados / cancelados); tap → detalle del viaje.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
@@ -123,7 +124,7 @@ export function MyBookingsScreen() {
   if (loading && list.length === 0) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -252,16 +253,16 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
   },
   tabActive: {
-    borderColor: '#166534',
-    backgroundColor: '#f0fdf4',
+    borderColor: appBrand.colors.primary,
+    backgroundColor: appBrand.colors.greenLight,
   },
   tabText: { fontSize: 14, fontWeight: '600', color: '#6b7280' },
-  tabTextActive: { color: '#166534' },
+  tabTextActive: { color: appBrand.colors.primary },
   tabBadge: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#166534',
-    backgroundColor: '#dcfce7',
+    color: appBrand.colors.primary,
+    backgroundColor: appBrand.colors.greenLight,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -299,10 +300,10 @@ const styles = StyleSheet.create({
   ticketCode: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#14532d',
+    color: appBrand.colors.primary,
     marginTop: 10,
     letterSpacing: 0.5,
   },
   meta: { fontSize: 13, color: '#6b7280', marginTop: 8 },
-  hint: { fontSize: 12, color: '#166534', marginTop: 10, fontWeight: '600' },
+  hint: { fontSize: 12, color: appBrand.colors.primary, marginTop: 10, fontWeight: '600' },
 });

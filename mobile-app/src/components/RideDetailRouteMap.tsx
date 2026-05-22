@@ -3,6 +3,7 @@
  * Gris: OSRM conductor + subidas/bajadas de reservas (`buildMasterBookRidePolyline`).
  * Verde: solo tramo del pasajero con reserva (`buildPassengerMergedRoute` → tramo `mid`).
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Platform, Animated } from 'react-native';
 import MapView, { Polyline, Marker } from 'react-native-maps';
@@ -55,7 +56,7 @@ function PulsingNextNavMarker() {
   );
 }
 
-const GREEN = '#166534';
+const GREEN = appBrand.colors.primary;
 const SLATE = '#64748b';
 const PASSENGER_AB = '#2563eb';
 const PASSENGER_EXTRA = '#0891b2';
@@ -831,7 +832,7 @@ const styles = StyleSheet.create({
   passengerPickupDot: { backgroundColor: PASSENGER_AB, width: 18, height: 18, borderRadius: 9 },
   passengerDropDot: { backgroundColor: '#7c3aed', width: 18, height: 18, borderRadius: 9 },
   passengerExtraDot: { backgroundColor: PASSENGER_EXTRA, width: 15, height: 15, borderRadius: 8 },
-  routeStopStart: { backgroundColor: '#15803d' },
+  routeStopStart: { backgroundColor: appBrand.colors.primaryMuted },
   routeStopMid: { backgroundColor: '#d97706' },
   /** Subidas/bajadas de otros pasajeros: más chicos que los del usuario que mira el mapa. */
   otherPassengerPin: {

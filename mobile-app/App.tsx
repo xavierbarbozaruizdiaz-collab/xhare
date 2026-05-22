@@ -2,11 +2,17 @@ import React, { Component, useEffect, type ErrorInfo, type ReactNode } from 'rea
 import { LogBox, ScrollView, StyleSheet, Text } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
+import {
+  useFonts,
+  Montserrat_400Regular,
+  Montserrat_500Medium,
+  Montserrat_600SemiBold,
+} from '@expo-google-fonts/montserrat';
 import { AuthProvider } from './src/auth/AuthContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { PushRegistrationEffect } from './src/push/PushRegistrationEffect';
 import { LoadingScreen } from './src/ui/LoadingScreen';
+import { appBrand } from './src/ui/theme/brand';
 
 type EbProps = { children: ReactNode };
 type EbState = { error: Error | null; componentStack: string | null };
@@ -50,25 +56,22 @@ class RootErrorBoundary extends Component<EbProps, EbState> {
 }
 
 const styles = StyleSheet.create({
-  fatalScroll: { flex: 1, backgroundColor: '#ffffff' },
+  fatalScroll: { flex: 1, backgroundColor: appBrand.colors.background },
   fatalContent: { padding: 20, paddingTop: 48 },
-  fatalTitle: { fontSize: 18, fontWeight: '800', color: '#b91c1c', marginBottom: 12 },
-  fatalMsg: { fontSize: 15, color: '#111827', marginBottom: 12 },
-  fatalStack: { fontSize: 11, color: '#4b5563' },
+  fatalTitle: { fontSize: 18, fontFamily: appBrand.fonts.semibold, color: appBrand.colors.danger, marginBottom: 12 },
+  fatalMsg: { fontSize: 15, fontFamily: appBrand.fonts.regular, color: appBrand.colors.text, marginBottom: 12 },
+  fatalStack: { fontSize: 11, fontFamily: appBrand.fonts.regular, color: appBrand.colors.textMuted },
 });
 
 export default function App() {
   const [fontsLoaded, fontError] = useFonts({
-    DMSans_400Regular,
-    DMSans_500Medium,
-    DMSans_600SemiBold,
-    DMSans_700Bold,
+    Montserrat_400Regular,
+    Montserrat_500Medium,
+    Montserrat_600SemiBold,
   });
 
   useEffect(() => {
     if (!__DEV__) return;
-    // Expo Dev Client (RN 0.83 / bridgeless): al arrancar puede intentar keep-awake
-    // antes de que la Activity esté lista y dispara un rechazo no fatal.
     LogBox.ignoreLogs([
       'ExpoKeepAwake.activate has been rejected',
       'The current activity is no longer available',
@@ -95,7 +98,7 @@ export default function App() {
         <AuthProvider>
           <PushRegistrationEffect />
           <RootNavigator />
-          <StatusBar style="auto" />
+          <StatusBar style="light" />
         </AuthProvider>
       </SafeAreaProvider>
     </RootErrorBoundary>

@@ -39,7 +39,7 @@ export async function startDriverTrackingInBackground(rideId: string): Promise<b
       pausesUpdatesAutomatically: false,
       // Android foreground service obligatorio para sostener tracking con Waze/Maps abiertos.
       foregroundService: {
-        notificationTitle: 'Xhare: Viaje en curso',
+        notificationTitle: 'ÑandeBus Driver: Viaje en curso',
         notificationBody: 'Transmitiendo ubicacion',
         killServiceOnDestroy: false,
       },

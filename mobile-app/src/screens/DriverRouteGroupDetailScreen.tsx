@@ -2,6 +2,7 @@
  * Conductor: detalle de una ruta agrupada (polyline base + puntos de pasajeros).
  * Mapa con ruta y marcadores; botón "Publicar viaje para esta ruta" → PublishRide con base_trip_request_id.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -557,7 +558,7 @@ export function DriverRouteGroupDetailScreen() {
   if (loading && !detail) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -596,7 +597,7 @@ export function DriverRouteGroupDetailScreen() {
           {polylineCoords.length >= 2 && (
             <Polyline
               coordinates={polylineCoords}
-              strokeColor="#166534"
+              strokeColor="appBrand.colors.primary"
               strokeWidth={4}
             />
           )}
@@ -805,7 +806,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   errorText: { color: '#b91c1c', marginBottom: 12, textAlign: 'center' },
-  retryBtn: { backgroundColor: '#166534', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
+  retryBtn: { backgroundColor: appBrand.colors.primary, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
   retryBtnText: { color: '#fff', fontWeight: '600' },
   meta: { marginBottom: 16 },
   title: { fontSize: 18, fontWeight: '600', color: '#111' },
@@ -827,7 +828,7 @@ const styles = StyleSheet.create({
   stopBody: { flex: 1 },
   stopAction: { fontSize: 14, fontWeight: '600', color: '#111' },
   stopLabel: { fontSize: 13, color: '#6b7280', marginTop: 2 },
-  stopFare: { fontSize: 13, color: '#065f46', marginTop: 2, fontWeight: '600' },
+  stopFare: { fontSize: 13, color: appBrand.colors.primaryMuted, marginTop: 2, fontWeight: '600' },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionChevron: { fontSize: 12, color: '#6b7280', fontWeight: '700' },
   scheduleRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
@@ -835,7 +836,7 @@ const styles = StyleSheet.create({
   scheduleValue: { fontSize: 13, color: '#111827', fontWeight: '700' },
   passengerScheduleRow: { borderTopWidth: 1, borderTopColor: '#e5e7eb', paddingTop: 8, marginTop: 8 },
   passengerScheduleName: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 4 },
-  scheduleOk: { color: '#166534' },
+  scheduleOk: { color: appBrand.colors.primary },
   scheduleWarn: { color: '#b45309' },
   financialCard: {
     backgroundColor: '#fff',
@@ -845,20 +846,20 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 16,
   },
-  financialTitle: { fontSize: 15, fontWeight: '700', color: '#065f46', marginBottom: 8 },
+  financialTitle: { fontSize: 15, fontWeight: '700', color: appBrand.colors.primaryMuted, marginBottom: 8 },
   financialRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   financialKey: { fontSize: 13, color: '#374151' },
   financialValue: { fontSize: 13, color: '#111827', fontWeight: '700' },
-  financialGain: { color: '#166534' },
+  financialGain: { color: appBrand.colors.primary },
   financialHint: { fontSize: 12, color: '#6b7280', marginTop: 4 },
   primaryBtn: {
-    backgroundColor: '#166534',
+    backgroundColor: appBrand.colors.primary,
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 8,
     alignItems: 'center',
   },
   primaryBtnDisabled: { backgroundColor: '#9ca3af' },
-  publishBtn: { backgroundColor: '#14532d' },
+  publishBtn: { backgroundColor: appBrand.colors.primary },
   primaryBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
 });

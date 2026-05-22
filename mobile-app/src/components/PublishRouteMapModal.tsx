@@ -1,6 +1,7 @@
 /**
  * Mapa a pantalla completa para marcar origen, destino y paradas al publicar un viaje.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
@@ -20,7 +21,7 @@ import { androidMapProvider } from '../lib/androidMapProvider';
 import { getLocationPermissionStatus, requestLocationPermission } from '../permissions';
 import { MAX_DRIVER_PUBLISH_WAYPOINTS } from '../core/publishRouteLimits';
 
-const GREEN = '#166534';
+const GREEN = appBrand.colors.primary;
 
 export type PublishMapMode = 'origin' | 'destination' | 'waypoint';
 

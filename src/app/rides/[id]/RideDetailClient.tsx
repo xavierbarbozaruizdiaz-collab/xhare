@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import * as platform from '@/lib/platform';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 import dynamic from 'next/dynamic';
 import { getPositionAlongPolyline } from '@/lib/geo';
 import { DEFAULT_RATING_STARS, formatProfileRatingLabel, PROFILE_RATING_WINDOW } from '@/lib/profile-rating';
@@ -695,7 +696,7 @@ export default function RideDetailClient() {
       void loadRide();
       if (newStatus === 'en_route' && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
         try {
-          const n = new Notification('Viaje en curso - Xhare', {
+          const n = new Notification('Viaje en curso - ÑandeBus', {
             body: 'Tu viaje está activo. Tocá para abrir la app.',
             tag: `ride-${rideId}`,
           });
@@ -987,7 +988,7 @@ export default function RideDetailClient() {
     <div className="min-h-screen bg-gray-50 app-mobile-shell">
       <header className="bg-white border-b border-gray-200 app-mobile-px py-4">
         <div className="flex justify-between items-center">
-          <Link href="/search" className="text-xl md:text-2xl font-bold text-green-600">Xhare</Link>
+          <BrandLink href="/search" className="text-xl md:text-2xl font-bold text-[#20A050]" />
           <Link
             href="/search"
             className="text-sm md:text-base text-gray-600 hover:text-green-600 font-medium"

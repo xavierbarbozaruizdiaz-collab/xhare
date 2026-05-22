@@ -1,4 +1,4 @@
-# Xhare - Transporte de Pasajeros
+# ÑandeBus - Transporte de Pasajeros
 
 Sistema MVP de transporte de pasajeros con minibuses de 15 pasajeros. Implementa matching por **Ruta Fija** (Fase 1) con arquitectura lista para **Modo Libre** (Fase 2).
 

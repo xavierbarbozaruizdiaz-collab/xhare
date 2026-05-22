@@ -2,6 +2,7 @@
  * Conductor: publicar viaje (mapa, fecha/hora, flexibilidad, asientos del vehículo, descripción).
  * Alineado al flujo de web `src/app/publish/page.tsx`: insert en `rides` + `ride_stops`, vincular `trip_requests`.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -71,7 +72,7 @@ type UserProfile = {
   driver_approved_at: string | null;
 };
 
-const GREEN = '#166534';
+const GREEN = appBrand.colors.primary;
 
 const WEEKDAY_TOGGLE_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'] as const;
 
@@ -1785,7 +1786,7 @@ export function PublishRideScreen() {
                 }
               }}
               trackColor={{ false: '#d1d5db', true: '#86efac' }}
-              thumbColor={templateScheduleDaily ? '#166534' : '#f3f4f6'}
+              thumbColor={templateScheduleDaily ? appBrand.colors.primary : '#f3f4f6'}
             />
           </View>
           {templateScheduleDaily ? (
@@ -2103,9 +2104,9 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 10,
   },
-  kindBannerInternal: { backgroundColor: '#f0fdf4', borderColor: '#86efac' },
+  kindBannerInternal: { backgroundColor: appBrand.colors.greenLight, borderColor: '#86efac' },
   kindBannerLong: { backgroundColor: '#ecfeff', borderColor: '#67e8f9' },
-  kindBannerTitle: { fontSize: 13, fontWeight: '700', color: '#14532d' },
+  kindBannerTitle: { fontSize: 13, fontWeight: '700', color: appBrand.colors.primary },
   kindBannerText: { fontSize: 12, color: '#4b5563', marginTop: 4, lineHeight: 17 },
   mapWrap: {
     height: 200,
@@ -2134,14 +2135,14 @@ const styles = StyleSheet.create({
   driverDailySwitchWrap: { marginBottom: 12, alignSelf: 'flex-start' },
   weekdayBlock: {
     borderWidth: 1,
-    borderColor: '#bbf7d0',
+    borderColor: appBrand.colors.greenLight,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     marginBottom: 12,
-    backgroundColor: '#f0fdf4',
+    backgroundColor: appBrand.colors.greenLight,
   },
-  weekdayBlockTitle: { fontSize: 14, fontWeight: '700', color: '#14532d' },
+  weekdayBlockTitle: { fontSize: 14, fontWeight: '700', color: appBrand.colors.primary },
   weekdayBatchHint: { fontSize: 12, color: '#4b5563', marginTop: 10, lineHeight: 17 },
   weekdayChipsRow: {
     flexDirection: 'row',
@@ -2158,8 +2159,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   weekdayChipOn: {
-    borderColor: '#166534',
-    backgroundColor: '#166534',
+    borderColor: appBrand.colors.primary,
+    backgroundColor: appBrand.colors.primary,
   },
   weekdayChipText: { fontSize: 12, fontWeight: '700', color: '#374151' },
   weekdayChipTextOn: { color: '#fff' },
@@ -2236,7 +2237,7 @@ const styles = StyleSheet.create({
   cancelBtn: { marginTop: 14, alignItems: 'center', paddingVertical: 8 },
   cancelBtnText: { color: '#6b7280', fontSize: 15 },
   mapHelp: { fontSize: 13, color: '#6b7280', marginBottom: 10, lineHeight: 18 },
-  groupFlowHint: { fontSize: 14, color: '#166534', fontWeight: '700', marginBottom: 10 },
+  groupFlowHint: { fontSize: 14, color: appBrand.colors.primary, fontWeight: '700', marginBottom: 10 },
   clearWp: { fontSize: 13, color: '#2563eb', fontWeight: '600', marginBottom: 8 },
   kindPickerRow: { flexDirection: 'row', gap: 10, marginBottom: 14, flexWrap: 'wrap' },
   kindChip: {

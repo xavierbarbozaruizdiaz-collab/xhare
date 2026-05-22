@@ -149,7 +149,7 @@ export function SafetyShareTrackClient({ code }: { code: string }) {
     <div className="space-y-6">
       <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-5 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Seguimiento de viaje</p>
-        <p className="text-lg font-semibold text-gray-900 mt-1">Xhare · código {data.share_code}</p>
+        <p className="text-lg font-semibold text-gray-900 mt-1">ÑandeBus · código {data.share_code}</p>
         <p className="text-sm text-gray-600 mt-2">
           Vista solo de lectura para contactos de confianza. No muestra datos personales de pasajeros.
         </p>

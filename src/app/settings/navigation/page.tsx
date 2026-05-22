@@ -92,7 +92,7 @@ export default function NavigationPreferencePage() {
         </p>
         {pluginError && (
           <p className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800" role="alert">
-            {pluginError} Usá el APK de Xhare instalado en el dispositivo para que la preferencia se guarde y la navegación se abra en la app elegida.
+            {pluginError} Usá el APK de ÑandeBus instalado en el dispositivo para que la preferencia se guarde y la navegación se abra en la app elegida.
           </p>
         )}
         <div className="space-y-3">

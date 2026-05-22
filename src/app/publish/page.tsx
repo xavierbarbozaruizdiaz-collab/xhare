@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase/client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import BrandLink from '@/components/BrandLink';
 import UserRoleBadge from '@/components/UserRoleBadge';
 import PageLoading from '@/components/PageLoading';
 
@@ -528,7 +529,7 @@ export default function PublishRidePage() {
       )}
       <header className="bg-white shadow-sm">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <Link href="/" className="text-2xl font-bold text-green-600">Xhare</Link>
+          <BrandLink href="/" className="text-2xl font-bold text-[#20A050]" />
           <div className="flex items-center gap-4">
             <UserRoleBadge />
             <button

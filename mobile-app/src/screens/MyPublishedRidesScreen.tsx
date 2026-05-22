@@ -1,6 +1,7 @@
 /**
  * Conductor: viajes propios agrupados en Programados / No realizados / Realizados.
  */
+import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -347,7 +348,7 @@ export function MyPublishedRidesScreen() {
   if (loading && rows.length === 0) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#166534" />
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
       </View>
     );
   }
@@ -535,16 +536,16 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
   },
   bucketBtnActive: {
-    borderColor: '#166534',
-    backgroundColor: '#f0fdf4',
+    borderColor: appBrand.colors.primary,
+    backgroundColor: appBrand.colors.greenLight,
   },
   bucketBtnDisabled: { opacity: 0.55 },
   bucketBtnTextWrap: { flex: 1, paddingRight: 12 },
-  bucketBtnTitle: { fontSize: 16, fontWeight: '700', color: '#14532d' },
+  bucketBtnTitle: { fontSize: 16, fontWeight: '700', color: appBrand.colors.primary },
   bucketBtnTitleDisabled: { color: '#9ca3af' },
   bucketBtnHint: { fontSize: 12, color: '#6b7280', marginTop: 4 },
   bucketBtnHintDisabled: { color: '#9ca3af' },
-  bucketCount: { fontSize: 18, fontWeight: '700', color: '#166534', minWidth: 28, textAlign: 'right' },
+  bucketCount: { fontSize: 18, fontWeight: '700', color: appBrand.colors.primary, minWidth: 28, textAlign: 'right' },
   bucketCountDisabled: { color: '#9ca3af' },
   listFlex: { flex: 1 },
   listPad: { paddingBottom: 32 },
@@ -565,7 +566,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: '#f8fafc',
   },
-  when: { fontSize: 13, fontWeight: '600', color: '#166534', marginBottom: 6 },
+  when: { fontSize: 13, fontWeight: '600', color: appBrand.colors.primary, marginBottom: 6 },
   whenEnRoute: { color: '#1d4ed8' },
   route: { fontSize: 15, fontWeight: '600', color: '#111' },
   meta: { fontSize: 13, color: '#6b7280', marginTop: 8 },
@@ -583,6 +584,6 @@ const styles = StyleSheet.create({
   cancelChipText: { fontSize: 12, fontWeight: '700', color: '#b91c1c' },
   empty: { alignItems: 'center', paddingVertical: 40 },
   emptyText: { fontSize: 16, color: '#6b7280', textAlign: 'center', marginBottom: 16 },
-  linkBtn: { backgroundColor: '#166534', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
+  linkBtn: { backgroundColor: appBrand.colors.primary, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
   linkBtnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
 });
