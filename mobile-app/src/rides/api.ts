@@ -1177,7 +1177,7 @@ export async function fetchMyBookings(passengerId: string) {
     .from('bookings')
     .select(
       `
-      id, ride_id, seats_count, price_paid, status, pickup_label, dropoff_label, created_at,
+      id, booking_code, ride_id, seats_count, price_paid, status, pickup_label, dropoff_label, created_at,
       ride:rides(
         id, status, origin_label, destination_label, departure_time, price_per_seat,
         driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, vehicle_photo_url, rating_average, rating_count)

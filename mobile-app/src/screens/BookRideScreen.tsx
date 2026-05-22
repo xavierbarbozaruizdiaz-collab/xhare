@@ -23,6 +23,7 @@ import { reverseGeocodeStructured } from '../backend/geocodeApi';
 import { saveExtraStops } from '../backend/api';
 import { fetchRideForReserve, fetchRidePublicMapPoints, type RideStopForReserve } from '../rides/api';
 import { nearestRideStopIdForBookingPoint } from '../lib/bookingStopLink';
+import { formatProfileRatingLabel } from '../lib/profileRating';
 import { PickupDropoffMapView, type MapPoint, type ExtraStopPoint, type DriverStopMarker } from '../components/PickupDropoffMapView';
 import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
 import { loadRidePolyline } from '../lib/resolveRidePolyline';
@@ -711,12 +712,14 @@ export function BookRideScreen() {
       {driver ? (
         <View style={styles.driverBox}>
           <Text style={styles.driverName}>{driver.full_name ?? 'Conductor'}</Text>
-          {driver.rating_average != null && (
+          {driver ? (
             <Text style={styles.rating}>
-              ★ {Number(driver.rating_average).toFixed(1)}
-              {driver.rating_count ? ` · ${driver.rating_count} viajes` : ''}
+              ★ {formatProfileRatingLabel(driver.rating_average, driver.rating_count)}
+              {(driver.rating_count ?? 0) > 0
+                ? ` · ${driver.rating_count} calificación${driver.rating_count !== 1 ? 'es' : ''}`
+                : ''}
             </Text>
-          )}
+          ) : null}
         </View>
       ) : null}
 

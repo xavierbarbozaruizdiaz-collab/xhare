@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
+import { createServiceClient } from '@/lib/supabase/server';
+import { trySendPickupApproachPush } from '@/lib/push/trySendPickupApproachPush';
 
 const locationSchema = z.object({
   lat: z.number().min(-90).max(90),
@@ -85,6 +87,13 @@ export async function POST(
     if (updateError) {
       console.error('[ride-location] update error:', updateError.message);
       return NextResponse.json({ error: 'No se pudo actualizar la ubicación del conductor.' }, { status: 400 });
+    }
+
+    try {
+      const service = createServiceClient();
+      await trySendPickupApproachPush(service, rideId, validated.lat, validated.lng);
+    } catch (e) {
+      console.error('[ride-location] pickup approach push', e);
     }
 
     return NextResponse.json({ success: true });

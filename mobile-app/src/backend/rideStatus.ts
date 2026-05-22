@@ -169,6 +169,30 @@ async function updateRideStatusDirectSupabase(
   return { ok: true };
 }
 
+/** Push de inicio de trayecto si el update fue directo en Supabase (sin update-status). */
+async function notifyPassengersEnRoutePushIfPossible(rideId: string, accessToken: string): Promise<void> {
+  const base = env.apiBaseUrl?.trim().replace(/\/+$/, '');
+  if (!base || !accessToken.trim()) return;
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 12_000);
+    try {
+      await fetch(`${base}/api/rides/${encodeURIComponent(rideId)}/notify-en-route`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    /* no bloquear flujo del conductor */
+  }
+}
+
 async function postNextUpdateStatus(
   rideId: string,
   status: RideStatusUpdate,
@@ -300,6 +324,9 @@ export async function updateRideStatus(
     if (res.status === 401) {
       const direct = await updateRideStatusDirectSupabase(rideId, status);
       if (direct.ok) {
+        if (status === 'en_route') {
+          void notifyPassengersEnRoutePushIfPossible(rideId, token);
+        }
         return { ok: true };
       }
       return { ok: false, error: direct.error ?? 'unauthorized', details: direct.details };

@@ -7,6 +7,7 @@ import * as platform from '@/lib/platform';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { getPositionAlongPolyline } from '@/lib/geo';
+import { DEFAULT_RATING_STARS, formatProfileRatingLabel, PROFILE_RATING_WINDOW } from '@/lib/profile-rating';
 
 const RideRouteMap = dynamic(() => import('@/components/RideRouteMap'), { ssr: false });
 
@@ -50,8 +51,8 @@ export default function RideDetailClient() {
   const [passengerNames, setPassengerNames] = useState<Record<string, string>>({});
   const [rateDriverModalOpen, setRateDriverModalOpen] = useState(false);
   const [ratePassengerModalOpen, setRatePassengerModalOpen] = useState(false);
-  const [rateDriverStars, setRateDriverStars] = useState(0);
-  const [ratePassengerStars, setRatePassengerStars] = useState(0);
+  const [rateDriverStars, setRateDriverStars] = useState(DEFAULT_RATING_STARS);
+  const [ratePassengerStars, setRatePassengerStars] = useState(DEFAULT_RATING_STARS);
   const [passengerToRate, setPassengerToRate] = useState<{ passengerId: string; fullName: string } | null>(null);
   const [submittingRating, setSubmittingRating] = useState(false);
   const [skippedRateDriver, setSkippedRateDriver] = useState(false);
@@ -107,11 +108,30 @@ export default function RideDetailClient() {
   useEffect(() => {
     if (!ride || !currentUser || ride.driver_id === currentUser.id) return;
     const myB = (bookings || []).find((b: any) => b.passenger_id === currentUser.id);
-    if (ride.status === 'completed' && myB && !hasRatedDriver && !skippedRateDriver && !rateDriverModalOpen) {
+    if (!myB) return;
+    const dropped = boardingEvents.some(
+      (e) => e.booking_id === myB.id && e.event_type === 'dropped_off'
+    );
+    const canPrompt =
+      (ride.status === 'en_route' || ride.status === 'completed') &&
+      dropped &&
+      !hasRatedDriver &&
+      !skippedRateDriver &&
+      !rateDriverModalOpen;
+    if (canPrompt) {
       setRateDriverModalOpen(true);
-      setRateDriverStars(0);
+      setRateDriverStars(DEFAULT_RATING_STARS);
     }
-  }, [ride?.status, ride?.driver_id, currentUser?.id, bookings, hasRatedDriver, skippedRateDriver, rateDriverModalOpen]);
+  }, [
+    ride?.status,
+    ride?.driver_id,
+    currentUser?.id,
+    bookings,
+    boardingEvents,
+    hasRatedDriver,
+    skippedRateDriver,
+    rateDriverModalOpen,
+  ]);
 
   // Actualizar datos del viaje (posición del conductor) cada 15 s cuando está en curso (producción)
   useEffect(() => {
@@ -800,7 +820,7 @@ export default function RideDetailClient() {
         const firstToRate = droppedPassengerIds.find((id) => !rated.has(id));
         if (firstToRate) {
           setPassengerToRate({ passengerId: firstToRate, fullName: passengerNames[firstToRate] ?? 'Pasajero' });
-          setRatePassengerStars(0);
+          setRatePassengerStars(DEFAULT_RATING_STARS);
           setRatePassengerModalOpen(true);
         }
       }
@@ -1130,11 +1150,9 @@ export default function RideDetailClient() {
                 <div>
                   <p className="font-semibold text-gray-900">{driver.full_name || 'Conductor'}</p>
                   <p className="text-sm text-gray-500">
-                    {driver.rating_average != null
-                      ? `★ ${Number(driver.rating_average).toFixed(1)}`
-                      : 'Nuevo'}
+                    ★ {formatProfileRatingLabel(driver.rating_average, driver.rating_count)}
                     {driver.rating_count != null && driver.rating_count > 0 && (
-                      <span className="text-gray-400"> · {driver.rating_count} viaje{driver.rating_count !== 1 ? 's' : ''}</span>
+                      <span className="text-gray-400"> · {driver.rating_count} calificación{driver.rating_count !== 1 ? 'es' : ''}</span>
                     )}
                   </p>
                 </div>
@@ -1393,7 +1411,10 @@ export default function RideDetailClient() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="rate-driver-title">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
             <h2 id="rate-driver-title" className="text-lg font-semibold text-gray-900 mb-3">Calificar chofer</h2>
-            <p className="text-sm text-gray-600 mb-4">¿Cómo fue tu experiencia con el conductor?</p>
+            <p className="text-sm text-gray-600 mb-4">
+              ¿Cómo fue tu experiencia con el conductor? Por defecto 5 estrellas. El promedio público se
+              recalcula cuando el conductor acumula {PROFILE_RATING_WINDOW} calificaciones.
+            </p>
             <div className="flex gap-2 justify-center mb-6">
               {[1, 2, 3, 4, 5].map((n) => (
                 <button
@@ -1433,7 +1454,10 @@ export default function RideDetailClient() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="rate-passenger-title">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
             <h2 id="rate-passenger-title" className="text-lg font-semibold text-gray-900 mb-3">Calificar pasajero</h2>
-            <p className="text-sm text-gray-600 mb-4">¿Cómo fue tu experiencia con <strong>{passengerToRate.fullName}</strong>?</p>
+            <p className="text-sm text-gray-600 mb-4">
+              ¿Cómo fue tu experiencia con <strong>{passengerToRate.fullName}</strong>? Por defecto 5 estrellas.
+              El promedio público se recalcula al llegar a {PROFILE_RATING_WINDOW} calificaciones.
+            </p>
             <div className="flex gap-2 justify-center mb-6">
               {[1, 2, 3, 4, 5].map((n) => (
                 <button
@@ -1450,7 +1474,13 @@ export default function RideDetailClient() {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => { setRatePassengerModalOpen(false); setPassengerToRate(null); }}
+                onClick={() => {
+                  if (passengerToRate) {
+                    setPassengerRatingsGiven((prev) => new Set(prev).add(passengerToRate.passengerId));
+                  }
+                  setRatePassengerModalOpen(false);
+                  setPassengerToRate(null);
+                }}
                 className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50"
               >
                 Omitir

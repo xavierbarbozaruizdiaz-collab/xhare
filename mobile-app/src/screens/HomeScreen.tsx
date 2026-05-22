@@ -80,6 +80,7 @@ import {
   fetchMyBookings,
 } from '../rides/api';
 import { supabase } from '../backend/supabase';
+import { formatProfileRatingStars } from '../lib/profileRating';
 import { updateRideStatus } from '../backend/rideStatus';
 import {
   loadDriverHomeTemplateRows,
@@ -511,7 +512,7 @@ export function HomeScreen() {
       const [convos, completedRidesRes, profileRes, pendingReqRes] = await Promise.all([
         fetchMyConversations(uid),
         supabase.from('rides').select('id').eq('driver_id', uid).eq('status', 'completed'),
-        supabase.from('profiles').select('rating_average').eq('id', uid).maybeSingle(),
+        supabase.from('profiles').select('rating_average, rating_count').eq('id', uid).maybeSingle(),
         supabase
           .from('trip_requests')
           .select('id', { count: 'exact', head: true })
@@ -538,8 +539,9 @@ export function HomeScreen() {
       }
       const unread = convos.reduce((acc, c) => acc + Math.max(0, Number(c.unread_count) || 0), 0);
       setDriverHomeMessagesBadge(unread);
-      const ra = (profileRes.data as { rating_average?: number | null } | null)?.rating_average;
-      setDriverRatingAvg(ra != null && Number.isFinite(Number(ra)) ? Number(ra) : null);
+      const prof = profileRes.data as { rating_average?: number | null; rating_count?: number | null } | null;
+      const stars = formatProfileRatingStars(prof?.rating_average, prof?.rating_count);
+      setDriverRatingAvg(stars != null ? Number(stars) : null);
       setDriverPendingTripRequestsBadge(typeof pendingReqRes.count === 'number' ? pendingReqRes.count : 0);
     } catch {
       setDriverHomeMessagesBadge(0);
@@ -1788,7 +1790,7 @@ export function HomeScreen() {
               </View>
               <View style={styles.driverStatCard}>
                 <Text style={styles.driverStatValue}>
-                  {driverRatingAvg != null ? `${driverRatingAvg.toFixed(1)}★` : '—'}
+                  {driverRatingAvg != null ? `${driverRatingAvg.toFixed(1)}★` : 'Nuevo'}
                 </Text>
                 <Text style={styles.driverStatLabel}>Calificación</Text>
               </View>

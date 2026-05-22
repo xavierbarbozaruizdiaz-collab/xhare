@@ -42,7 +42,29 @@ import {
 import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
 import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
 import { getSharedTripTrackingUrl } from '../lib/publicWeb';
-import { confirmRideBookingPayment, arriveAtStop, setRideAwaitingStopConfirmation } from '../backend/api';
+import {
+  confirmRideBookingPayment,
+  arriveAtStop,
+  ratePassenger,
+  setRideAwaitingStopConfirmation,
+} from '../backend/api';
+import {
+  DEFAULT_RATING_STARS,
+  formatProfileRatingLabel,
+  PROFILE_RATING_WINDOW,
+} from '../lib/profileRating';
+import {
+  ARRIVE_GATE_M,
+  ARRIVE_NEAR_BUS_M,
+  driverNearArriveAnchor,
+  dropoffBookingsForArriveModal,
+  extraPickupBookingsNearBus,
+  nearestPublishedStopOrder,
+  primaryDropoffBookingsForVisit,
+  primaryPickupBookingsForVisit,
+  type ArriveVisitKind,
+} from '../lib/rideArriveVisit';
+import { formatBookingTicketCode } from '../lib/bookingCode';
 import { requestLocationPermission } from '../permissions';
 import { getOriginForExternalNavigation } from '../location/getOriginForExternalNavigation';
 import {
@@ -55,11 +77,10 @@ type ScreenRoute = RouteProp<MainStackParamList, 'RideDetail'>;
 
 /** No duplicar en el mapa el pin “otro pasajero” si coincide con tu subida/bajada/paradas extra. */
 const CO_PASSENGER_DEDUP_M = 35;
-/** Debe coincidir con backend (`ARRIVE_DRIVER_MAX_DISTANCE_M`). */
-const ARRIVE_ALLOWED_DISTANCE_M = 520;
 
 type PassengerBookingSummary = {
   id: string;
+  booking_code: string | null;
   status: string;
   seats_count: number;
   price_paid: number;
@@ -85,7 +106,9 @@ function polylineLengthMeters(points: Point[]): number {
 
 type DriverBookingStop = {
   id: string;
+  booking_code: string | null;
   passenger_id: string;
+  seats_count: number;
   status: string;
   pickup_stop_id: string | null;
   dropoff_stop_id: string | null;
@@ -121,18 +144,6 @@ function bookingPickupNearPublishedStop(b: DriverBookingStop, stop: RideStopForR
   if (b.pickup_stop_id != null && b.pickup_stop_id === stop.id) return true;
   if (b.pickup_stop_id != null) return false;
   const p = bookingPickupPoint(b);
-  if (!p) return false;
-  const slat = Number(stop.lat);
-  const slng = Number(stop.lng);
-  if (!Number.isFinite(slat) || !Number.isFinite(slng)) return false;
-  return distanceMeters(p, { lat: slat, lng: slng }) <= BOOKING_TO_PUBLISHED_STOP_NEAR_M;
-}
-
-function bookingDropoffNearPublishedStop(b: DriverBookingStop, stop: RideStopForReserve | undefined): boolean {
-  if (!stop || b.status === 'cancelled') return false;
-  if (b.dropoff_stop_id != null && b.dropoff_stop_id === stop.id) return true;
-  if (b.dropoff_stop_id != null) return false;
-  const p = bookingDropoffPoint(b);
   if (!p) return false;
   const slat = Number(stop.lat);
   const slng = Number(stop.lng);
@@ -187,21 +198,6 @@ function externalNavTargetForStop(
   return stopCenter;
 }
 
-function mapVisitRowIsCurrent(
-  row: OrderedMapVisitRow,
-  currentNavStop: RideStopForReserve | undefined,
-  bookings: DriverBookingStop[]
-): boolean {
-  if (!currentNavStop) return false;
-  if (row.kind === 'published' && row.rideStopId === currentNavStop.id) return true;
-  if (!row.bookingId) return false;
-  const b = bookings.find((x) => x.id === row.bookingId);
-  if (!b) return false;
-  if (row.kind === 'pickup') return bookingPickupNearPublishedStop(b, currentNavStop);
-  if (row.kind === 'dropoff') return bookingDropoffNearPublishedStop(b, currentNavStop);
-  return false;
-}
-
 type BoardingEventRow = { booking_id: string; stop_index: number; event_type: string };
 
 type MapVisitProgress = 'done' | 'current' | 'upcoming';
@@ -232,32 +228,23 @@ function visitRowIsDone(
   return false;
 }
 
-/**
- * Progreso por fila alineado al orden del mapa/OSRM: como mucho una fila “En camino” (la primera en la lista que
- * coincide con la parada publicada actual del viaje).
- */
+/** Progreso por fila del recorrido: “En camino” = primera visita pendiente en orden del mapa. */
 function resolveMapVisitProgressList(
   rows: OrderedMapVisitRow[],
   ctx: {
     status: string;
-    currentNavStop: RideStopForReserve | undefined;
-    driverRideBookings: DriverBookingStop[];
     boardingEvents: BoardingEventRow[];
     rideStopsSorted: RideStopForReserve[];
   }
 ): MapVisitProgress[] {
-  const { status, currentNavStop, driverRideBookings, boardingEvents, rideStopsSorted } = ctx;
+  const { status, boardingEvents, rideStopsSorted } = ctx;
   const doneFlags = rows.map((row) => visitRowIsDone(row, boardingEvents, rideStopsSorted));
   if (status !== 'en_route') {
     return doneFlags.map((d) => (d ? 'done' : 'upcoming'));
   }
-  const canCurrent = rows.map(
-    (row, i) =>
-      !doneFlags[i] && mapVisitRowIsCurrent(row, currentNavStop, driverRideBookings)
-  );
   let win = -1;
   for (let i = 0; i < rows.length; i++) {
-    if (canCurrent[i]) {
+    if (!doneFlags[i]) {
       win = i;
       break;
     }
@@ -306,6 +293,49 @@ function publishedStopRowProgress(
   return 'upcoming';
 }
 
+function formatSeatsLine(seats: number): string {
+  const n = Math.max(1, Math.round(seats));
+  return n === 1 ? '1 asiento' : `${n} asientos`;
+}
+
+/** Conductor: ticket grande; dirección y detalle secundarios (sobre todo en bloques desplegables). */
+function ArrivePassengerRowHeader({
+  kind,
+  booking,
+  showAmount,
+  ticketEmphasis,
+}: {
+  kind: 'pickup' | 'dropoff';
+  booking: DriverBookingStop;
+  showAmount?: boolean;
+  ticketEmphasis?: boolean;
+}) {
+  const ticket = formatBookingTicketCode(booking.booking_code);
+  const place =
+    kind === 'pickup'
+      ? booking.pickup_label?.trim() || 'Punto de subida'
+      : booking.dropoff_label?.trim() || 'Punto de bajada';
+  const seats = Math.max(1, Number(booking.seats_count ?? 1));
+  return (
+    <>
+      {ticket ? (
+        <Text style={ticketEmphasis ? styles.arriveTicketHero : styles.arriveTicketCode}>{ticket}</Text>
+      ) : (
+        <Text style={styles.arriveTicketMissing}>Sin código de ticket</Text>
+      )}
+      <Text style={styles.arrivePlaceMuted} numberOfLines={2}>
+        {kind === 'pickup' ? 'Subida' : 'Bajada'} · {place}
+      </Text>
+      <Text style={styles.arriveSeatsLine}>{formatSeatsLine(seats)}</Text>
+      {showAmount ? (
+        <Text style={styles.arriveAmount}>
+          {booking.price_paid.toLocaleString('es-PY')} PYG · cobro al subir
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
 function bookingStatusLabel(status: string): string {
   switch (status) {
     case 'pending':
@@ -334,7 +364,8 @@ function canPassengerCancelReservation(bookingStatus: string, rideStatus: string
 function canPassengerShareSafetyTracking(
   booking: PassengerBookingSummary | null,
   rideStatus: string,
-  shareCode: unknown
+  shareCode: unknown,
+  boardingEvents: BoardingEventRow[]
 ): boolean {
   if (!booking) return false;
   const code = typeof shareCode === 'string' ? shareCode.trim() : '';
@@ -342,7 +373,16 @@ function canPassengerShareSafetyTracking(
   const bs = String(booking.status ?? '');
   if (bs === 'cancelled' || bs === 'completed') return false;
   if (bs !== 'pending' && bs !== 'confirmed') return false;
-  return String(rideStatus ?? '') === 'en_route';
+  if (String(rideStatus ?? '') !== 'en_route') return false;
+  const bid = booking.id;
+  if (
+    boardingEvents.some(
+      (e) => String(e.booking_id) === bid && String(e.event_type) === 'dropped_off'
+    )
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function friendlyStatusError(code: string | undefined, details?: string): string {
@@ -399,13 +439,22 @@ export function RideDetailScreen() {
   const [bookingDetailsExpanded, setBookingDetailsExpanded] = useState(false);
   const [arriveModalOpen, setArriveModalOpen] = useState(false);
   const [arriveDecisions, setArriveDecisions] = useState<Record<string, 'boarded' | 'no_show' | 'dropped_off'>>({});
-  const [arrivePaymentConfirmed, setArrivePaymentConfirmed] = useState<Record<string, boolean>>({});
+  const [arriveExtraExpanded, setArriveExtraExpanded] = useState(false);
+  const [arriveDropExpanded, setArriveDropExpanded] = useState(false);
+  const [arriveDriverPoint, setArriveDriverPoint] = useState<Point | null>(null);
   const [submittingArrive, setSubmittingArrive] = useState(false);
   /** Lista orden mapa (muchos ítems): colapsada por defecto. */
   const [mapRouteListExpanded, setMapRouteListExpanded] = useState(false);
   /** Lista “paradas publicadas”; el conductor la abre solo si la necesita. */
   const [driverPublishedStopsExpanded, setDriverPublishedStopsExpanded] = useState(false);
   const [boardingEvents, setBoardingEvents] = useState<BoardingEventRow[]>([]);
+  const [passengerRatingsGiven, setPassengerRatingsGiven] = useState<Set<string>>(new Set());
+  const [ratePassengerModalOpen, setRatePassengerModalOpen] = useState(false);
+  const [ratePassengerStars, setRatePassengerStars] = useState(DEFAULT_RATING_STARS);
+  const [passengerToRate, setPassengerToRate] = useState<{ passengerId: string; displayName: string } | null>(
+    null
+  );
+  const [submittingPassengerRating, setSubmittingPassengerRating] = useState(false);
   /** Evita re-render del mapa si el poll silencioso no cambió datos visibles (menos parpadeo / menos OSRM). */
   const rideVisualSigRef = useRef<string>('');
 
@@ -420,7 +469,7 @@ export function RideDetailScreen() {
     const { data, error } = await supabase
       .from('bookings')
       .select(
-        'id, status, seats_count, price_paid, pickup_stop_id, dropoff_stop_id, pickup_label, dropoff_label, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
+        'id, booking_code, status, seats_count, price_paid, pickup_stop_id, dropoff_stop_id, pickup_label, dropoff_label, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
       )
       .eq('ride_id', rideId)
       .eq('passenger_id', session.id)
@@ -440,6 +489,7 @@ export function RideDetailScreen() {
     }
     setPassengerBooking({
       id: String(data.id),
+      booking_code: data.booking_code != null ? String(data.booking_code) : null,
       status: String(data.status ?? ''),
       seats_count: Math.max(1, Number(data.seats_count ?? 1)),
       price_paid: Number(data.price_paid ?? 0),
@@ -566,17 +616,32 @@ export function RideDetailScreen() {
     );
   }, [coPassengerDropoffs, passengerMapGeo]);
 
+  const refetchPassengerBoardingEvents = useCallback(async () => {
+    if (!passengerBooking?.id || !rideId) {
+      return;
+    }
+    if (String(ride?.status ?? '') !== 'en_route') {
+      setBoardingEvents([]);
+      return;
+    }
+    const { data: ev, error: evErr } = await supabase
+      .from('ride_boarding_events')
+      .select('booking_id, stop_index, event_type')
+      .eq('ride_id', rideId)
+      .eq('booking_id', passengerBooking.id);
+    if (!evErr) setBoardingEvents((ev ?? []) as BoardingEventRow[]);
+  }, [rideId, ride?.status, passengerBooking?.id]);
+
   const refetchDriverBookingPins = useCallback(async () => {
     if (!session?.id || !ride || String(ride.driver_id) !== String(session.id)) {
       setDriverBookingPins([]);
       setDriverRideBookings([]);
-      setBoardingEvents([]);
       return;
     }
     const { data, error } = await supabase
       .from('bookings')
       .select(
-        'id, passenger_id, status, pickup_stop_id, dropoff_stop_id, pickup_label, dropoff_label, price_paid, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
+        'id, booking_code, passenger_id, seats_count, status, pickup_stop_id, dropoff_stop_id, pickup_label, dropoff_label, price_paid, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
       )
       .eq('ride_id', rideId)
       .neq('status', 'cancelled');
@@ -584,7 +649,9 @@ export function RideDetailScreen() {
     setDriverRideBookings(
       (data ?? []).map((row: Record<string, unknown>) => ({
         id: String(row.id ?? ''),
+        booking_code: row.booking_code != null ? String(row.booking_code) : null,
         passenger_id: String(row.passenger_id ?? ''),
+        seats_count: Math.max(1, Number(row.seats_count ?? 1)),
         status: String(row.status ?? ''),
         pickup_stop_id: row.pickup_stop_id != null ? String(row.pickup_stop_id) : null,
         dropoff_stop_id: row.dropoff_stop_id != null ? String(row.dropoff_stop_id) : null,
@@ -609,13 +676,20 @@ export function RideDetailScreen() {
     setDriverBookingPins(pins);
 
     if (String(ride.status ?? '') === 'en_route') {
-      const { data: ev, error: evErr } = await supabase
-        .from('ride_boarding_events')
-        .select('booking_id, stop_index, event_type')
-        .eq('ride_id', rideId);
+      const [{ data: ev, error: evErr }, { data: pr }] = await Promise.all([
+        supabase
+          .from('ride_boarding_events')
+          .select('booking_id, stop_index, event_type')
+          .eq('ride_id', rideId),
+        supabase.from('passenger_ratings').select('passenger_id').eq('ride_id', rideId),
+      ]);
       if (!evErr) setBoardingEvents((ev ?? []) as BoardingEventRow[]);
+      setPassengerRatingsGiven(
+        new Set((pr ?? []).map((r: { passenger_id: string }) => String(r.passenger_id)))
+      );
     } else {
       setBoardingEvents([]);
+      setPassengerRatingsGiven(new Set());
     }
   }, [rideId, session?.id, ride]);
 
@@ -699,13 +773,66 @@ export function RideDetailScreen() {
   }, [refetchDriverBookingPins]);
 
   useEffect(() => {
+    void refetchPassengerBoardingEvents();
+  }, [refetchPassengerBoardingEvents]);
+
+  useEffect(() => {
     void refetchCoPassengerMapPoints();
   }, [refetchCoPassengerMapPoints]);
+
+  const promptRatePassengerAfterDrop = useCallback(
+    async (droppedBookings: DriverBookingStop[]) => {
+      if (droppedBookings.length === 0) return;
+      const { data: pr } = await supabase
+        .from('passenger_ratings')
+        .select('passenger_id')
+        .eq('ride_id', rideId);
+      const rated = new Set((pr ?? []).map((r: { passenger_id: string }) => String(r.passenger_id)));
+      setPassengerRatingsGiven(rated);
+      const first = droppedBookings.find((b) => b.passenger_id && !rated.has(b.passenger_id));
+      if (!first?.passenger_id) return;
+      let displayName = formatBookingTicketCode(first.booking_code) || first.pickup_label?.trim() || 'Pasajero';
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', first.passenger_id)
+        .maybeSingle();
+      if (prof?.full_name && String(prof.full_name).trim()) {
+        displayName = String(prof.full_name).trim();
+      }
+      setPassengerToRate({ passengerId: first.passenger_id, displayName });
+      setRatePassengerStars(DEFAULT_RATING_STARS);
+      setRatePassengerModalOpen(true);
+    },
+    [rideId]
+  );
+
+  const submitRatePassenger = useCallback(async () => {
+    if (!passengerToRate || ratePassengerStars < 1 || ratePassengerStars > 5 || submittingPassengerRating) {
+      return;
+    }
+    setSubmittingPassengerRating(true);
+    try {
+      await ratePassenger(rideId, passengerToRate.passengerId, ratePassengerStars);
+      setPassengerRatingsGiven((prev) => new Set(prev).add(passengerToRate.passengerId));
+      setRatePassengerModalOpen(false);
+      setPassengerToRate(null);
+      Alert.alert('Gracias', 'Calificación del pasajero registrada.');
+    } catch (e) {
+      Alert.alert(
+        'No se pudo calificar',
+        e instanceof Error ? e.message : 'Intentá de nuevo en un momento.'
+      );
+    } finally {
+      setSubmittingPassengerRating(false);
+    }
+  }, [rideId, passengerToRate, ratePassengerStars, submittingPassengerRating]);
 
   useFocusEffect(
     useCallback(() => {
       void load({ quiet: true });
       void loadPassengerBooking();
+      void refetchPassengerBoardingEvents();
       void refetchDriverBookingPins();
       void refetchCoPassengerMapPoints();
       if (
@@ -719,7 +846,16 @@ export function RideDetailScreen() {
           if (!active) await startDriverTrackingInBackground(rideId);
         })();
       }
-    }, [load, loadPassengerBooking, refetchDriverBookingPins, refetchCoPassengerMapPoints, session?.id, ride, rideId])
+    }, [
+      load,
+      loadPassengerBooking,
+      refetchPassengerBoardingEvents,
+      refetchDriverBookingPins,
+      refetchCoPassengerMapPoints,
+      session?.id,
+      ride,
+      rideId,
+    ])
   );
 
   const handleCancelPassengerBooking = useCallback(() => {
@@ -757,7 +893,7 @@ export function RideDetailScreen() {
 
   const handleSharePassengerSafetyTracking = useCallback(() => {
     const code = ride?.share_code != null ? String(ride.share_code).trim() : '';
-    const url = getSharedTripTrackingUrl(code);
+    const url = getSharedTripTrackingUrl(code, passengerBooking?.id);
     if (!url) {
       Alert.alert(
         'No disponible',
@@ -765,9 +901,9 @@ export function RideDetailScreen() {
       );
       return;
     }
-    const message = `Seguí mi viaje en Xhare (solo lectura):\n${url}`;
+    const message = `Seguí mi viaje en Xhare (solo lectura). El enlace deja de actualizarse cuando baje del minibús:\n${url}`;
     void Share.share(Platform.OS === 'ios' ? { message, url } : { message });
-  }, [ride?.share_code]);
+  }, [ride?.share_code, passengerBooking?.id]);
 
   /** Poll de UI: pasajero con reserva ve avances y pin en mapa sin salir de pantalla. */
   useEffect(() => {
@@ -785,6 +921,7 @@ export function RideDetailScreen() {
     const t = setInterval(() => {
       void load({ quiet: true });
       void loadPassengerBooking();
+      if (isPassengerWithBooking) void refetchPassengerBoardingEvents();
       if (isDriver) {
         void refetchDriverBookingPins();
         if (st === 'en_route') {
@@ -805,6 +942,7 @@ export function RideDetailScreen() {
     loadPassengerBooking,
     refetchDriverBookingPins,
     refetchCoPassengerMapPoints,
+    refetchPassengerBoardingEvents,
   ]);
 
   useEffect(() => {
@@ -944,39 +1082,29 @@ export function RideDetailScreen() {
       return mapVisitOrderRows.map(() => 'upcoming' as MapVisitProgress);
     }
     const st = String(ride.status ?? '');
-    const rawIdx = Number(ride.current_stop_index ?? 0);
-    const len = rideStops.length;
-    const hasCur = len > 0 && Number.isFinite(rawIdx) && rawIdx >= 0 && rawIdx < len;
-    const currentNav = hasCur ? rideStops[rawIdx] : undefined;
     return resolveMapVisitProgressList(mapVisitOrderRows, {
       status: st,
-      currentNavStop: currentNav,
-      driverRideBookings,
       boardingEvents,
       rideStopsSorted: rideStops,
     });
-  }, [
-    ride,
-    rideStops,
-    mapVisitOrderRows,
-    driverRideBookings,
-    boardingEvents,
-  ]);
+  }, [ride, rideStops, mapVisitOrderRows, boardingEvents]);
+
+  const currentVisitIndex = useMemo(
+    () => mapVisitProgressList.findIndex((p) => p === 'current'),
+    [mapVisitProgressList]
+  );
+
+  const currentVisitRow = useMemo((): OrderedMapVisitRow | null => {
+    if (currentVisitIndex < 0) return null;
+    return mapVisitOrderRows[currentVisitIndex] ?? null;
+  }, [currentVisitIndex, mapVisitOrderRows]);
 
   const orderedNavigationTarget = useMemo((): Point | null => {
-    if (!ride || String(ride.status ?? '') !== 'en_route') return null;
-    const rawIdx = Number(ride.current_stop_index ?? 0);
-    const len = rideStops.length;
-    const hasCur = len > 0 && Number.isFinite(rawIdx) && rawIdx >= 0 && rawIdx < len;
-    const currentNav = hasCur ? rideStops[rawIdx] : undefined;
-    if (!hasCur || !currentNav) return null;
-    const curIdx = mapVisitProgressList.findIndex((p) => p === 'current');
-    if (curIdx >= 0 && mapVisitOrderRows[curIdx]) {
-      const t = navTargetForMapVisitRow(mapVisitOrderRows[curIdx], rideStops, driverRideBookings);
-      if (t && Number.isFinite(t.lat) && Number.isFinite(t.lng)) return t;
-    }
-    return externalNavTargetForStop(currentNav, driverRideBookings);
-  }, [ride, rideStops, mapVisitOrderRows, mapVisitProgressList, driverRideBookings]);
+    if (!ride || String(ride.status ?? '') !== 'en_route' || !currentVisitRow) return null;
+    const t = navTargetForMapVisitRow(currentVisitRow, rideStops, driverRideBookings);
+    if (t && Number.isFinite(t.lat) && Number.isFinite(t.lng)) return t;
+    return null;
+  }, [ride, rideStops, currentVisitRow, driverRideBookings]);
 
   /** Antes de cualquier return: useCallback no puede ir después de branches (Rules of Hooks). */
   const canContactDriver = useMemo(() => {
@@ -1024,6 +1152,92 @@ export function RideDetailScreen() {
     };
   }, [ride, passengerBooking, session?.id, canContactDriver]);
 
+  const visitKind: ArriveVisitKind = currentVisitRow?.kind ?? 'published';
+  const visitBookingId = currentVisitRow?.bookingId;
+  const arriveAnchor = orderedNavigationTarget;
+  const arriveDriverForLists = arriveDriverPoint ?? driverLocationForMap ?? arriveAnchor;
+
+  const primaryArrivePickups = useMemo(() => {
+    if (visitKind !== 'pickup') return [] as DriverBookingStop[];
+    return primaryPickupBookingsForVisit(
+      driverRideBookings,
+      boardingEvents,
+      visitBookingId
+    ) as DriverBookingStop[];
+  }, [visitKind, visitBookingId, driverRideBookings, boardingEvents]);
+
+  const primaryArriveDropoffs = useMemo(() => {
+    if (visitKind !== 'dropoff') return [] as DriverBookingStop[];
+    return primaryDropoffBookingsForVisit(
+      driverRideBookings,
+      boardingEvents,
+      visitBookingId
+    ) as DriverBookingStop[];
+  }, [visitKind, visitBookingId, driverRideBookings, boardingEvents]);
+
+  const primaryArriveIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const b of primaryArrivePickups) s.add(b.id);
+    for (const b of primaryArriveDropoffs) s.add(b.id);
+    return s;
+  }, [primaryArrivePickups, primaryArriveDropoffs]);
+
+  const extraArrivePickups = useMemo(() => {
+    if (!arriveDriverForLists) return [] as DriverBookingStop[];
+    return extraPickupBookingsNearBus(
+      driverRideBookings,
+      boardingEvents,
+      arriveDriverForLists,
+      primaryArriveIds
+    ) as DriverBookingStop[];
+  }, [driverRideBookings, boardingEvents, arriveDriverForLists, primaryArriveIds]);
+
+  const dropoffArriveList = useMemo(() => {
+    if (!arriveDriverForLists || !arriveAnchor) return [] as DriverBookingStop[];
+    return dropoffBookingsForArriveModal(
+      driverRideBookings,
+      boardingEvents,
+      arriveDriverForLists,
+      resolvedRideRoute.points,
+      visitKind,
+      visitBookingId,
+      arriveAnchor
+    ) as DriverBookingStop[];
+  }, [
+    driverRideBookings,
+    boardingEvents,
+    arriveDriverForLists,
+    resolvedRideRoute.points,
+    visitKind,
+    visitBookingId,
+    arriveAnchor,
+  ]);
+
+  const arriveModalHasWork =
+    primaryArrivePickups.length > 0 ||
+    primaryArriveDropoffs.length > 0 ||
+    extraArrivePickups.length > 0 ||
+    dropoffArriveList.length > 0;
+
+  const allArriveDecisionsSet = useMemo(() => {
+    if (!arriveModalHasWork) return true;
+    const pickupRows = [...primaryArrivePickups, ...extraArrivePickups];
+    const pickupsOk = pickupRows.every((b) => {
+      const v = arriveDecisions[`pickup:${b.id}`];
+      return v === 'boarded' || v === 'no_show';
+    });
+    const dropRows = [...primaryArriveDropoffs, ...dropoffArriveList];
+    const dropsOk = dropRows.every((b) => arriveDecisions[`dropoff:${b.id}`] === 'dropped_off');
+    return pickupsOk && dropsOk;
+  }, [
+    arriveModalHasWork,
+    primaryArrivePickups,
+    extraArrivePickups,
+    primaryArriveDropoffs,
+    dropoffArriveList,
+    arriveDecisions,
+  ]);
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -1046,10 +1260,14 @@ export function RideDetailScreen() {
   const driver = ride.driver as {
     full_name?: string;
     rating_average?: number;
+    rating_count?: number;
     avatar_url?: string | null;
     vehicle_photo_url?: string | null;
   } | null;
   const isOwn = Boolean(session?.id && ride.driver_id === session.id);
+  const driverRatingLabel = driver
+    ? formatProfileRatingLabel(driver.rating_average, driver.rating_count)
+    : null;
   const available = Math.max(0, Number(ride.available_seats ?? 0));
   const totalSeats = Math.max(0, Number(ride.total_seats ?? 0));
   const status = String(ride.status ?? '');
@@ -1099,21 +1317,6 @@ export function RideDetailScreen() {
   const currentNavStop = hasValidCurrentStop ? rideStops[rawStopIdx] : undefined;
   const currentStopOrder = currentNavStop != null ? Number(currentNavStop.stop_order) : 0;
   const stopIdxForActualBadge = hasValidCurrentStop ? rawStopIdx : -1;
-  const pickupAtCurrentStop = driverRideBookings.filter((b) => bookingPickupNearPublishedStop(b, currentNavStop));
-  const dropoffAtCurrentStop = driverRideBookings.filter((b) => bookingDropoffNearPublishedStop(b, currentNavStop));
-  const noPassengersAtCurrentStop = pickupAtCurrentStop.length === 0 && dropoffAtCurrentStop.length === 0;
-  const allArriveDecisionsSet = (() => {
-    if (noPassengersAtCurrentStop) return true;
-    const hasPickupDecisions = pickupAtCurrentStop.every((b) => {
-      const v = arriveDecisions[`pickup:${b.id}`];
-      return v === 'boarded' || v === 'no_show';
-    });
-    const hasDropoffDecisions = dropoffAtCurrentStop.every((b) => {
-      const d = arriveDecisions[`dropoff:${b.id}`];
-      return d === 'dropped_off' && arrivePaymentConfirmed[b.id] === true;
-    });
-    return hasPickupDecisions && hasDropoffDecisions;
-  })();
 
   const canStart = isOwn && (status === 'published' || status === 'booked');
   const canComplete = isOwn && status === 'en_route' && canCompleteByStops && !awaitingStop;
@@ -1148,34 +1351,43 @@ export function RideDetailScreen() {
   };
 
   const openArriveModal = async () => {
-    if (!currentNavStop) {
-      Alert.alert('Parada', 'No hay parada actual para confirmar.');
+    if (!currentVisitRow || !arriveAnchor) {
+      Alert.alert('Punto', 'No hay un punto pendiente en el recorrido para confirmar.');
       return;
     }
     try {
       const perm = await requestLocationPermission();
       if (perm) {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        const d = distanceMeters(
-          { lat: Number(loc.coords.latitude), lng: Number(loc.coords.longitude) },
-          { lat: Number(currentNavStop.lat), lng: Number(currentNavStop.lng) }
-        );
-        if (Number.isFinite(d) && d > ARRIVE_ALLOWED_DISTANCE_M) {
+        const driverPt = {
+          lat: Number(loc.coords.latitude),
+          lng: Number(loc.coords.longitude),
+        };
+        setArriveDriverPoint(driverPt);
+        if (
+          !driverNearArriveAnchor(
+            driverPt.lat,
+            driverPt.lng,
+            arriveAnchor.lat,
+            arriveAnchor.lng,
+            ARRIVE_GATE_M
+          )
+        ) {
+          const d = distanceMeters(driverPt, arriveAnchor);
           Alert.alert(
             'Aún no llegaste al punto',
-            `Estás a ${Math.round(d)} m de la parada actual. Acercate a menos de ${ARRIVE_ALLOWED_DISTANCE_M} m para usar "Llegué".`
+            `Estás a ${Math.round(d)} m. Acercate a menos de ${ARRIVE_GATE_M} m para usar "Llegué".`
           );
           return;
         }
       }
     } catch {
-      // Si no se puede medir localmente, dejamos que backend valide al confirmar la parada.
+      // Si no se puede medir localmente, el backend valida al confirmar.
     }
     const r = await setRideAwaitingStopConfirmation(rideId, true);
     if (!r.ok) {
       const errMsg = String(r.error ?? '');
       const looksLikeAuth = /sesi[oó]n|no autorizado|unauthorized|token/i.test(errMsg);
-      // No bloquear "Llegué" por el flag intermedio: la confirmación real y validaciones de parada ocurren en /arrive.
       if (!looksLikeAuth) {
         Alert.alert(
           'Aviso',
@@ -1184,14 +1396,15 @@ export function RideDetailScreen() {
       }
     }
     setArriveDecisions({});
-    setArrivePaymentConfirmed({});
+    setArriveExtraExpanded(false);
+    setArriveDropExpanded(false);
     setArriveModalOpen(true);
     rideVisualSigRef.current = '';
     await load({ quiet: true });
   };
 
   const submitArriveModal = async () => {
-    if (!allArriveDecisionsSet || !currentNavStop || submittingArrive) return;
+    if (!allArriveDecisionsSet || !arriveAnchor || !currentVisitRow || submittingArrive) return;
     setSubmittingArrive(true);
     try {
       const perm = await requestLocationPermission();
@@ -1208,28 +1421,47 @@ export function RideDetailScreen() {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         driverLat = loc.coords.latitude;
         driverLng = loc.coords.longitude;
+        setArriveDriverPoint({ lat: driverLat, lng: driverLng });
       } catch {
         Alert.alert('Ubicación', 'No se pudo leer tu posición. Revisá que el GPS esté activo e intentá de nuevo.');
         return;
       }
+      const pickupRows = [...primaryArrivePickups, ...extraArrivePickups];
+      const dropRows = [...primaryArriveDropoffs, ...dropoffArriveList];
       const passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }> = [
-        ...pickupAtCurrentStop.map((b) => ({
+        ...pickupRows.map((b) => ({
           id: b.id,
           action: (arriveDecisions[`pickup:${b.id}`] ?? 'boarded') as 'boarded' | 'no_show' | 'dropped_off',
         })),
-        ...dropoffAtCurrentStop.map((b) => ({
+        ...dropRows.map((b) => ({
           id: b.id,
           action: 'dropped_off' as const,
         })),
       ];
-      const arrive = await arriveAtStop(rideId, currentStopOrder, passengers, driverLat, driverLng);
+      const stopOrder =
+        nearestPublishedStopOrder(
+          rideStops.map((s) => ({ id: s.id, lat: s.lat, lng: s.lng, stop_order: s.stop_order })),
+          arriveAnchor.lat,
+          arriveAnchor.lng
+        ) ?? currentStopOrder;
+
+      const arrive = await arriveAtStop(rideId, {
+        stopOrder,
+        passengers,
+        anchorLat: arriveAnchor.lat,
+        anchorLng: arriveAnchor.lng,
+        visitKind,
+        visitBookingId,
+        driverLat,
+        driverLng,
+      });
       if (!arrive.ok) {
         const code = (arrive.data as { code?: string } | undefined)?.code;
         const msg =
           code === 'driver_too_far_from_stop'
-            ? String((arrive.data as { error?: string })?.error ?? arrive.error ?? 'Acercate más a la parada.')
+            ? String((arrive.data as { error?: string })?.error ?? arrive.error ?? 'Acercate más al punto.')
             : (arrive.error ?? 'Intentá de nuevo.');
-        Alert.alert('No se pudo confirmar parada', msg);
+        Alert.alert('No se pudo confirmar', msg);
         return;
       }
       const arrivedBody = arrive.data as { current_stop_index?: unknown } | undefined;
@@ -1237,18 +1469,24 @@ export function RideDetailScreen() {
       if (typeof nextIdx === 'number' && Number.isFinite(nextIdx)) {
         setRide((r) => (r ? { ...r, current_stop_index: nextIdx } : r));
       }
-      const toPay = dropoffAtCurrentStop.filter((b) => arrivePaymentConfirmed[b.id] === true);
-      for (const b of toPay) {
-        const paid = await confirmRideBookingPayment(rideId, b.id);
-        if (!paid.ok) {
-          Alert.alert('Cobro pendiente', `No se pudo confirmar cobro de ${b.price_paid.toLocaleString('es-PY')} PYG.`);
+      for (const b of pickupRows) {
+        if (arriveDecisions[`pickup:${b.id}`] === 'boarded') {
+          const paid = await confirmRideBookingPayment(rideId, b.id);
+          if (!paid.ok) {
+            Alert.alert(
+              'Cobro pendiente',
+              `Subió pero no se pudo registrar el cobro de ${b.price_paid.toLocaleString('es-PY')} PYG.`
+            );
+          }
         }
       }
       setArriveModalOpen(false);
+      setArriveDriverPoint(null);
       rideVisualSigRef.current = '';
       await load({ quiet: true });
       await refetchDriverBookingPins();
-      Alert.alert('Listo', 'Parada confirmada.');
+      await promptRatePassengerAfterDrop(dropRows);
+      Alert.alert('Listo', 'Punto confirmado.');
     } finally {
       setSubmittingArrive(false);
     }
@@ -1352,9 +1590,8 @@ export function RideDetailScreen() {
               <Text style={styles.sectionLabel}>Recorrido en orden del mapa</Text>
               {driverUiEnRoute ? null : (
                 <Text style={styles.bodyMuted}>
-                  Mismo orden que la ruta en el mapa. Verde: parada publicada con “Llegué” confirmado ahí, o subida/bajada
-                  con registro de pasajero. Amarillo: un solo “En camino” (el primero en este orden que coincide con tu
-                  parada actual). Navegar abre ese mismo punto.
+                  Mismo orden que la ruta en el mapa. Amarillo: el próximo punto pendiente (“En camino”). Navegar y “Llegué”
+                  usan ese mismo lugar (≤{ARRIVE_GATE_M} m).
                 </Text>
               )}
               <TouchableOpacity
@@ -1453,7 +1690,7 @@ export function RideDetailScreen() {
               ) : null}
             </>
           ) : null}
-          {isOwn && status === 'en_route' && rideStops.length > 0 ? (
+          {isOwn && status === 'en_route' && currentVisitRow ? (
             <>
               <Text style={styles.sectionLabel}>Navegación</Text>
               {!hasValidCurrentStop ? (
@@ -1528,6 +1765,23 @@ export function RideDetailScreen() {
           ) : null}
           {passengerBooking ? (
             <View style={styles.bookingCard}>
+              {formatBookingTicketCode(passengerBooking.booking_code) ? (
+                <View style={styles.miTicketBox}>
+                  <Text style={styles.miTicketLabel}>Mi ticket</Text>
+                  <Text style={styles.miTicketCode}>
+                    {formatBookingTicketCode(passengerBooking.booking_code)}
+                  </Text>
+                  <Text style={styles.miTicketAmount}>
+                    Total a pagar: ₲ {passengerBooking.price_paid.toLocaleString('es-PY')}
+                  </Text>
+                  <Text style={styles.miTicketSeats}>
+                    {formatSeatsLine(passengerBooking.seats_count)}
+                  </Text>
+                  <Text style={styles.miTicketHint}>
+                    Mostrá este código al conductor al subir al minibús.
+                  </Text>
+                </View>
+              ) : null}
               <Text style={styles.bookingCardTitle}>Tu reserva</Text>
               <Text style={styles.bookingMeta}>
                 {bookingStatusLabel(passengerBooking.status)}
@@ -1535,7 +1789,12 @@ export function RideDetailScreen() {
                   ? ` · Pago: ${passengerBooking.payment_status}`
                   : ''}
               </Text>
-              {canPassengerShareSafetyTracking(passengerBooking, status, ride.share_code) ? (
+              {canPassengerShareSafetyTracking(
+                passengerBooking,
+                status,
+                ride.share_code,
+                boardingEvents
+              ) ? (
                 <>
                   <TouchableOpacity
                     style={styles.shareSafetyBtn}
@@ -1547,10 +1806,20 @@ export function RideDetailScreen() {
                     <Text style={styles.shareSafetyBtnText}>Compartir seguimiento</Text>
                   </TouchableOpacity>
                   <Text style={styles.shareSafetyHint}>
-                    Enlace público de solo lectura: estado del viaje y ubicación del conductor en vivo. No incluye tu
-                    teléfono ni datos privados.
+                    Enlace público de solo lectura con mapa y ubicación del conductor. Deja de actualizarse cuando bajes
+                    del minibús. No incluye tu teléfono ni datos privados.
                   </Text>
                 </>
+              ) : String(status) === 'en_route' &&
+                passengerBooking &&
+                boardingEvents.some(
+                  (e) =>
+                    String(e.booking_id) === passengerBooking.id &&
+                    String(e.event_type) === 'dropped_off'
+                ) ? (
+                <Text style={styles.shareSafetyHint}>
+                  El seguimiento compartido ya no está disponible porque registraste la bajada del minibús.
+                </Text>
               ) : null}
               <View style={styles.bookingSummaryRow}>
                 <View style={styles.bookingSummaryCol}>
@@ -1649,9 +1918,14 @@ export function RideDetailScreen() {
                 <Image source={{ uri: String(driver.avatar_url) }} style={styles.driverAvatar} resizeMode="cover" />
               ) : null}
               <Text style={styles.cardValue}>{driver.full_name ?? '—'}</Text>
-              {driver.rating_average != null && (
-                <Text style={styles.meta}>★ {Number(driver.rating_average).toFixed(1)}</Text>
-              )}
+              {driverRatingLabel ? (
+                <Text style={styles.meta}>
+                  ★ {driverRatingLabel}
+                  {driver.rating_count && driver.rating_count > 0
+                    ? ` · ${driver.rating_count} calificación${driver.rating_count !== 1 ? 'es' : ''}`
+                    : ''}
+                </Text>
+              ) : null}
               {passengerDriverContactInCard.show ? (
                 <View style={styles.driverCardContactWrap}>
                   <TouchableOpacity
@@ -1731,7 +2005,8 @@ export function RideDetailScreen() {
           ) : null}
           {status === 'en_route' ? (
             <Text style={styles.hint}>
-              Usá “Llegué” para confirmar subidas, bajadas y cobro en cada parada.
+              “Llegué” (≤{ARRIVE_GATE_M} m del punto): subida/bajada del pasajero, cobro al subir, y opciones a{' '}
+              {ARRIVE_NEAR_BUS_M} m del minibús.
             </Text>
           ) : null}
           {isOwn && status === 'en_route' && !canComplete ? (
@@ -1756,14 +2031,18 @@ export function RideDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.arriveCard}>
             <Text style={styles.arriveTitle}>
-              Llegada a{' '}
-              {currentNavStop?.label?.trim() ||
-                (hasValidCurrentStop ? `parada ${rawStopIdx + 1}` : 'parada')}
+              Llegada · {currentVisitRow?.title?.trim() || 'Punto del recorrido'}
             </Text>
+            {currentVisitRow?.subtitle ? (
+              <Text style={styles.arriveSubtitle}>{currentVisitRow.subtitle}</Text>
+            ) : null}
             <ScrollView style={styles.arriveBody}>
-              {pickupAtCurrentStop.map((b) => (
+              {(primaryArrivePickups.length > 0 || primaryArriveDropoffs.length > 0) && (
+                <Text style={styles.arriveSectionLabel}>Este punto</Text>
+              )}
+              {primaryArrivePickups.map((b) => (
                 <View key={`p:${b.id}`} style={styles.arriveRow}>
-                  <Text style={styles.arriveLabel}>Subida · {b.pickup_label?.trim() || 'Pasajero'}</Text>
+                  <ArrivePassengerRowHeader kind="pickup" booking={b} showAmount ticketEmphasis />
                   <View style={styles.arriveActions}>
                     <TouchableOpacity
                       style={[
@@ -1774,7 +2053,7 @@ export function RideDetailScreen() {
                         setArriveDecisions((prev) => ({ ...prev, [`pickup:${b.id}`]: 'boarded' }))
                       }
                     >
-                      <Text style={styles.arriveChipText}>Subió</Text>
+                      <Text style={styles.arriveChipText}>Subió + cobrar</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={[
@@ -1790,10 +2069,9 @@ export function RideDetailScreen() {
                   </View>
                 </View>
               ))}
-              {dropoffAtCurrentStop.map((b) => (
+              {primaryArriveDropoffs.map((b) => (
                 <View key={`d:${b.id}`} style={styles.arriveRow}>
-                  <Text style={styles.arriveLabel}>Bajada · {b.dropoff_label?.trim() || 'Pasajero'}</Text>
-                  <Text style={styles.arriveAmount}>{b.price_paid.toLocaleString('es-PY')} PYG</Text>
+                  <ArrivePassengerRowHeader kind="dropoff" booking={b} ticketEmphasis />
                   <View style={styles.arriveActions}>
                     <TouchableOpacity
                       style={[
@@ -1806,23 +2084,85 @@ export function RideDetailScreen() {
                     >
                       <Text style={styles.arriveChipText}>Bajó</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[
-                        styles.arriveChip,
-                        arrivePaymentConfirmed[b.id] === true && styles.arriveChipActiveOk,
-                      ]}
-                      onPress={() =>
-                        setArrivePaymentConfirmed((prev) => ({ ...prev, [b.id]: !prev[b.id] }))
-                      }
-                    >
-                      <Text style={styles.arriveChipText}>Cobro confirmado</Text>
-                    </TouchableOpacity>
                   </View>
                 </View>
               ))}
+
+              <TouchableOpacity
+                style={styles.arriveExpandHit}
+                onPress={() => setArriveExtraExpanded((v) => !v)}
+              >
+                <Text style={styles.arriveExpandText}>
+                  {arriveExtraExpanded ? '▼' : '▶'} Subió (cerca del minibús, ≤{ARRIVE_NEAR_BUS_M} m)
+                  {extraArrivePickups.length > 0 ? ` · ${extraArrivePickups.length}` : ''}
+                </Text>
+              </TouchableOpacity>
+              {arriveExtraExpanded
+                ? extraArrivePickups.map((b) => (
+                    <View key={`x:${b.id}`} style={styles.arriveRowIndented}>
+                      <ArrivePassengerRowHeader kind="pickup" booking={b} showAmount ticketEmphasis />
+                      <View style={styles.arriveActions}>
+                        <TouchableOpacity
+                          style={[
+                            styles.arriveChip,
+                            arriveDecisions[`pickup:${b.id}`] === 'boarded' && styles.arriveChipActiveOk,
+                          ]}
+                          onPress={() =>
+                            setArriveDecisions((prev) => ({ ...prev, [`pickup:${b.id}`]: 'boarded' }))
+                          }
+                        >
+                          <Text style={styles.arriveChipText}>Subió + cobrar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.arriveChip,
+                            arriveDecisions[`pickup:${b.id}`] === 'no_show' && styles.arriveChipActiveNo,
+                          ]}
+                          onPress={() =>
+                            setArriveDecisions((prev) => ({ ...prev, [`pickup:${b.id}`]: 'no_show' }))
+                          }
+                        >
+                          <Text style={styles.arriveChipText}>No subió</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))
+                : null}
+
+              {(dropoffArriveList.length > 0 || primaryArriveDropoffs.length > 0) && (
+                <TouchableOpacity
+                  style={styles.arriveExpandHit}
+                  onPress={() => setArriveDropExpanded((v) => !v)}
+                >
+                  <Text style={styles.arriveExpandText}>
+                    {arriveDropExpanded ? '▼' : '▶'} Bajar (orden de bajada en el recorrido)
+                    {dropoffArriveList.length > 0 ? ` · ${dropoffArriveList.length}` : ''}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {arriveDropExpanded
+                ? dropoffArriveList.map((b) => (
+                    <View key={`dr:${b.id}`} style={styles.arriveRowIndented}>
+                      <ArrivePassengerRowHeader kind="dropoff" booking={b} ticketEmphasis />
+                      <View style={styles.arriveActions}>
+                        <TouchableOpacity
+                          style={[
+                            styles.arriveChip,
+                            arriveDecisions[`dropoff:${b.id}`] === 'dropped_off' && styles.arriveChipActiveWarn,
+                          ]}
+                          onPress={() =>
+                            setArriveDecisions((prev) => ({ ...prev, [`dropoff:${b.id}`]: 'dropped_off' }))
+                          }
+                        >
+                          <Text style={styles.arriveChipText}>Bajó</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))
+                : null}
             </ScrollView>
             <View style={styles.arriveFooter}>
-              {noPassengersAtCurrentStop ? (
+              {!arriveModalHasWork ? (
                 <TouchableOpacity
                   style={[styles.arriveConfirm, submittingArrive && styles.btnDisabled]}
                   disabled={submittingArrive}
@@ -1852,6 +2192,57 @@ export function RideDetailScreen() {
                   </TouchableOpacity>
                 </>
               )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={ratePassengerModalOpen && passengerToRate != null} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.arriveCard}>
+            <Text style={styles.arriveTitle}>Calificar pasajero</Text>
+            <Text style={styles.arriveSubtitle}>
+              ¿Cómo fue tu experiencia con {passengerToRate?.displayName ?? 'el pasajero'}? Por defecto 5
+              estrellas. El promedio público se recalcula al llegar a {PROFILE_RATING_WINDOW} calificaciones.
+            </Text>
+            <View style={styles.rateStarsRow}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <TouchableOpacity
+                  key={n}
+                  style={[styles.rateStarBtn, ratePassengerStars >= n && styles.rateStarBtnActive]}
+                  onPress={() => setRatePassengerStars(n)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${n} estrella${n !== 1 ? 's' : ''}`}
+                >
+                  <Text style={[styles.rateStarText, ratePassengerStars >= n && styles.rateStarTextActive]}>★</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={styles.arriveFooter}>
+              <TouchableOpacity
+                style={styles.arriveCancel}
+                onPress={() => {
+                  if (passengerToRate) {
+                    setPassengerRatingsGiven((prev) => new Set(prev).add(passengerToRate.passengerId));
+                  }
+                  setRatePassengerModalOpen(false);
+                  setPassengerToRate(null);
+                }}
+              >
+                <Text style={styles.arriveCancelText}>Omitir</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.arriveConfirm,
+                  (ratePassengerStars < 1 || submittingPassengerRating) && styles.btnDisabled,
+                ]}
+                disabled={ratePassengerStars < 1 || submittingPassengerRating}
+                onPress={() => void submitRatePassenger()}
+              >
+                <Text style={styles.arriveConfirmText}>
+                  {submittingPassengerRating ? 'Enviando…' : 'Enviar'}
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -2014,9 +2405,42 @@ const styles = StyleSheet.create({
     color: '#111827',
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 12,
+    paddingBottom: 4,
+    borderBottomWidth: 0,
+  },
+  arriveSubtitle: {
+    fontSize: 13,
+    color: '#6b7280',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
     borderBottomWidth: 1,
     borderColor: '#e5e7eb',
+  },
+  arriveSectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#166534',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  arriveExpandHit: {
+    marginTop: 12,
+    marginBottom: 6,
+    paddingVertical: 8,
+  },
+  arriveExpandText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  arriveRowIndented: {
+    paddingVertical: 10,
+    paddingLeft: 10,
+    marginBottom: 4,
+    borderLeftWidth: 3,
+    borderLeftColor: '#d1d5db',
   },
   arriveBody: {
     paddingHorizontal: 16,
@@ -2031,6 +2455,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#374151',
     fontWeight: '600',
+  },
+  arriveTicketHero: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#14532d',
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  arriveTicketCode: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#14532d',
+    letterSpacing: 1.5,
+    marginBottom: 4,
+  },
+  arriveTicketMissing: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#b91c1c',
+    marginBottom: 4,
+  },
+  arrivePlaceMuted: {
+    fontSize: 12,
+    color: '#6b7280',
+    lineHeight: 17,
+    marginBottom: 2,
+  },
+  arriveSeatsLine: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+    marginBottom: 4,
   },
   arriveAmount: {
     marginTop: 5,
@@ -2137,6 +2593,48 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     backgroundColor: '#fff',
   },
+  miTicketBox: {
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#166534',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    alignItems: 'center',
+  },
+  miTicketLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#166534',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  miTicketCode: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#14532d',
+    letterSpacing: 2,
+  },
+  miTicketAmount: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#166534',
+    marginTop: 10,
+  },
+  miTicketSeats: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#374151',
+    marginTop: 6,
+  },
+  miTicketHint: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 8,
+    textAlign: 'center',
+    lineHeight: 17,
+  },
   bookingCard: {
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
@@ -2184,6 +2682,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelBookingBtnText: { color: '#b91c1c', fontWeight: '700', fontSize: 15 },
+  rateStarsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+    marginVertical: 16,
+  },
+  rateStarBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rateStarBtnActive: { backgroundColor: '#f59e0b' },
+  rateStarText: { fontSize: 22, color: '#6b7280' },
+  rateStarTextActive: { color: '#fff' },
   shareSafetyBtn: {
     marginTop: 4,
     marginBottom: 4,

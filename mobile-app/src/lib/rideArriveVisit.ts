@@ -1,0 +1,168 @@
+import { distanceMeters, getPositionAlongPolyline, type Point } from './geo';
+import { nearestRideStopIdForBookingPoint } from './bookingStopLink';
+
+export const ARRIVE_GATE_M = 70;
+export const ARRIVE_NEAR_BUS_M = 100;
+
+export type ArriveVisitKind = 'pickup' | 'dropoff' | 'published';
+
+export type BoardingEventLite = {
+  booking_id: string;
+  event_type: string;
+};
+
+export type BookingGeoLite = {
+  id: string;
+  status: string;
+  pickup_lat: number | null;
+  pickup_lng: number | null;
+  dropoff_lat: number | null;
+  dropoff_lng: number | null;
+};
+
+export function driverNearArriveAnchor(
+  driverLat: number,
+  driverLng: number,
+  anchorLat: number,
+  anchorLng: number,
+  maxMeters: number = ARRIVE_GATE_M
+): boolean {
+  if (
+    !Number.isFinite(driverLat) ||
+    !Number.isFinite(driverLng) ||
+    !Number.isFinite(anchorLat) ||
+    !Number.isFinite(anchorLng)
+  ) {
+    return false;
+  }
+  return distanceMeters({ lat: driverLat, lng: driverLng }, { lat: anchorLat, lng: anchorLng }) <= maxMeters;
+}
+
+export function hasBoardingEvent(
+  events: BoardingEventLite[],
+  bookingId: string,
+  type: 'boarded' | 'no_show' | 'dropped_off'
+): boolean {
+  return events.some((e) => String(e.booking_id) === bookingId && e.event_type === type);
+}
+
+export function isBoarded(events: BoardingEventLite[], bookingId: string): boolean {
+  return hasBoardingEvent(events, bookingId, 'boarded');
+}
+
+export function pickupDecisionDone(events: BoardingEventLite[], bookingId: string): boolean {
+  return (
+    hasBoardingEvent(events, bookingId, 'boarded') || hasBoardingEvent(events, bookingId, 'no_show')
+  );
+}
+
+export function dropoffDone(events: BoardingEventLite[], bookingId: string): boolean {
+  return hasBoardingEvent(events, bookingId, 'dropped_off');
+}
+
+export function bookingPickupPoint(b: BookingGeoLite): Point | null {
+  const lat = Number(b.pickup_lat);
+  const lng = Number(b.pickup_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+export function bookingDropoffPoint(b: BookingGeoLite): Point | null {
+  const lat = Number(b.dropoff_lat);
+  const lng = Number(b.dropoff_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+export function nearestPublishedStopOrder(
+  stops: Array<{ id: string; lat: number; lng: number; stop_order: number }>,
+  lat: number,
+  lng: number
+): number | null {
+  const id = nearestRideStopIdForBookingPoint(stops, lat, lng);
+  if (!id) return null;
+  const row = stops.find((s) => s.id === id);
+  return row != null && Number.isFinite(row.stop_order) ? row.stop_order : null;
+}
+
+export function primaryPickupBookingsForVisit(
+  bookings: BookingGeoLite[],
+  events: BoardingEventLite[],
+  visitBookingId: string | undefined
+): BookingGeoLite[] {
+  if (!visitBookingId) return [];
+  const b = bookings.find((x) => x.id === visitBookingId && x.status !== 'cancelled');
+  if (!b || pickupDecisionDone(events, b.id)) return [];
+  return [b];
+}
+
+export function primaryDropoffBookingsForVisit(
+  bookings: BookingGeoLite[],
+  events: BoardingEventLite[],
+  visitBookingId: string | undefined
+): BookingGeoLite[] {
+  if (!visitBookingId) return [];
+  const b = bookings.find((x) => x.id === visitBookingId && x.status !== 'cancelled');
+  if (!b || !isBoarded(events, b.id) || dropoffDone(events, b.id)) return [];
+  return [b];
+}
+
+export function extraPickupBookingsNearBus(
+  bookings: BookingGeoLite[],
+  events: BoardingEventLite[],
+  driver: Point,
+  excludeIds: Set<string>
+): BookingGeoLite[] {
+  const out: BookingGeoLite[] = [];
+  for (const b of bookings) {
+    if (b.status === 'cancelled' || excludeIds.has(b.id)) continue;
+    if (pickupDecisionDone(events, b.id)) continue;
+    const p = bookingPickupPoint(b);
+    if (!p) continue;
+    if (distanceMeters(driver, p) <= ARRIVE_NEAR_BUS_M) out.push(b);
+  }
+  out.sort(
+    (a, b) =>
+      distanceMeters(driver, bookingPickupPoint(a)!) - distanceMeters(driver, bookingPickupPoint(b)!)
+  );
+  return out;
+}
+
+export function dropoffBookingsForArriveModal(
+  bookings: BookingGeoLite[],
+  events: BoardingEventLite[],
+  driver: Point,
+  routePoints: Point[],
+  visitKind: ArriveVisitKind,
+  visitBookingId: string | undefined,
+  anchor: Point
+): BookingGeoLite[] {
+  const primaryIds = new Set<string>();
+  if (visitKind === 'dropoff' && visitBookingId) primaryIds.add(visitBookingId);
+
+  const candidates: BookingGeoLite[] = [];
+  for (const b of bookings) {
+    if (b.status === 'cancelled') continue;
+    if (!isBoarded(events, b.id) || dropoffDone(events, b.id)) continue;
+    const drop = bookingDropoffPoint(b);
+    if (!drop) continue;
+    const atVisit = visitKind === 'dropoff' && b.id === visitBookingId;
+    const nearBus = distanceMeters(driver, drop) <= ARRIVE_NEAR_BUS_M;
+    const nearAnchor = distanceMeters(anchor, drop) <= ARRIVE_GATE_M;
+    if (atVisit || nearBus || nearAnchor) candidates.push(b);
+  }
+
+  const base = routePoints.length >= 2 ? routePoints : [];
+  candidates.sort((a, b) => {
+    const pa = bookingDropoffPoint(a)!;
+    const pb = bookingDropoffPoint(b)!;
+    if (base.length >= 2) {
+      const ta = getPositionAlongPolyline(pa, base);
+      const tb = getPositionAlongPolyline(pb, base);
+      if (Number.isFinite(ta) && Number.isFinite(tb)) return ta - tb;
+    }
+    return distanceMeters(driver, pa) - distanceMeters(driver, pb);
+  });
+
+  return candidates.filter((b) => !primaryIds.has(b.id));
+}

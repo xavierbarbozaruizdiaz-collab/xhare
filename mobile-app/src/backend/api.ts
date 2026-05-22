@@ -167,24 +167,36 @@ export async function ratePassenger(rideId: string, passengerId: string, stars: 
   return apiPost(`/api/rides/${rideId}/rate-passenger`, { passengerId, stars });
 }
 
-export async function arriveAtStop(
-  rideId: string,
-  stopOrder: number,
-  passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }>,
-  driverLat?: number,
-  driverLng?: number
-) {
-  const body: Record<string, unknown> = { stopOrder, passengers };
+export type ArriveVisitPayload = {
+  stopOrder: number;
+  passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }>;
+  anchorLat: number;
+  anchorLng: number;
+  visitKind: 'pickup' | 'dropoff' | 'published';
+  visitBookingId?: string;
+  driverLat?: number;
+  driverLng?: number;
+};
+
+export async function arriveAtStop(rideId: string, payload: ArriveVisitPayload) {
+  const body: Record<string, unknown> = {
+    stopOrder: payload.stopOrder,
+    passengers: payload.passengers,
+    anchorLat: payload.anchorLat,
+    anchorLng: payload.anchorLng,
+    visitKind: payload.visitKind,
+  };
+  if (payload.visitBookingId) body.visitBookingId = payload.visitBookingId;
   const token = await resolveApiAccessToken();
   if (token) body.access_token = token;
   if (
-    driverLat != null &&
-    driverLng != null &&
-    Number.isFinite(driverLat) &&
-    Number.isFinite(driverLng)
+    payload.driverLat != null &&
+    payload.driverLng != null &&
+    Number.isFinite(payload.driverLat) &&
+    Number.isFinite(payload.driverLng)
   ) {
-    body.driverLat = driverLat;
-    body.driverLng = driverLng;
+    body.driverLat = payload.driverLat;
+    body.driverLng = payload.driverLng;
   }
   return apiPost(`/api/rides/${rideId}/arrive`, body);
 }

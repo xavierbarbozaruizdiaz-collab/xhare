@@ -743,7 +743,12 @@ export default function SearchPage() {
                           <div className="flex items-center justify-center gap-1">
                             <span className="text-yellow-400">★</span>
                             <span className="text-sm font-medium">
-                              {ride.driver?.rating_average?.toFixed(1) || 'Nuevo'}
+                              {(() => {
+                                const c = ride.driver?.rating_count ?? 0;
+                                const a = ride.driver?.rating_average;
+                                if (c > 0 && a != null && a > 0) return Number(a).toFixed(1);
+                                return 'Nuevo';
+                              })()}
                             </span>
                           </div>
                           <p className="text-xs text-gray-500">

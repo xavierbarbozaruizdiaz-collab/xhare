@@ -1,6 +1,10 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+
+const SafetyShareLiveMap = dynamic(() => import('@/components/SafetyShareLiveMap'), { ssr: false });
 
 export type TrackPayload = {
   ok: true;
@@ -55,15 +59,20 @@ function formatDep(iso: string | null): string {
 }
 
 export function SafetyShareTrackClient({ code }: { code: string }) {
+  const searchParams = useSearchParams();
+  const bookingId = searchParams.get('b')?.trim() ?? '';
   const [data, setData] = useState<TrackPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [ended, setEnded] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/rides/track/${encodeURIComponent(code)}`, { cache: 'no-store' });
-      const j = (await res.json()) as TrackPayload & { error?: string };
+      const qs = bookingId ? `?b=${encodeURIComponent(bookingId)}` : '';
+      const res = await fetch(`/api/rides/track/${encodeURIComponent(code)}${qs}`, { cache: 'no-store' });
+      const j = (await res.json()) as TrackPayload & { error?: string; ended?: boolean };
       if (!res.ok) {
+        setEnded(Boolean(j.ended));
         setErr(j.error ?? 'No se pudo cargar');
         setData(null);
         return;
@@ -71,17 +80,20 @@ export function SafetyShareTrackClient({ code }: { code: string }) {
       if (!j.ok) {
         setErr('Respuesta inválida');
         setData(null);
+        setEnded(false);
         return;
       }
       setErr(null);
+      setEnded(false);
       setData(j);
     } catch {
       setErr('Error de red');
       setData(null);
+      setEnded(false);
     } finally {
       setLoading(false);
     }
-  }, [code]);
+  }, [code, bookingId]);
 
   useEffect(() => {
     void load();
@@ -89,10 +101,21 @@ export function SafetyShareTrackClient({ code }: { code: string }) {
     return () => clearInterval(t);
   }, [load]);
 
-  if (loading && !data) {
+  if (loading && !data && !ended) {
     return (
       <div className="min-h-[40vh] flex items-center justify-center text-gray-600">
         Cargando seguimiento…
+      </div>
+    );
+  }
+
+  if ((err || !data) && ended) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-amber-950">
+          <p className="font-semibold">Seguimiento finalizado</p>
+          <p className="text-sm mt-2">{err ?? 'Este enlace ya no muestra ubicación en vivo.'}</p>
+        </div>
       </div>
     );
   }
@@ -114,6 +137,14 @@ export function SafetyShareTrackClient({ code }: { code: string }) {
       ? `https://www.google.com/maps?q=${data.driver_lat},${data.driver_lng}`
       : null;
 
+  const showLiveMap =
+    data.status === 'en_route' &&
+    (data.base_route_polyline.length >= 2 ||
+      (data.driver_lat != null &&
+        data.driver_lng != null &&
+        Number.isFinite(data.driver_lat) &&
+        Number.isFinite(data.driver_lng)));
+
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-5 shadow-sm">
@@ -123,6 +154,45 @@ export function SafetyShareTrackClient({ code }: { code: string }) {
           Vista solo de lectura para contactos de confianza. No muestra datos personales de pasajeros.
         </p>
       </div>
+
+      {showLiveMap ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm space-y-2">
+          <p className="text-sm font-semibold text-slate-800 px-1">Mapa en vivo</p>
+          <SafetyShareLiveMap
+            polyline={data.base_route_polyline}
+            driverLat={data.driver_lat}
+            driverLng={data.driver_lng}
+          />
+          {data.driver_location_updated_at ? (
+            <p className="text-xs text-slate-500 px-1">
+              Última ubicación del conductor:{' '}
+              {new Date(data.driver_location_updated_at).toLocaleString('es-PY', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              })}
+            </p>
+          ) : (
+            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2 mx-1">
+              Esperando la primera ubicación del conductor…
+            </p>
+          )}
+          {mapsHref ? (
+            <a
+              href={mapsHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 mx-1"
+            >
+              Abrir en Google Maps
+            </a>
+          ) : null}
+        </div>
+      ) : data.status === 'en_route' ? (
+        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-4">
+          El viaje está en curso; la posición del conductor aún no está disponible en este momento.
+        </p>
+      ) : null}
 
       <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -155,36 +225,8 @@ export function SafetyShareTrackClient({ code }: { code: string }) {
         ) : null}
       </div>
 
-      {data.status === 'en_route' && mapsHref ? (
-        <div className="rounded-xl border border-blue-200 bg-blue-50/90 p-5">
-          <p className="text-sm font-medium text-blue-950">Ubicación del conductor (actualización periódica)</p>
-          {data.driver_location_updated_at ? (
-            <p className="text-xs text-blue-800/90 mt-1">
-              Último dato:{' '}
-              {new Date(data.driver_location_updated_at).toLocaleString('es-PY', {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              })}
-            </p>
-          ) : null}
-          <a
-            href={mapsHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-3 inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
-          >
-            Abrir en Google Maps
-          </a>
-        </div>
-      ) : data.status === 'en_route' ? (
-        <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-4">
-          El viaje está en curso; la posición del conductor aún no está disponible en este momento.
-        </p>
-      ) : null}
-
       <p className="text-xs text-gray-500 text-center">
-        Esta página se actualiza sola cada pocos segundos mientras la tenés abierta.
+        El mapa y la ubicación se actualizan solos cada pocos segundos mientras la página está abierta.
       </p>
     </div>
   );

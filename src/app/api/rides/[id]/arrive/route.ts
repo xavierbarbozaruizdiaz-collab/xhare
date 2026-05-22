@@ -3,12 +3,19 @@ import { createClient } from '@supabase/supabase-js';
 import { createServiceClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
+import type { RideStopForBookingLink } from '@/lib/booking-stop-link';
 import {
-  bookingDropoffAtPublishedStop,
-  bookingPickupAtPublishedStop,
-  driverNearStopForArrive,
-  type RideStopForBookingLink,
-} from '@/lib/booking-stop-link';
+  ARRIVE_GATE_M,
+  canRegisterPassengerAction,
+  driverNearArriveAnchor,
+  dropoffDone,
+  isBoarded,
+  nearestPublishedStopOrder,
+  pickupDecisionDone,
+  primaryDropoffBookingsForVisit,
+  primaryPickupBookingsForVisit,
+  type ArriveVisitKind,
+} from '@/lib/ride-arrive-visit';
 
 const passengerActionSchema = z.object({
   id: z.string().uuid(),
@@ -21,6 +28,10 @@ const bodySchema = z.object({
   access_token: z.string().optional(),
   driverLat: z.number().finite().optional(),
   driverLng: z.number().finite().optional(),
+  anchorLat: z.number().finite(),
+  anchorLng: z.number().finite(),
+  visitKind: z.enum(['pickup', 'dropoff', 'published']),
+  visitBookingId: z.string().uuid().optional(),
 });
 
 const ARRIVE_WINDOW_MS = 60_000;
@@ -31,6 +42,7 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'placeholde
 
 type BookingArriveRow = {
   id: string;
+  status: string;
   pickup_stop_id: string | null;
   dropoff_stop_id: string | null;
   pickup_lat: number | null;
@@ -50,9 +62,22 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const parsed = bodySchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json({ error: 'Body inválido: stopOrder y passengers requeridos' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Body inválido: stopOrder, anchor, visitKind y passengers requeridos' },
+        { status: 400 }
+      );
     }
-    const { stopOrder, passengers, access_token: tokenFromBody, driverLat, driverLng } = parsed.data;
+    const {
+      stopOrder,
+      passengers,
+      access_token: tokenFromBody,
+      driverLat,
+      driverLng,
+      anchorLat,
+      anchorLng,
+      visitKind,
+      visitBookingId,
+    } = parsed.data;
 
     const authHeader = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
     const tokenFromHeader = authHeader.replace(/^\s*Bearer\s+/i, '').trim();
@@ -69,8 +94,6 @@ export async function POST(
     let userId = '';
     let authenticated = false;
     for (const token of tokenCandidates) {
-      // Importante: NO reutilizar `createServerClient(request)` aquí porque fija `Authorization`
-      // al primer Bearer de la request; si está vencido, invalida `getUser(tokenNuevo)` del body.
       const jwtClient = createClient(supabaseUrl, supabaseAnonKey, {
         auth: { persistSession: false },
         global: { headers: { Authorization: `Bearer ${token}` } },
@@ -117,35 +140,16 @@ export async function POST(
       );
     }
 
-    const { data: stops } = await service
-      .from('ride_stops')
-      .select('id, stop_order, lat, lng, label')
-      .eq('ride_id', rideId)
-      .order('stop_order', { ascending: true });
-
-    const sortedStops = Array.isArray(stops) ? stops : [];
-
-    const stopRow = sortedStops.find((s: { stop_order: unknown }) => Number(s.stop_order) === stopOrder);
-    if (!stopRow) {
-      return NextResponse.json(
-        { error: `No existe la parada con orden ${stopOrder} en este viaje.` },
-        { status: 400 }
-      );
-    }
-
-    const slat = Number(stopRow.lat);
-    const slng = Number(stopRow.lng);
     if (
       typeof driverLat === 'number' &&
       typeof driverLng === 'number' &&
       Number.isFinite(driverLat) &&
       Number.isFinite(driverLng)
     ) {
-      if (!driverNearStopForArrive(driverLat, driverLng, slat, slng)) {
+      if (!driverNearArriveAnchor(driverLat, driverLng, anchorLat, anchorLng, ARRIVE_GATE_M)) {
         return NextResponse.json(
           {
-            error:
-              'Parece que no estás lo suficientemente cerca de esta parada para confirmarla. Acercate al punto indicado o revisá que el GPS esté encendido.',
+            error: `Acercate a menos de ${ARRIVE_GATE_M} m del punto para confirmar la llegada.`,
             code: 'driver_too_far_from_stop',
           },
           { status: 400 }
@@ -153,18 +157,41 @@ export async function POST(
       }
     }
 
-    const linkStops: RideStopForBookingLink[] = sortedStops
+    const { data: stops } = await service
+      .from('ride_stops')
+      .select('id, stop_order, lat, lng, label')
+      .eq('ride_id', rideId)
+      .order('stop_order', { ascending: true });
+
+    const sortedStops = Array.isArray(stops) ? stops : [];
+    const linkStops: Array<RideStopForBookingLink & { stop_order: number }> = sortedStops
       .filter((s: { id: unknown; lat: unknown; lng: unknown }) => s.id != null)
-      .map((s: { id: unknown; lat: unknown; lng: unknown }) => ({
+      .map((s: { id: unknown; lat: unknown; lng: unknown; stop_order: unknown }) => ({
         id: String(s.id),
         lat: Number(s.lat),
         lng: Number(s.lng),
+        stop_order: Number(s.stop_order),
       }))
-      .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+      .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng) && Number.isFinite(s.stop_order));
+
+    const resolvedStopOrder =
+      nearestPublishedStopOrder(linkStops, anchorLat, anchorLng) ?? stopOrder;
+
+    const stopRow = sortedStops.find(
+      (s: { stop_order: unknown }) => Number(s.stop_order) === resolvedStopOrder
+    );
+    if (!stopRow) {
+      return NextResponse.json(
+        { error: `No existe la parada con orden ${resolvedStopOrder} en este viaje.` },
+        { status: 400 }
+      );
+    }
 
     const { data: rideBookings } = await service
       .from('bookings')
-      .select('id, pickup_stop_id, dropoff_stop_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng')
+      .select(
+        'id, status, pickup_stop_id, dropoff_stop_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
+      )
       .eq('ride_id', rideId)
       .neq('status', 'cancelled');
 
@@ -179,109 +206,136 @@ export async function POST(
       }
     }
 
-    const sid = stopRow.id as string;
-    const atStop = bookingsForRide.filter(
-      (b) =>
-        bookingPickupAtPublishedStop(b, sid, linkStops) || bookingDropoffAtPublishedStop(b, sid, linkStops)
-    );
+    const { data: existingEventsRaw } = await service
+      .from('ride_boarding_events')
+      .select('booking_id, event_type')
+      .eq('ride_id', rideId);
 
-    if (passengers.length === 0) {
-      if (atStop.length > 0) {
+    const existingEvents = (existingEventsRaw ?? []).map((e: { booking_id: unknown; event_type: unknown }) => ({
+      booking_id: String(e.booking_id),
+      event_type: String(e.event_type),
+    }));
+
+    const vk = visitKind as ArriveVisitKind;
+    const anchor = { lat: anchorLat, lng: anchorLng };
+    const driverPoint =
+      typeof driverLat === 'number' &&
+      typeof driverLng === 'number' &&
+      Number.isFinite(driverLat) &&
+      Number.isFinite(driverLng)
+        ? { lat: driverLat, lng: driverLng }
+        : anchor;
+
+    const primaryPickups = primaryPickupBookingsForVisit(
+      bookingsForRide,
+      existingEvents,
+      visitBookingId
+    );
+    const primaryDropoffs = primaryDropoffBookingsForVisit(
+      bookingsForRide,
+      existingEvents,
+      visitBookingId
+    );
+    const primaryPickupIds = new Set(primaryPickups.map((b) => b.id));
+    const primaryDropoffIds = new Set(primaryDropoffs.map((b) => b.id));
+
+    if (vk === 'pickup' && visitBookingId && primaryPickups.length > 0) {
+      const ok = passengers.some(
+        (p) => p.id === visitBookingId && (p.action === 'boarded' || p.action === 'no_show')
+      );
+      if (!ok) {
         return NextResponse.json(
-          {
-            error:
-              'En esta parada hay subidas o bajadas de reservas. Registrá subió/no subió y bajada con cobro confirmado antes de continuar.',
-          },
+          { error: 'Registrá si el pasajero subió o no subió en este punto.' },
           { status: 400 }
         );
       }
-    } else if (atStop.length > 0) {
-      for (const b of atStop) {
-        if (bookingPickupAtPublishedStop(b, sid, linkStops)) {
-          const ok = passengers.some(
-            (p) => p.id === b.id && (p.action === 'boarded' || p.action === 'no_show')
-          );
-          if (!ok) {
-            return NextResponse.json(
-              {
-                error:
-                  'Falta registrar la subida (subió o no subió) para cada reserva que sube en esta parada.',
-              },
-              { status: 400 }
-            );
-          }
-        }
-        if (bookingDropoffAtPublishedStop(b, sid, linkStops)) {
-          const ok = passengers.some((p) => p.id === b.id && p.action === 'dropped_off');
-          if (!ok) {
-            return NextResponse.json(
-              {
-                error:
-                  'Falta confirmar la bajada (y cobro, si corresponde) para cada reserva que baja en esta parada.',
-              },
-              { status: 400 }
-            );
-          }
-        }
+    }
+
+    if (vk === 'dropoff' && visitBookingId && primaryDropoffs.length > 0) {
+      const ok = passengers.some((p) => p.id === visitBookingId && p.action === 'dropped_off');
+      if (!ok) {
+        return NextResponse.json(
+          { error: 'Confirmá la bajada del pasajero en este punto.' },
+          { status: 400 }
+        );
       }
-      for (const p of passengers) {
-        const row = atStop.find((x) => x.id === p.id);
-        if (!row) {
-          return NextResponse.json(
-            { error: 'Cada acción debe ser de una reserva con subida o bajada en esta parada.' },
-            { status: 400 }
-          );
-        }
-        if (p.action === 'dropped_off') {
-          if (!bookingDropoffAtPublishedStop(row, sid, linkStops)) {
-            return NextResponse.json(
-              { error: 'La bajada no corresponde a esta parada.' },
-              { status: 400 }
-            );
-          }
-        } else if (p.action === 'boarded' || p.action === 'no_show') {
-          if (!bookingPickupAtPublishedStop(row, sid, linkStops)) {
-            return NextResponse.json(
-              { error: 'La subida no corresponde a esta parada.' },
-              { status: 400 }
-            );
-          }
-        }
+    }
+
+    for (const p of passengers) {
+      if (
+        !canRegisterPassengerAction(
+          bookingsForRide,
+          existingEvents,
+          driverPoint,
+          p,
+          primaryPickupIds,
+          primaryDropoffIds,
+          vk,
+          visitBookingId,
+          anchor,
+          []
+        )
+      ) {
+        return NextResponse.json(
+          { error: 'Una de las acciones no corresponde a este punto o a la proximidad del minibús.' },
+          { status: 400 }
+        );
+      }
+      if (p.action === 'boarded' && isBoarded(existingEvents, p.id)) {
+        return NextResponse.json({ error: 'Ese pasajero ya figura como subido.' }, { status: 400 });
+      }
+      if (p.action === 'no_show' && pickupDecisionDone(existingEvents, p.id)) {
+        return NextResponse.json({ error: 'Ese pasajero ya tiene decisión de subida.' }, { status: 400 });
+      }
+      if (p.action === 'dropped_off' && dropoffDone(existingEvents, p.id)) {
+        return NextResponse.json({ error: 'Ese pasajero ya figura como bajado.' }, { status: 400 });
       }
     }
 
     if (passengers.length > 0) {
-      const { data: existingEvents } = await service
+      const { data: dupEvents } = await service
         .from('ride_boarding_events')
-        .select('booking_id')
+        .select('booking_id, event_type')
         .eq('ride_id', rideId)
-        .eq('stop_index', stopOrder)
-        .in('booking_id', passengers.map((p) => p.id));
-
-      if (existingEvents && existingEvents.length > 0) {
-        return NextResponse.json(
-          { error: 'Ya hay un evento registrado para uno o más pasajeros en esta parada. No se puede duplicar.' },
-          { status: 400 }
+        .in(
+          'booking_id',
+          passengers.map((p) => p.id)
         );
+
+      for (const p of passengers) {
+        const dup = (dupEvents ?? []).find(
+          (e: { booking_id: unknown; event_type: unknown }) =>
+            String(e.booking_id) === p.id && String(e.event_type) === p.action
+        );
+        if (dup) {
+          return NextResponse.json(
+            { error: 'Ya hay un evento registrado para uno de los pasajeros. No se puede duplicar.' },
+            { status: 400 }
+          );
+        }
       }
     }
 
-    const { error: stopError } = await service
-      .from('ride_stops')
-      .update({ arrived_at: new Date().toISOString() })
-      .eq('ride_id', rideId)
-      .eq('stop_order', stopOrder);
+    const eventStopIndex = resolvedStopOrder;
 
-    if (stopError) {
-      console.error('[arrive] stop update error:', stopError.message);
-      return NextResponse.json({ error: 'No se pudo registrar la llegada a la parada.' }, { status: 400 });
+    if (vk === 'published') {
+      const { error: stopError } = await service
+        .from('ride_stops')
+        .update({ arrived_at: new Date().toISOString() })
+        .eq('ride_id', rideId)
+        .eq('stop_order', resolvedStopOrder);
+
+      if (stopError) {
+        console.error('[arrive] stop update error:', stopError.message);
+        return NextResponse.json({ error: 'No se pudo registrar la llegada a la parada.' }, { status: 400 });
+      }
     }
 
     for (const p of passengers) {
       const { error: insertErr } = await service.from('ride_boarding_events').insert({
         ride_id: rideId,
         booking_id: p.id,
-        stop_index: stopOrder,
+        stop_index: eventStopIndex,
         event_type: p.action,
       });
       if (insertErr && insertErr.code !== '23505') {
@@ -293,16 +347,21 @@ export async function POST(
       }
     }
 
-    const so = Number(stopOrder);
+    const so = Number(resolvedStopOrder);
     const currentIdx = sortedStops.findIndex((s: { stop_order: unknown }) => Number(s.stop_order) === so);
-    const nextStopIndex = currentIdx >= 0 ? currentIdx + 1 : (ride.current_stop_index ?? 0) + 1;
-    const nextStop = sortedStops[nextStopIndex] ?? null;
+    let nextStopIndex = ride.current_stop_index ?? 0;
+    let nextStop: (typeof sortedStops)[0] | null = null;
+
+    if (vk === 'published') {
+      nextStopIndex = currentIdx >= 0 ? currentIdx + 1 : (ride.current_stop_index ?? 0) + 1;
+      nextStop = sortedStops[nextStopIndex] ?? null;
+    }
 
     const { data: updatedRide, error: rideUpdateErr } = await service
       .from('rides')
       .update({
         awaiting_stop_confirmation: false,
-        current_stop_index: nextStopIndex,
+        ...(vk === 'published' ? { current_stop_index: nextStopIndex } : {}),
       })
       .eq('id', rideId)
       .select('current_stop_index')
@@ -327,9 +386,6 @@ export async function POST(
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 });
     }
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

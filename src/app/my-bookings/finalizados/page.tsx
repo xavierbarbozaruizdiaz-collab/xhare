@@ -7,6 +7,7 @@ import Link from 'next/link';
 import UserRoleBadge from '@/components/UserRoleBadge';
 import PageLoading from '@/components/PageLoading';
 import AppDrawer from '@/components/AppDrawer';
+import { formatProfileRatingStars } from '@/lib/profile-rating';
 
 function shortLabel(label: string | null | undefined, maxChars = 42): string {
   if (!label) return '—';
@@ -231,8 +232,10 @@ export default function MyBookingsFinalizadosPage() {
                           )}
                         </div>
                         <span className="text-sm font-medium text-gray-700">{driver.full_name || 'Conductor'}</span>
-                        {driver.rating_average != null && (
-                          <span className="text-sm text-gray-500">★ {Number(driver.rating_average).toFixed(1)}</span>
+                        {formatProfileRatingStars(driver.rating_average, driver.rating_count) && (
+                          <span className="text-sm text-gray-500">
+                            ★ {formatProfileRatingStars(driver.rating_average, driver.rating_count)}
+                          </span>
                         )}
                       </div>
                     )}

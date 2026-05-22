@@ -9,6 +9,10 @@ import type {
   CorridorZoneEditPayload,
   DemandTubeLayer,
 } from '@/components/admin/AdminCorridorsMap';
+import {
+  CORRIDOR_IMPORT_DEPARTMENTS,
+  type CorridorImportDepartmentId,
+} from '@/lib/admin/paraguay-department-presets';
 
 const AdminCorridorsMap = dynamic(() => import('@/components/admin/AdminCorridorsMap'), {
   ssr: false,
@@ -44,6 +48,7 @@ type CorridorRow = {
   created_at: string;
 };
 type DrawKind = 'origin' | 'destination';
+
 type UndoSnapshot = {
   corridorId: string;
   kind: DrawKind;
@@ -202,7 +207,9 @@ export default function AdminCorridorsPage() {
   const [vertexEditMode, setVertexEditMode] = useState(false);
   const [splitLineMode, setSplitLineMode] = useState(false);
   const [splitKeepSide, setSplitKeepSide] = useState<'left' | 'right'>('left');
-  const [importingCentral, setImportingCentral] = useState(false);
+  const [importDepartment, setImportDepartment] = useState<CorridorImportDepartmentId>('central');
+  const [importingCities, setImportingCities] = useState(false);
+  const [creatingZone, setCreatingZone] = useState(false);
   const [simplifyingCity, setSimplifyingCity] = useState(false);
   const [lastUndo, setLastUndo] = useState<UndoSnapshot | null>(null);
   const skipUndoRef = useRef(false);
@@ -550,51 +557,105 @@ export default function AdminCorridorsPage() {
     [accessToken, load, loadVersions, refetch]
   );
 
-  const importCentral = useCallback(async () => {
+  const importDepartmentCities = useCallback(async () => {
     if (!drawCorridorId) return;
     setSaveMsg(null);
     setSaveErr(null);
-    setImportingCentral(true);
+    setImportingCities(true);
     let token = accessToken ?? (await refetch()) ?? '';
     if (!token) {
       setSaveErr('No hay sesión.');
-      setImportingCentral(false);
+      setImportingCities(false);
       return;
     }
+    const deptLabel = CORRIDOR_IMPORT_DEPARTMENTS.find((d) => d.id === importDepartment)?.label ?? importDepartment;
     try {
-      let res = await fetch(`/api/admin/corridors/${drawCorridorId}/import-central`, {
+      let res = await fetch(`/api/admin/corridors/${drawCorridorId}/import-department`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ kind: drawKind }),
+        body: JSON.stringify({ kind: drawKind, department: importDepartment }),
       });
       if (res.status === 401) {
         token = (await refetch()) ?? '';
         if (token) {
-          res = await fetch(`/api/admin/corridors/${drawCorridorId}/import-central`, {
+          res = await fetch(`/api/admin/corridors/${drawCorridorId}/import-department`, {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ kind: drawKind }),
+            body: JSON.stringify({ kind: drawKind, department: importDepartment }),
           });
         }
       }
-      const body = (await res.json()) as { corridor?: CorridorRow; imported?: number; missing?: string[]; error?: string };
+      const body = (await res.json()) as {
+        corridor?: CorridorRow;
+        imported?: number;
+        missing?: string[];
+        error?: string;
+      };
       if (!res.ok) {
-        setSaveErr(typeof body.error === 'string' ? body.error : 'No se pudo importar Central');
+        setSaveErr(typeof body.error === 'string' ? body.error : 'No se pudo importar ciudades');
         return;
       }
       if (body.corridor) {
         setRows((prev) => prev.map((r) => (r.id === body.corridor!.id ? body.corridor! : r)));
       }
       const miss = Array.isArray(body.missing) && body.missing.length > 0 ? ` · faltaron ${body.missing.length}` : '';
-      setSaveMsg(`Central importado (${body.imported ?? 0} ciudades) para ${drawKind}.${miss}`);
+      setSaveMsg(`${deptLabel}: importadas ${body.imported ?? 0} ciudades en ${drawKind}.${miss}`);
     } catch (e) {
       setSaveErr(e instanceof Error ? e.message : 'Error de red');
     } finally {
-      setImportingCentral(false);
+      setImportingCities(false);
     }
-  }, [accessToken, drawCorridorId, drawKind, refetch]);
+  }, [accessToken, drawCorridorId, drawKind, importDepartment, refetch]);
+
+  const createZoneForDepartment = useCallback(
+    async (department: CorridorImportDepartmentId) => {
+      setSaveMsg(null);
+      setSaveErr(null);
+      setCreatingZone(true);
+      let token = accessToken ?? (await refetch()) ?? '';
+      if (!token) {
+        setSaveErr('No hay sesión.');
+        setCreatingZone(false);
+        return;
+      }
+      try {
+        let res = await fetch('/api/admin/corridors', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ department }),
+        });
+        if (res.status === 401) {
+          token = (await refetch()) ?? '';
+          if (token) {
+            res = await fetch('/api/admin/corridors', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ department }),
+            });
+          }
+        }
+        const body = (await res.json()) as { corridor?: CorridorRow; error?: string };
+        if (!res.ok) {
+          setSaveErr(typeof body.error === 'string' ? body.error : 'No se pudo crear la zona');
+          return;
+        }
+        if (body.corridor) {
+          setRows((prev) => [...prev, body.corridor!].sort((a, b) => b.sort_priority - a.sort_priority));
+          setDrawCorridorId(body.corridor.id);
+          setSaveMsg(`Zona creada: ${body.corridor.name}. Elegí el departamento e importá polígonos.`);
+        }
+      } catch (e) {
+        setSaveErr(e instanceof Error ? e.message : 'Error de red');
+      } finally {
+        setCreatingZone(false);
+      }
+    },
+    [accessToken, refetch]
+  );
 
   const toggleCity = useCallback(
     async (corridorId: string, kind: DrawKind, cityId: string, active: boolean) => {
@@ -805,7 +866,7 @@ export default function AdminCorridorsPage() {
               {tubesLoading ? 'Cargando tubos…' : 'Recargar tubos'}
             </button>
             <div>
-              <label className="block text-xs font-medium text-violet-900 mb-0.5">Corredor objetivo (Central)</label>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Zona a editar</label>
               <select
                 value={drawCorridorId}
                 onChange={(e) => setDrawCorridorId(e.target.value)}
@@ -819,6 +880,15 @@ export default function AdminCorridorsPage() {
                 ))}
               </select>
             </div>
+            <button
+              type="button"
+              onClick={() => void createZoneForDepartment(importDepartment)}
+              className="text-xs font-medium text-teal-900 border border-teal-600 rounded-lg px-2.5 py-1 hover:bg-teal-50 disabled:opacity-50"
+              disabled={creatingZone || importingCities}
+              title="Crea una fila vacía en corridors para este departamento (slug: departamento_metro_local)"
+            >
+              {creatingZone ? 'Creando zona…' : 'Crear zona vacía para este departamento'}
+            </button>
             <details className="rounded-lg border border-violet-300 bg-violet-50/60 px-3 py-2 text-sm">
               <summary className="cursor-pointer font-medium text-violet-900">Herramientas legacy de edición</summary>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -850,20 +920,40 @@ export default function AdminCorridorsPage() {
                     ))}
                   </select>
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-violet-900 mb-0.5">Departamento a importar</label>
+                  <select
+                    value={importDepartment}
+                    onChange={(e) => setImportDepartment(e.target.value as CorridorImportDepartmentId)}
+                    className="border border-violet-300 rounded-lg px-2 py-1 text-sm w-full max-h-48"
+                    disabled={importingCities}
+                  >
+                    {CORRIDOR_IMPORT_DEPARTMENTS.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="flex flex-wrap items-end gap-2 md:col-span-2">
                   <button
                     type="button"
-                    onClick={() => void importCentral()}
+                    onClick={() => void importDepartmentCities()}
                     className="text-sm font-medium text-indigo-800 border border-indigo-500 rounded-lg px-3 py-1 hover:bg-indigo-100 disabled:opacity-50"
-                    disabled={!drawCorridorId || importingCentral}
+                    disabled={!drawCorridorId || importingCities}
                   >
-                    {importingCentral ? 'Importando Central…' : 'Importar ciudades de Central (auto)'}
+                    {importingCities ? 'Importando ciudades…' : 'Importar polígonos del departamento'}
                   </button>
+                  <span className="text-[11px] text-violet-800 max-w-md">
+                    Descarga límites desde OpenStreetMap (Nominatim). Tarda varios minutos. Solo reemplaza la zona
+                    elegida (origen o destino) de la fila seleccionada; no toca otras zonas ni otros departamentos ya
+                    guardados en otra fila.
+                  </span>
                   <button
                     type="button"
                     onClick={() => void undoLastChange()}
                     className="text-sm font-medium text-gray-700 border border-gray-400 rounded-lg px-2.5 py-1 hover:bg-gray-100 disabled:opacity-50"
-                    disabled={!lastUndo || saving || importingCentral}
+                    disabled={!lastUndo || saving || importingCities}
                     title="Deshacer último cambio guardado"
                   >
                     ↶ Deshacer

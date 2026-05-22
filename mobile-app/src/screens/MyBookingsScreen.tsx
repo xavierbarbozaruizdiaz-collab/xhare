@@ -17,6 +17,7 @@ import { useAuth } from '../auth/AuthContext';
 import { fetchMyBookings } from '../rides/api';
 import type { MainStackParamList } from '../navigation/types';
 import { bookingStatusConfig, formatRideDate, formatRideTime } from '../ui/rideStatusConfig';
+import { formatBookingTicketCode } from '../lib/bookingCode';
 
 type Row = Record<string, unknown>;
 
@@ -177,6 +178,9 @@ export function MyBookingsScreen() {
           const st = String(item.status ?? '');
           const bCfg = bookingStatusConfig(st);
           const cancelled = st === 'cancelled';
+          const ticket = formatBookingTicketCode(
+            item.booking_code != null ? String(item.booking_code) : null
+          );
 
           return (
             <TouchableOpacity
@@ -203,6 +207,9 @@ export function MyBookingsScreen() {
                   <Text style={[styles.pillText, { color: bCfg.color }]}>{bCfg.label}</Text>
                 </View>
               </View>
+              {ticket ? (
+                <Text style={styles.ticketCode}>Ticket {ticket}</Text>
+              ) : null}
               <Text style={styles.meta}>
                 Salida: {depIso ? `${formatRideDate(depIso)} · ${formatRideTime(depIso)}` : '— · —'}
               </Text>
@@ -289,6 +296,13 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   pillText: { fontSize: 11, fontWeight: '700' },
+  ticketCode: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#14532d',
+    marginTop: 10,
+    letterSpacing: 0.5,
+  },
   meta: { fontSize: 13, color: '#6b7280', marginTop: 8 },
   hint: { fontSize: 12, color: '#166534', marginTop: 10, fontWeight: '600' },
 });

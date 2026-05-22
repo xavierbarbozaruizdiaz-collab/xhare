@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 import { createServiceClient } from '@/lib/supabase/server';
+import { formatVehicleInfoLabel } from '@/lib/vehicle-info';
 
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 45;
@@ -84,7 +85,40 @@ export async function GET(request: NextRequest, context: { params: Promise<{ cod
   }
 
   const r = row as Record<string, unknown>;
+  const rideId = String(r.id ?? '');
   const status = String(r.status ?? '');
+  const bookingId = request.nextUrl.searchParams.get('b')?.trim() ?? '';
+
+  if (bookingId) {
+    const { data: dropped } = await service
+      .from('ride_boarding_events')
+      .select('id')
+      .eq('ride_id', rideId)
+      .eq('booking_id', bookingId)
+      .eq('event_type', 'dropped_off')
+      .limit(1);
+    if (dropped && dropped.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'El seguimiento finalizó: el pasajero ya bajó del minibús.',
+          ended: true,
+          reason: 'passenger_dropped_off',
+        },
+        { status: 410 }
+      );
+    }
+  }
+
+  if (status === 'completed' || status === 'cancelled') {
+    return NextResponse.json(
+      {
+        error: 'El viaje ya no está en curso. El seguimiento en vivo no está disponible.',
+        ended: true,
+        reason: 'ride_finished',
+      },
+      { status: 410 }
+    );
+  }
   const driverRow = r.driver as { full_name?: string } | null | undefined;
   const driverFirst = firstName(driverRow?.full_name ?? null);
 
@@ -98,7 +132,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ cod
     origin_label: r.origin_label != null ? String(r.origin_label) : null,
     destination_label: r.destination_label != null ? String(r.destination_label) : null,
     route_name: r.route_name != null ? String(r.route_name) : null,
-    vehicle_info: r.vehicle_info != null ? String(r.vehicle_info) : null,
+    vehicle_info: formatVehicleInfoLabel(r.vehicle_info),
     driver_first_name: driverFirst,
     base_route_polyline: status !== 'cancelled' ? poly : [],
   };

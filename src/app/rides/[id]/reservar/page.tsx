@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import type { MapPoint, ExtraStopPoint } from '@/components/PickupDropoffMap';
+import { formatProfileRatingLabel } from '@/lib/profile-rating';
 import {
   baseFareFromDistanceKm,
   baseFareFromDistanceKmWithPricing,
@@ -556,11 +557,9 @@ export default function ReservarPage() {
                 <div>
                   <p className="font-semibold text-gray-900">{driver?.full_name || 'Conductor'}</p>
                   <p className="text-sm text-gray-500">
-                    {driver?.rating_average != null
-                      ? `★ ${Number(driver.rating_average).toFixed(1)}`
-                      : 'Nuevo'}
+                    ★ {formatProfileRatingLabel(driver?.rating_average, driver?.rating_count)}
                     {driver?.rating_count != null && driver.rating_count > 0 && (
-                      <span className="text-gray-400"> · {driver.rating_count} viaje{driver.rating_count !== 1 ? 's' : ''}</span>
+                      <span className="text-gray-400"> · {driver.rating_count} calificación{driver.rating_count !== 1 ? 'es' : ''}</span>
                     )}
                   </p>
                 </div>

@@ -4,8 +4,8 @@ import type { Point } from '@/types';
 /** Misma tolerancia que el móvil al asociar subida/bajada sin validación de stop_id en BD. */
 export const BOOKING_STOP_LINK_MAX_M = 1800;
 
-/** Radio para exigir que el conductor esté cerca de la parada al confirmar “Llegué”. */
-export const ARRIVE_DRIVER_MAX_DISTANCE_M = 520;
+/** Debe coincidir con `ARRIVE_GATE_M` en `ride-arrive-visit.ts` (confirmación por punto visitado). */
+export const ARRIVE_DRIVER_MAX_DISTANCE_M = 70;
 
 export type RideStopForBookingLink = { id: string; lat: number; lng: number };
 

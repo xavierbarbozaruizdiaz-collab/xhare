@@ -36,6 +36,8 @@ import { MessagesScreen } from '../screens/MessagesScreen';
 import { ChatScreen } from '../screens/ChatScreen';
 import { SaveTripRequestScreen } from '../screens/SaveTripRequestScreen';
 import { LegalAcceptanceScreen } from '../screens/LegalAcceptanceScreen';
+import { PassengerRateDriverGate } from '../components/PassengerRateDriverGate';
+import { ActiveRideResumeGate } from '../components/ActiveRideResumeGate';
 import type { RootStackParamList } from './types';
 import type { MainStackParamList } from './types';
 import type { MainTabParamList } from './types';
@@ -288,6 +290,12 @@ export function RootNavigator() {
           <RootStack.Screen name="Main" component={MainStackNavigator} />
         )}
       </RootStack.Navigator>
+      {session && legalAccepted ? (
+        <>
+          <ActiveRideResumeGate navRef={navRef} />
+          <PassengerRateDriverGate />
+        </>
+      ) : null}
     </NavigationContainer>
   );
 }
