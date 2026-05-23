@@ -16,6 +16,7 @@ import {
   parseCityPolygonsFromZone,
 } from '@/lib/corridorZoneHex';
 import { TRIP_REQUEST_SUPER_HEX_RES } from '@/lib/trip-request-h3';
+import { unionPolygonRings } from '@/lib/polygon-union';
 
 export type AdminCorridorMapItem = {
   id: string;
@@ -194,6 +195,8 @@ type Props = {
   vertexEditMode?: boolean;
   /** Habilita corte por línea para ciudad seleccionada. */
   splitLineMode?: boolean;
+  /** Dibujar polígono para unirlo a la ciudad seleccionada (agrandar). */
+  addPolygonMode?: boolean;
   /** Lado que se conserva al cortar (el otro se elimina). */
   splitKeepSide?: 'left' | 'right';
   height?: string;
@@ -226,6 +229,7 @@ export default function AdminCorridorsMap({
   editCityId = null,
   vertexEditMode = false,
   splitLineMode = false,
+  addPolygonMode = false,
   splitKeepSide = 'left',
   height = 'min(52vh, 480px)',
   className = '',
@@ -256,12 +260,12 @@ export default function AdminCorridorsMap({
 
     const mpm = (map as MapWithPm).pm;
     mpm?.removeControls();
-    if (splitLineMode) {
+    if (splitLineMode || addPolygonMode) {
       mpm?.addControls({
         position: 'topleft',
-        drawPolyline: true,
-        drawPolygon: false,
-        drawRectangle: false,
+        drawPolyline: !!splitLineMode,
+        drawPolygon: !!addPolygonMode,
+        drawRectangle: !!addPolygonMode,
         drawCircle: false,
         drawCircleMarker: false,
         drawMarker: false,
@@ -276,12 +280,47 @@ export default function AdminCorridorsMap({
 
     const onCreate = (e: L.LeafletEvent & { layer?: L.Layer }) => {
       const layer = e.layer;
+      const ctx = splitContextRef.current;
+
+      if (addPolygonMode && layer instanceof L.Polygon) {
+        const drawnLayer = layer as L.Polygon;
+        const drawn = polygonFromLeaflet(drawnLayer.getLatLngs() as L.LatLng[] | L.LatLng[][]);
+        drawnLayer.remove();
+        if (!ctx) {
+          window.alert('Seleccioná corredor, zona y ciudad antes de añadir área.');
+          return;
+        }
+        if (drawn.length < 3) {
+          window.alert('El polígono dibujado no es válido (mínimo 3 vértices).');
+          return;
+        }
+        const merged = unionPolygonRings(ctx.currentRing, drawn);
+        if (!merged || merged.length < 3) {
+          window.alert('No se pudo unir el área dibujada con la ciudad. Probá otra forma o editá vértices.');
+          return;
+        }
+        const nextAll = ctx.cityPolysAll.map((cp) =>
+          cp.id === ctx.cityId ? { ...cp, polygon_latlng: merged } : cp
+        );
+        const bbox = bboxFromCityPolygons(nextAll);
+        if (!bbox) return;
+        onZoneEditedRef.current(ctx.corridorId, ctx.kind, {
+          ...bbox,
+          city_polygons: nextAll.map((cp) => ({
+            id: cp.id,
+            name: cp.name,
+            active: cp.active,
+            polygon_latlng: cp.polygon_latlng,
+          })),
+        });
+        return;
+      }
+
       if (!(layer instanceof L.Polyline)) return;
       const line = layer as PmPolyline;
       const latlngs = line.getLatLngs() as L.LatLng[];
       line.remove();
       if (!splitLineMode || latlngs.length < 2) return;
-      const ctx = splitContextRef.current;
       if (!ctx) {
         window.alert('Seleccioná corredor, zona y ciudad antes de cortar.');
         return;
@@ -322,7 +361,7 @@ export default function AdminCorridorsMap({
       mapRef.current = null;
       overlayRef.current = null;
     };
-  }, [splitKeepSide, splitLineMode]);
+  }, [splitKeepSide, splitLineMode, addPolygonMode]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -593,6 +632,7 @@ export default function AdminCorridorsMap({
     editCityId,
     vertexEditMode,
     splitLineMode,
+    addPolygonMode,
     splitKeepSide,
   ]);
 

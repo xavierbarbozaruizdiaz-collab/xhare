@@ -257,6 +257,7 @@ export default function AdminCorridorsPage() {
   const [editCityId, setEditCityId] = useState<string>('');
   const [vertexEditMode, setVertexEditMode] = useState(false);
   const [splitLineMode, setSplitLineMode] = useState(false);
+  const [addPolygonMode, setAddPolygonMode] = useState(false);
   const [splitKeepSide, setSplitKeepSide] = useState<'left' | 'right'>('left');
   const [importDepartment, setImportDepartment] = useState<CorridorImportDepartmentId>('central');
   const [importingCities, setImportingCities] = useState(false);
@@ -1195,10 +1196,27 @@ export default function AdminCorridorsPage() {
                     <input
                       type="checkbox"
                       checked={splitLineMode}
-                      onChange={(e) => setSplitLineMode(e.target.checked)}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setSplitLineMode(on);
+                        if (on) setAddPolygonMode(false);
+                      }}
                       disabled={!editCityId}
                     />
                     Cortar por línea
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-sm text-violet-950 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={addPolygonMode}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setAddPolygonMode(on);
+                        if (on) setSplitLineMode(false);
+                      }}
+                      disabled={!editCityId}
+                    />
+                    Añadir área
                   </label>
                 </div>
                 <div className="flex items-end gap-2">
@@ -1292,7 +1310,12 @@ export default function AdminCorridorsPage() {
             </span>
             {splitLineMode && (
               <span className="text-[11px] text-indigo-700">
-                Modo corte activo: dibujá una línea de borde a borde para eliminar una de las partes.
+                Modo corte: dibujá una línea que cruce la ciudad para quitar un lado.
+              </span>
+            )}
+            {addPolygonMode && (
+              <span className="text-[11px] text-teal-800">
+                Modo añadir: dibujá polígono o rectángulo sobre el área extra; se une a la ciudad seleccionada.
               </span>
             )}
             <span className="inline-flex items-center gap-1.5">
@@ -1335,6 +1358,7 @@ export default function AdminCorridorsPage() {
             editCityId={editCityId || null}
             vertexEditMode={vertexEditMode}
             splitLineMode={splitLineMode}
+            addPolygonMode={addPolygonMode}
             splitKeepSide={splitKeepSide}
           />
         </div>
