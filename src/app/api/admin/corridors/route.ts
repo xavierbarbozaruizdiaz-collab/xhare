@@ -6,6 +6,7 @@ import {
   corridorZoneTemplateForDepartment,
   emptyZoneFromBbox,
   isCorridorImportDepartmentId,
+  slugifyCorridorSlug,
 } from '@/lib/admin/corridor-city-import';
 
 export const dynamic = 'force-dynamic';
@@ -59,7 +60,8 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/admin/corridors
- * Body: { department: CorridorImportDepartmentId } — crea fila `{department}_metro_local` si no existe.
+ * Body: { department: CorridorImportDepartmentId, name?: string, slug?: string }
+ * — crea fila vacía; sin name usa plantilla del departamento (`{department}_metro_local`).
  */
 export async function POST(request: NextRequest) {
   return withAdminAuth(request, async (_req, user) => {
@@ -75,7 +77,8 @@ export async function POST(request: NextRequest) {
       } catch {
         return NextResponse.json({ error: 'JSON inválido' }, { status: 400 });
       }
-      const department = (raw as { department?: unknown })?.department;
+      const body = raw as { department?: unknown; name?: unknown; slug?: unknown };
+      const department = body.department;
       if (!isCorridorImportDepartmentId(department)) {
         return NextResponse.json(
           { error: 'department inválido (elegí un departamento de Paraguay en el listado del admin)' },
@@ -90,10 +93,23 @@ export async function POST(request: NextRequest) {
       const zone = emptyZoneFromBbox(t.bbox);
       const service = createServiceClient();
 
-      const { data: existing } = await service.from('corridors').select('id, slug').eq('slug', t.slug).maybeSingle();
+      const customName = typeof body.name === 'string' ? body.name.trim() : '';
+      const customSlugRaw = typeof body.slug === 'string' ? body.slug.trim() : '';
+      const displayName = customName.length >= 2 ? customName.slice(0, 120) : t.name;
+      const slug =
+        customSlugRaw.length >= 2
+          ? slugifyCorridorSlug(customSlugRaw)
+          : customName.length >= 2
+            ? slugifyCorridorSlug(customName)
+            : t.slug;
+      if (!slug || slug.length < 2) {
+        return NextResponse.json({ error: 'slug inválido (mínimo 2 caracteres)' }, { status: 400 });
+      }
+
+      const { data: existing } = await service.from('corridors').select('id, slug').eq('slug', slug).maybeSingle();
       if (existing) {
         return NextResponse.json(
-          { error: `Ya existe una zona con slug "${t.slug}". Seleccionála en el mapa e importá el departamento.` },
+          { error: `Ya existe una zona con slug "${slug}". Elegí otro nombre o slug.` },
           { status: 409 }
         );
       }
@@ -101,8 +117,8 @@ export async function POST(request: NextRequest) {
       const { data, error } = await service
         .from('corridors')
         .insert({
-          name: t.name,
-          slug: t.slug,
+          name: displayName,
+          slug,
           origin_zone: zone,
           destination_zone: zone,
           sort_priority: t.sort_priority,

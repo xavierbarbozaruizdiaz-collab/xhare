@@ -162,3 +162,59 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     }
   });
 }
+
+const ADMIN_CORRIDOR_DELETE_WINDOW_MS = 60_000;
+const ADMIN_CORRIDOR_DELETE_MAX_PER_WINDOW = 20;
+
+/**
+ * DELETE /api/admin/corridors/:id
+ * Elimina la fila en `corridors`. Referencias en trip_requests/demand_route_groups quedan en NULL.
+ */
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  return withAdminAuth(request, async (_req, user) => {
+    const id = params.id?.trim();
+    if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
+      return NextResponse.json({ error: 'id inválido' }, { status: 400 });
+    }
+
+    try {
+      const clientId = getClientId(request, user.id);
+      if (
+        !checkRateLimit(
+          `admin-corridor-delete:${clientId}`,
+          ADMIN_CORRIDOR_DELETE_WINDOW_MS,
+          ADMIN_CORRIDOR_DELETE_MAX_PER_WINDOW
+        )
+      ) {
+        return NextResponse.json({ error: 'Demasiadas solicitudes. Esperá un momento.' }, { status: 429 });
+      }
+
+      const svc = createServiceClient();
+      const { data: row, error: fetchErr } = await svc
+        .from('corridors')
+        .select('id, name, slug')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (fetchErr) {
+        logBlockError(BLOCK, fetchErr.message, fetchErr);
+        return NextResponse.json({ error: 'No se pudo leer la zona.' }, { status: 400 });
+      }
+      if (!row) {
+        return NextResponse.json({ error: 'Zona no encontrada' }, { status: 404 });
+      }
+
+      const { error: delErr } = await svc.from('corridors').delete().eq('id', id);
+      if (delErr) {
+        logBlockError(BLOCK, delErr.message, delErr);
+        return NextResponse.json({ error: 'No se pudo eliminar la zona.' }, { status: 400 });
+      }
+
+      logBlockOk(BLOCK);
+      return NextResponse.json({ ok: true, deleted: row });
+    } catch (e) {
+      logBlockError(BLOCK, e instanceof Error ? e.message : 'unknown', e);
+      return NextResponse.json({ error: 'Error interno' }, { status: 500 });
+    }
+  });
+}

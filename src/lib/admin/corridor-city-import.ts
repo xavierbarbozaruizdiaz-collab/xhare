@@ -38,7 +38,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function slugify(s: string): string {
+export function slugifyCorridorSlug(s: string): string {
   return s
     .toLowerCase()
     .normalize('NFD')
@@ -46,6 +46,10 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 80);
+}
+
+function slugify(s: string): string {
+  return slugifyCorridorSlug(s);
 }
 
 function simplifyByStep(ring: LatLng[], maxPoints = 1200): LatLng[] {

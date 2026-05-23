@@ -11,7 +11,9 @@ import type {
 } from '@/components/admin/AdminCorridorsMap';
 import {
   CORRIDOR_IMPORT_DEPARTMENTS,
+  departmentMetroName,
   departmentMetroSlug,
+  PARAGUAY_DEPARTMENT_PRESETS,
   type CorridorImportDepartmentId,
 } from '@/lib/admin/paraguay-department-presets';
 
@@ -259,6 +261,8 @@ export default function AdminCorridorsPage() {
   const [importDepartment, setImportDepartment] = useState<CorridorImportDepartmentId>('central');
   const [importingCities, setImportingCities] = useState(false);
   const [creatingZone, setCreatingZone] = useState(false);
+  const [deletingZone, setDeletingZone] = useState(false);
+  const [newZoneName, setNewZoneName] = useState('');
   const [simplifyingCity, setSimplifyingCity] = useState(false);
   const [lastUndo, setLastUndo] = useState<UndoSnapshot | null>(null);
   const skipUndoRef = useRef(false);
@@ -439,6 +443,8 @@ export default function AdminCorridorsPage() {
   const preferredCorridorForImport = rows.find((r) => r.slug === departmentMetroSlug(importDepartment));
   const importRowMismatch =
     !!preferredCorridorForImport && !!drawCorridorId && preferredCorridorForImport.id !== drawCorridorId;
+  const departmentPreset = PARAGUAY_DEPARTMENT_PRESETS[importDepartment];
+  const defaultZoneNameForDepartment = departmentPreset ? departmentMetroName(departmentPreset) : '';
 
   useEffect(() => {
     if (selectedCities.length === 0) {
@@ -698,7 +704,7 @@ export default function AdminCorridorsPage() {
   }, [accessToken, drawCorridorId, drawKind, importDepartment, refetch, rows]);
 
   const createZoneForDepartment = useCallback(
-    async (department: CorridorImportDepartmentId) => {
+    async (department: CorridorImportDepartmentId, name?: string) => {
       setSaveMsg(null);
       setSaveErr(null);
       setCreatingZone(true);
@@ -708,12 +714,16 @@ export default function AdminCorridorsPage() {
         setCreatingZone(false);
         return;
       }
+      const payload: { department: CorridorImportDepartmentId; name?: string } = { department };
+      const trimmed = (name ?? '').trim();
+      if (trimmed.length >= 2) payload.name = trimmed.slice(0, 120);
+
       try {
         let res = await fetch('/api/admin/corridors', {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ department }),
+          body: JSON.stringify(payload),
         });
         if (res.status === 401) {
           token = (await refetch()) ?? '';
@@ -722,7 +732,7 @@ export default function AdminCorridorsPage() {
               method: 'POST',
               credentials: 'include',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-              body: JSON.stringify({ department }),
+              body: JSON.stringify(payload),
             });
           }
         }
@@ -734,7 +744,8 @@ export default function AdminCorridorsPage() {
         if (body.corridor) {
           setRows((prev) => [...prev, body.corridor!].sort((a, b) => b.sort_priority - a.sort_priority));
           setDrawCorridorId(body.corridor.id);
-          setSaveMsg(`Zona creada: ${body.corridor.name}. Elegí el departamento e importá polígonos.`);
+          setNewZoneName('');
+          setSaveMsg(`Zona creada: ${body.corridor.name} (${body.corridor.slug}). Importá polígonos si hace falta.`);
         }
       } catch (e) {
         setSaveErr(e instanceof Error ? e.message : 'Error de red');
@@ -744,6 +755,55 @@ export default function AdminCorridorsPage() {
     },
     [accessToken, refetch]
   );
+
+  const deleteSelectedZone = useCallback(async () => {
+    if (!drawCorridorId) return;
+    const row = rows.find((r) => r.id === drawCorridorId);
+    if (!row) return;
+    const ok = window.confirm(
+      `¿Eliminar la zona «${row.name}» (${row.slug})?\n\nLos pedidos ya clasificados con esta zona quedarán sin corredor asignado.`
+    );
+    if (!ok) return;
+
+    setSaveMsg(null);
+    setSaveErr(null);
+    setDeletingZone(true);
+    let token = accessToken ?? (await refetch()) ?? '';
+    if (!token) {
+      setSaveErr('No hay sesión.');
+      setDeletingZone(false);
+      return;
+    }
+    try {
+      let res = await fetch(`/api/admin/corridors/${drawCorridorId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 401) {
+        token = (await refetch()) ?? '';
+        if (token) {
+          res = await fetch(`/api/admin/corridors/${drawCorridorId}`, {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        }
+      }
+      const body = (await res.json()) as { error?: string; deleted?: { name: string; slug: string } };
+      if (!res.ok) {
+        setSaveErr(typeof body.error === 'string' ? body.error : 'No se pudo eliminar la zona');
+        return;
+      }
+      setRows((prev) => prev.filter((r) => r.id !== drawCorridorId));
+      setDrawCorridorId('');
+      setSaveMsg(`Zona eliminada: ${body.deleted?.name ?? row.name}.`);
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : 'Error de red');
+    } finally {
+      setDeletingZone(false);
+    }
+  }, [accessToken, drawCorridorId, refetch, rows]);
 
   const toggleCity = useCallback(
     async (corridorId: string, kind: DrawKind, cityId: string, active: boolean) => {
@@ -975,27 +1035,65 @@ export default function AdminCorridorsPage() {
             </button>
             <div>
               <label className="block text-xs font-medium text-violet-900 mb-0.5">Zona a editar</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={drawCorridorId}
+                  onChange={(e) => setDrawCorridorId(e.target.value)}
+                  className="border border-violet-300 rounded-lg px-2 py-1 text-sm min-w-[180px]"
+                  disabled={rows.length === 0}
+                >
+                  {rows.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} ({r.slug})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => void deleteSelectedZone()}
+                  className="text-xs font-medium text-red-800 border border-red-400 rounded-lg px-2.5 py-1 hover:bg-red-50 disabled:opacity-50"
+                  disabled={!drawCorridorId || deletingZone || creatingZone || importingCities}
+                  title="Elimina la fila seleccionada de corridors"
+                >
+                  {deletingZone ? 'Eliminando…' : 'Eliminar zona'}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Departamento (bbox inicial)</label>
               <select
-                value={drawCorridorId}
-                onChange={(e) => setDrawCorridorId(e.target.value)}
-                className="border border-violet-300 rounded-lg px-2 py-1 text-sm min-w-[180px]"
-                disabled={rows.length === 0}
+                value={importDepartment}
+                onChange={(e) => setImportDepartment(e.target.value as CorridorImportDepartmentId)}
+                className="border border-violet-300 rounded-lg px-2 py-1 text-sm min-w-[160px] max-h-48"
+                disabled={creatingZone || importingCities}
               >
-                {rows.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name} ({r.slug})
+                {CORRIDOR_IMPORT_DEPARTMENTS.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.label}
                   </option>
                 ))}
               </select>
             </div>
+            <div>
+              <label className="block text-xs font-medium text-violet-900 mb-0.5">Nombre de la zona</label>
+              <input
+                type="text"
+                value={newZoneName}
+                onChange={(e) => setNewZoneName(e.target.value)}
+                placeholder={defaultZoneNameForDepartment || 'Ej: Caaguazú — viaje local'}
+                className="border border-violet-300 rounded-lg px-2 py-1 text-sm min-w-[200px]"
+                maxLength={120}
+                disabled={creatingZone}
+              />
+            </div>
             <button
               type="button"
-              onClick={() => void createZoneForDepartment(importDepartment)}
-              className="text-xs font-medium text-teal-900 border border-teal-600 rounded-lg px-2.5 py-1 hover:bg-teal-50 disabled:opacity-50"
+              onClick={() => void createZoneForDepartment(importDepartment, newZoneName)}
+              className="text-xs font-medium text-teal-900 border border-teal-600 rounded-lg px-2.5 py-1 hover:bg-teal-50 disabled:opacity-50 self-end"
               disabled={creatingZone || importingCities}
-              title="Crea una fila vacía en corridors para este departamento (slug: departamento_metro_local)"
+              title="Crea fila vacía; el slug se genera del nombre o del departamento"
             >
-              {creatingZone ? 'Creando zona…' : 'Crear zona vacía para este departamento'}
+              {creatingZone ? 'Creando zona…' : 'Crear zona vacía'}
             </button>
             <details className="rounded-lg border border-violet-300 bg-violet-50/60 px-3 py-2 text-sm">
               <summary className="cursor-pointer font-medium text-violet-900">Herramientas legacy de edición</summary>
