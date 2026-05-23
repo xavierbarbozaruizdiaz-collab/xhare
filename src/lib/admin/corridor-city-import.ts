@@ -226,29 +226,61 @@ function toRing(geo: unknown): LatLng[] | null {
   return null;
 }
 
-async function fetchCityPolygon(city: string, nominatimDepartment: string): Promise<LatLng[] | null> {
-  const q = encodeURIComponent(`${city}, ${nominatimDepartment}, Paraguay`);
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&polygon_geojson=1&limit=1&q=${q}`;
+/** Consultas alternativas cuando Nominatim no resuelve el nombre habitual. */
+const CITY_NOMINATIM_ALIASES: Record<string, string[]> = {
+  Asunción: ['Asunción, Distrito Capital, Paraguay', 'Distrito Capital, Paraguay'],
+  Repatriación: ['Colonia Repatriación, Caaguazú, Paraguay', 'Repatriacion, Caaguazú, Paraguay'],
+  'Coronel Oviedo': ['Coronel Oviedo, Caaguazú Department, Paraguay'],
+  Caaguazú: ['Caaguazú, Caaguazú Department, Paraguay', 'Caaguazu, Paraguay'],
+};
+
+const ASUNCION_BOUNDARY_QUERIES = [
+  'Asunción, Distrito Capital, Paraguay',
+  'Distrito Capital, Paraguay',
+  'Asunción, Paraguay',
+];
+
+/** Nominatim suele devolver un Point en `limit=1`; buscamos el primer Polygon/MultiPolygon. */
+async function fetchNominatimPolygonRing(query: string): Promise<LatLng[] | null> {
+  const q = encodeURIComponent(query);
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&polygon_geojson=1&limit=8&q=${q}`;
   const res = await fetch(url, {
     headers: { 'User-Agent': 'xhare-admin-corridors/1.0', Accept: 'application/json' },
     cache: 'no-store',
   });
   if (!res.ok) return null;
   const data = (await res.json()) as Array<{ geojson?: unknown }>;
-  const ring = toRing(data?.[0]?.geojson);
-  return ring ? simplifyByStep(ring) : null;
+  for (const item of data) {
+    const ring = toRing(item?.geojson);
+    if (ring) return simplifyByStep(ring);
+  }
+  return null;
+}
+
+async function fetchCityPolygon(city: string, nominatimDepartment: string): Promise<LatLng[] | null> {
+  const queries = [
+    `${city}, ${nominatimDepartment}, Paraguay`,
+    ...(CITY_NOMINATIM_ALIASES[city] ?? []),
+  ];
+  for (const query of queries) {
+    const ring = await fetchNominatimPolygonRing(query);
+    if (ring) return ring;
+    await sleep(350);
+  }
+  return null;
+}
+
+async function fetchAsuncionBoundaryRing(): Promise<LatLng[] | null> {
+  for (const query of ASUNCION_BOUNDARY_QUERIES) {
+    const ring = await fetchNominatimPolygonRing(query);
+    if (ring) return ring;
+    await sleep(350);
+  }
+  return null;
 }
 
 async function fetchAsuncionSplit(idPrefix: string): Promise<CityPolygonRecord[] | null> {
-  const q = encodeURIComponent('Asunción, Paraguay');
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&polygon_geojson=1&limit=1&q=${q}`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'xhare-admin-corridors/1.0', Accept: 'application/json' },
-    cache: 'no-store',
-  });
-  if (!res.ok) return null;
-  const data = (await res.json()) as Array<{ geojson?: unknown }>;
-  const asu = toRing(data?.[0]?.geojson);
+  const asu = await fetchAsuncionBoundaryRing();
   if (!asu) return null;
   const road = await fetchMariscalLopezLine();
   let split: { centro: LatLng[]; norte: LatLng[] } | null = null;
@@ -297,9 +329,27 @@ export async function collectDepartmentCityPolygons(
         imported.push(...asu);
       } else {
         missing.push('Asuncion (split Centro/Norte)');
+        const fallbackRing = await fetchAsuncionBoundaryRing();
+        if (fallbackRing) {
+          imported.push({
+            id: `${preset.idPrefix}-asuncion`,
+            name: 'Asunción',
+            active: true,
+            polygon_latlng: fallbackRing,
+          });
+        }
       }
     } catch {
       missing.push('Asuncion (split Centro/Norte)');
+      const fallbackRing = await fetchAsuncionBoundaryRing();
+      if (fallbackRing) {
+        imported.push({
+          id: `${preset.idPrefix}-asuncion`,
+          name: 'Asunción',
+          active: true,
+          polygon_latlng: fallbackRing,
+        });
+      }
     }
     await sleep(350);
   }
@@ -308,7 +358,6 @@ export async function collectDepartmentCityPolygons(
     if (preset.importAsuncionSplit && city === 'Asunción') continue;
     try {
       const ring = await fetchCityPolygon(city, preset.nominatimDepartment);
-      await sleep(350);
       if (!ring) {
         missing.push(city);
         continue;
@@ -347,7 +396,7 @@ export async function collectDepartmentCityPolygons(
 
 export type ImportCorridorCitiesResult =
   | { ok: true; corridor: Record<string, unknown>; imported: number; missing: string[]; department: CorridorImportDepartmentId }
-  | { ok: false; status: number; error: string };
+  | { ok: false; status: number; error: string; missing?: string[] };
 
 export async function importCorridorDepartmentCities(
   svc: SupabaseClient,
@@ -371,10 +420,13 @@ export async function importCorridorDepartmentCities(
 
   const { imported, missing } = await collectDepartmentCityPolygons(department);
   if (imported.length === 0) {
+    const detail =
+      missing.length > 0 ? ` (${missing.join('; ')})` : '';
     return {
       ok: false,
       status: 502,
-      error: `No se pudo importar ninguna ciudad de ${preset.label}`,
+      error: `No se pudo importar ninguna ciudad de ${preset.label}${detail}. OpenStreetMap no devolvió polígonos; probá de nuevo en unos minutos.`,
+      missing,
     };
   }
 

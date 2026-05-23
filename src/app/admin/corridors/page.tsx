@@ -11,6 +11,7 @@ import type {
 } from '@/components/admin/AdminCorridorsMap';
 import {
   CORRIDOR_IMPORT_DEPARTMENTS,
+  departmentMetroSlug,
   type CorridorImportDepartmentId,
 } from '@/lib/admin/paraguay-department-presets';
 
@@ -174,6 +175,54 @@ function simplifyClosedRing(
   return noDup.length >= 3 ? noDup : ring;
 }
 
+function cityPanelKey(corridorId: string, kind: DrawKind): string {
+  return `${corridorId}:${kind}`;
+}
+
+function CityPolygonToggleList({
+  cities,
+  corridorId,
+  kind,
+  forceOpen,
+  onToggle,
+}: {
+  cities: CityPolyRow[];
+  corridorId: string;
+  kind: DrawKind;
+  forceOpen?: boolean;
+  onToggle: (corridorId: string, kind: DrawKind, cityId: string, active: boolean) => void;
+}) {
+  if (cities.length === 0) return null;
+  const activeCount = cities.filter((c) => c.active).length;
+  const kindLabel = kind === 'origin' ? 'origen' : 'destino';
+  return (
+    <details
+      open={forceOpen}
+      className="mt-2 rounded-md border border-gray-200 bg-white text-xs shadow-sm"
+    >
+      <summary className="cursor-pointer px-2.5 py-2 font-medium text-gray-800 hover:bg-gray-50 select-none">
+        Ciudades — {kindLabel} ({activeCount}/{cities.length} activas) · clic para desplegar
+      </summary>
+      <div className="max-h-52 overflow-y-auto border-t border-gray-100 px-2.5 py-2 space-y-1.5">
+        <p className="text-[11px] text-gray-500 pb-1">
+          Desmarcá las que no quieras usar en clasificación de demanda.
+        </p>
+        {cities.map((c) => (
+          <label key={c.id} className="flex items-start gap-2 text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5 shrink-0"
+              checked={c.active}
+              onChange={(e) => onToggle(corridorId, kind, c.id, e.target.checked)}
+            />
+            <span className={c.active ? '' : 'text-gray-400 line-through'}>{c.name}</span>
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export default function AdminCorridorsPage() {
   const { accessToken, ready, isAdmin, refetch } = useAdminAuth();
   const [rows, setRows] = useState<CorridorRow[]>([]);
@@ -216,6 +265,8 @@ export default function AdminCorridorsPage() {
   const [versions, setVersions] = useState<CorridorVersion[]>([]);
   const [publishingVersion, setPublishingVersion] = useState(false);
   const [rollbackingId, setRollbackingId] = useState<string | null>(null);
+  const [cityPanelHighlight, setCityPanelHighlight] = useState<string | null>(null);
+  const cityPanelRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     if (!accessToken) {
@@ -385,6 +436,9 @@ export default function AdminCorridorsPage() {
   const selectedZone =
     selectedRow == null ? null : ((drawKind === 'origin' ? selectedRow.origin_zone : selectedRow.destination_zone) as Record<string, unknown>);
   const selectedCities = selectedZone ? parseCityPolys(selectedZone) : [];
+  const preferredCorridorForImport = rows.find((r) => r.slug === departmentMetroSlug(importDepartment));
+  const importRowMismatch =
+    !!preferredCorridorForImport && !!drawCorridorId && preferredCorridorForImport.id !== drawCorridorId;
 
   useEffect(() => {
     if (selectedCities.length === 0) {
@@ -569,8 +623,33 @@ export default function AdminCorridorsPage() {
       return;
     }
     const deptLabel = CORRIDOR_IMPORT_DEPARTMENTS.find((d) => d.id === importDepartment)?.label ?? importDepartment;
+    const expectedSlug = departmentMetroSlug(importDepartment);
+    const preferredRow = rows.find((r) => r.slug === expectedSlug);
+    const currentRow = rows.find((r) => r.id === drawCorridorId);
+    let targetCorridorId = drawCorridorId;
+
+    if (preferredRow && preferredRow.id !== drawCorridorId) {
+      const usePreferred = window.confirm(
+        `Vas a importar ${deptLabel} en la fila «${currentRow?.name ?? 'actual'}».\n\n` +
+          `Lo habitual es usar «${preferredRow.name}» (slug ${expectedSlug}).\n\n` +
+          `Aceptar = importar en la zona recomendada.\nCancelar = importar en la fila seleccionada ahora.`
+      );
+      if (usePreferred) {
+        targetCorridorId = preferredRow.id;
+        setDrawCorridorId(preferredRow.id);
+      }
+    } else if (!preferredRow) {
+      setSaveErr(
+        `No hay fila «${deptLabel} — viaje local» (slug ${expectedSlug}). ` +
+          `Usá «Crear zona vacía para este departamento», seleccioná esa fila e importá de nuevo.`
+      );
+      setImportingCities(false);
+      return;
+    }
+
+    const kindLabel = drawKind === 'origin' ? 'origen' : 'destino';
     try {
-      let res = await fetch(`/api/admin/corridors/${drawCorridorId}/import-department`, {
+      let res = await fetch(`/api/admin/corridors/${targetCorridorId}/import-department`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -579,7 +658,7 @@ export default function AdminCorridorsPage() {
       if (res.status === 401) {
         token = (await refetch()) ?? '';
         if (token) {
-          res = await fetch(`/api/admin/corridors/${drawCorridorId}/import-department`, {
+          res = await fetch(`/api/admin/corridors/${targetCorridorId}/import-department`, {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -599,15 +678,24 @@ export default function AdminCorridorsPage() {
       }
       if (body.corridor) {
         setRows((prev) => prev.map((r) => (r.id === body.corridor!.id ? body.corridor! : r)));
+        setCityPanelHighlight(cityPanelKey(body.corridor.id, drawKind));
+        requestAnimationFrame(() => {
+          cityPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
       }
-      const miss = Array.isArray(body.missing) && body.missing.length > 0 ? ` · faltaron ${body.missing.length}` : '';
-      setSaveMsg(`${deptLabel}: importadas ${body.imported ?? 0} ciudades en ${drawKind}.${miss}`);
+      const targetName = body.corridor?.name ?? currentRow?.name ?? 'zona';
+      const missList =
+        Array.isArray(body.missing) && body.missing.length > 0 ? ` Sin polígono: ${body.missing.join(', ')}.` : '';
+      setSaveMsg(
+        `${deptLabel}: ${body.imported ?? 0} ciudades en «${targetName}» (zona ${kindLabel}).${missList} ` +
+          `Desplegá la lista abajo para activar o desactivar cada ciudad.`
+      );
     } catch (e) {
       setSaveErr(e instanceof Error ? e.message : 'Error de red');
     } finally {
       setImportingCities(false);
     }
-  }, [accessToken, drawCorridorId, drawKind, importDepartment, refetch]);
+  }, [accessToken, drawCorridorId, drawKind, importDepartment, refetch, rows]);
 
   const createZoneForDepartment = useCallback(
     async (department: CorridorImportDepartmentId) => {
@@ -812,6 +900,26 @@ export default function AdminCorridorsPage() {
         </div>
       )}
 
+      {selectedRow && selectedCities.length > 0 && (
+        <div
+          ref={cityPanelRef}
+          className="mb-4 rounded-xl border border-teal-200 bg-teal-50/40 px-4 py-3 text-sm"
+        >
+          <p className="font-semibold text-teal-950">Activar / desactivar ciudades importadas</p>
+          <p className="text-xs text-teal-900/90 mt-0.5">
+            Fila «{selectedRow.name}» · zona {drawKind === 'origin' ? 'origen' : 'destino'} ·{' '}
+            {selectedCities.filter((c) => c.active).length} de {selectedCities.length} activas
+          </p>
+          <CityPolygonToggleList
+            cities={selectedCities}
+            corridorId={selectedRow.id}
+            kind={drawKind}
+            forceOpen={cityPanelHighlight === cityPanelKey(selectedRow.id, drawKind)}
+            onToggle={toggleCity}
+          />
+        </div>
+      )}
+
       {!loading && rows.length === 0 && !err && (
         <p className="text-gray-600 text-sm">
           No hay filas en <code className="bg-gray-100 px-1 rounded">corridors</code> o la migración de corredores no
@@ -934,6 +1042,24 @@ export default function AdminCorridorsPage() {
                       </option>
                     ))}
                   </select>
+                  {importRowMismatch && preferredCorridorForImport && (
+                    <p className="mt-1.5 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                      {CORRIDOR_IMPORT_DEPARTMENTS.find((d) => d.id === importDepartment)?.label} conviene importarse en «
+                      {preferredCorridorForImport.name}», no en la fila seleccionada arriba.{' '}
+                      <button
+                        type="button"
+                        className="underline font-medium text-amber-950"
+                        onClick={() => setDrawCorridorId(preferredCorridorForImport.id)}
+                      >
+                        Usar fila recomendada
+                      </button>
+                    </p>
+                  )}
+                  {!preferredCorridorForImport && (
+                    <p className="mt-1.5 text-[11px] text-sky-900">
+                      Primero «Crear zona vacía para este departamento» (slug {departmentMetroSlug(importDepartment)}).
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-wrap items-end gap-2 md:col-span-2">
                   <button
@@ -945,9 +1071,9 @@ export default function AdminCorridorsPage() {
                     {importingCities ? 'Importando ciudades…' : 'Importar polígonos del departamento'}
                   </button>
                   <span className="text-[11px] text-violet-800 max-w-md">
-                    Descarga límites desde OpenStreetMap (Nominatim). Tarda varios minutos. Solo reemplaza la zona
-                    elegida (origen o destino) de la fila seleccionada; no toca otras zonas ni otros departamentos ya
-                    guardados en otra fila.
+                    Descarga todas las ciudades del departamento desde OpenStreetMap (Nominatim; tarda varios minutos).
+                    Reemplaza solo la zona origen o destino de la fila elegida. Después usá la lista desplegable (arriba
+                    o en la tabla) para desactivar ciudades que no uses.
                   </span>
                   <button
                     type="button"
@@ -1203,39 +1329,25 @@ export default function AdminCorridorsPage() {
                       <span className="text-xs">Ver</span>
                     </label>
                   </td>
-                  <td className="px-4 py-3 text-gray-600 max-w-[200px]">
-                    <span className="break-words">{zoneSummary(r.origin_zone)}</span>
-                    {parseCityPolys(r.origin_zone).length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {parseCityPolys(r.origin_zone).map((c) => (
-                          <label key={c.id} className="flex items-center gap-2 text-xs text-gray-700">
-                            <input
-                              type="checkbox"
-                              checked={c.active}
-                              onChange={(e) => void toggleCity(r.id, 'origin', c.id, e.target.checked)}
-                            />
-                            <span>{c.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                  <td className="px-4 py-3 text-gray-600 max-w-[220px]">
+                    <span className="break-words text-[11px]">{zoneSummary(r.origin_zone)}</span>
+                    <CityPolygonToggleList
+                      cities={parseCityPolys(r.origin_zone)}
+                      corridorId={r.id}
+                      kind="origin"
+                      forceOpen={cityPanelHighlight === cityPanelKey(r.id, 'origin')}
+                      onToggle={(cid, k, cityId, active) => void toggleCity(cid, k, cityId, active)}
+                    />
                   </td>
-                  <td className="px-4 py-3 text-gray-600 max-w-[200px]">
-                    <span className="break-words">{zoneSummary(r.destination_zone)}</span>
-                    {parseCityPolys(r.destination_zone).length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {parseCityPolys(r.destination_zone).map((c) => (
-                          <label key={c.id} className="flex items-center gap-2 text-xs text-gray-700">
-                            <input
-                              type="checkbox"
-                              checked={c.active}
-                              onChange={(e) => void toggleCity(r.id, 'destination', c.id, e.target.checked)}
-                            />
-                            <span>{c.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                  <td className="px-4 py-3 text-gray-600 max-w-[220px]">
+                    <span className="break-words text-[11px]">{zoneSummary(r.destination_zone)}</span>
+                    <CityPolygonToggleList
+                      cities={parseCityPolys(r.destination_zone)}
+                      corridorId={r.id}
+                      kind="destination"
+                      forceOpen={cityPanelHighlight === cityPanelKey(r.id, 'destination')}
+                      onToggle={(cid, k, cityId, active) => void toggleCity(cid, k, cityId, active)}
+                    />
                   </td>
                 </tr>
               ))}

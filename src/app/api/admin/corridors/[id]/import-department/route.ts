@@ -8,6 +8,8 @@ import {
 } from '@/lib/admin/corridor-city-import';
 
 export const dynamic = 'force-dynamic';
+/** Nominatim + varias ciudades puede superar el default de Vercel. */
+export const maxDuration = 60;
 
 const BLOCK = 'admin-corridors-import-department';
 const WINDOW_MS = 60_000;
@@ -50,7 +52,10 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         if (result.status >= 500) {
           logBlockError(BLOCK, result.error);
         }
-        return NextResponse.json({ error: result.error }, { status: result.status });
+        return NextResponse.json(
+          { error: result.error, missing: result.missing },
+          { status: result.status }
+        );
       }
 
       logBlockOk(BLOCK);
