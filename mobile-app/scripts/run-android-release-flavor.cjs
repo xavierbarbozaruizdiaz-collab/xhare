@@ -41,6 +41,37 @@ function needMapsKey() {
   }
 }
 
+/** Entre passenger y driver en Windows, Gradle deja `classes.dex` bloqueado y `prebuild --clean` falla (EBUSY). */
+function releaseGradleLocks() {
+  if (fs.existsSync(androidDir)) {
+    const gradlew = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
+    spawnSync(gradlew, ['--stop'], {
+      cwd: androidDir,
+      stdio: 'ignore',
+      env: process.env,
+      shell: process.platform === 'win32',
+    });
+  }
+  if (process.platform === 'win32') {
+    spawnSync('powershell.exe', ['-NoProfile', '-Command', 'Start-Sleep -Seconds 5'], { stdio: 'ignore' });
+  } else {
+    spawnSync('sleep', ['5'], { stdio: 'ignore' });
+  }
+}
+
+function removeAndroidProject() {
+  releaseGradleLocks();
+  if (!fs.existsSync(androidDir)) return true;
+  try {
+    fs.rmSync(androidDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 800 });
+    return true;
+  } catch (e) {
+    console.error('No se pudo borrar android/ antes del siguiente flavor:', e.message);
+    console.error('Cerrá Android Studio o el emulador y ejecutá el flavor que falte por separado.');
+    return false;
+  }
+}
+
 function runGradlewClean() {
   const gradlew = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
   const r = spawnSync(gradlew, ['clean'], {
@@ -113,6 +144,7 @@ normalizeReleaseStoreFileEnv();
 
 if (mode === 'both') {
   if (!buildOne('passenger', 'passenger')) process.exit(1);
+  if (!removeAndroidProject()) process.exit(1);
   if (!buildOne('driver', 'driver')) process.exit(1);
   console.log('\nListo: dist-apks/xhare-passenger-release.apk y xhare-driver-release.apk\n');
 } else if (mode === 'passenger') {
