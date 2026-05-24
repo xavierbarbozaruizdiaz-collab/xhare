@@ -27,7 +27,11 @@ export default function DriverPendingPage() {
         .maybeSingle();
       if (data?.role === 'passenger') {
         await supabase.from('profiles').update({ role: 'driver_pending' }).eq('id', user.id);
-        const res = await supabase.from('profiles').select('role, driver_approved_at').eq('id', user.id).maybeSingle();
+        const res = await supabase
+          .from('profiles')
+          .select('role, driver_approved_at')
+          .eq('id', user.id)
+          .maybeSingle();
         data = res.data ?? data;
       }
       setRole(data?.role ?? null);
@@ -44,7 +48,10 @@ export default function DriverPendingPage() {
         const json = await res.json();
         setInstructions({ email: json.email ?? '', message: json.message ?? '' });
       } else {
-        setInstructions({ email: '', message: 'Envi√° el resto de los documentos por correo al email que te indiquemos.' });
+        setInstructions({
+          email: '',
+          message: 'Envi? el resto de los documentos por correo al email que te indiquemos.',
+        });
       }
     })().finally(() => setLoading(false));
   }, [router]);
@@ -61,11 +68,14 @@ export default function DriverPendingPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-xl border border-gray-200 p-8 text-center">
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
-          <span className="text-3xl" aria-hidden>‚ˇ≥</span>
+          <span className="text-3xl" aria-hidden>
+            ?
+          </span>
         </div>
-        <h1 className="text-xl font-bold text-gray-900 mb-2">Solicitud en revisi√≥n</h1>
+        <h1 className="text-xl font-bold text-gray-900 mb-2">Solicitud en revisi?n</h1>
         <p className="text-gray-600 mb-4">
-          Tu registro como conductor est√° siendo revisado por un administrador. Cuando sea aprobado podr√°s publicar viajes.
+          Tu registro como conductor est? siendo revisado por un administrador. Cuando sea aprobado podr?s
+          publicar viajes.
         </p>
         {instructions && (instructions.message || instructions.email) && (
           <div className="mb-6 p-4 bg-gray-50 rounded-lg text-left">
@@ -92,10 +102,7 @@ export default function DriverPendingPage() {
         >
           Descargar app conductor
         </Link>
-        <Link
-          href="/"
-          className="inline-block text-sm text-gray-500 hover:text-gray-700"
-        >
+        <Link href="/" className="inline-block text-sm text-gray-500 hover:text-gray-700">
           Volver al inicio
         </Link>
         <button
@@ -103,7 +110,7 @@ export default function DriverPendingPage() {
           onClick={() => supabase.auth.signOut().then(() => { window.location.href = '/'; })}
           className="block w-full mt-3 text-sm text-gray-500 hover:text-gray-700"
         >
-          Cerrar sesi√≥n
+          Cerrar sesi?n
         </button>
       </div>
     </div>
