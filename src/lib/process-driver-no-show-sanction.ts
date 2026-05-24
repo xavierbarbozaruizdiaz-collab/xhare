@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendPassengersRideCancelledPush } from '@/lib/push/sendPassengersRideCancelledPush';
+import { fetchActiveDriverDebtLimitDefault } from '@/lib/driver-debt-limit';
 
 const NO_SHOW_BLOCK_DAYS = 7;
 
@@ -95,11 +96,12 @@ export async function processRideNoShowSanction(service: SupabaseClient, rideId:
       })
       .eq('driver_id', driverId);
   } else {
+    const debtLimit = await fetchActiveDriverDebtLimitDefault(service);
     await service.from('driver_accounts').insert({
       driver_id: driverId,
       account_status: 'active',
       debt_pyg: 0,
-      debt_limit_pyg: 50000,
+      debt_limit_pyg: debtLimit,
       operational_blocked_until: until.toISOString(),
       operational_block_reason: 'no_show_departure',
       updated_at: nowIso,

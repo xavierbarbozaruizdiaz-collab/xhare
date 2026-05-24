@@ -3,6 +3,11 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { invalidatePricingCache } from '@/lib/pricing/runtime-pricing';
+import {
+  fetchActiveDriverDebtLimitDefault,
+  normalizeDriverDebtLimit,
+  syncAllDriverAccountDebtLimits,
+} from '@/lib/driver-debt-limit';
 import Link from 'next/link';
 
 type Charge = {
@@ -58,7 +63,7 @@ export default function AdminBillingPage() {
       .maybeSingle();
     if (pricing?.id) {
       setPricingActiveId(pricing.id);
-      setDebtLimitEditing(String((pricing as { driver_debt_limit_default?: number }).driver_debt_limit_default ?? 50000));
+      setDebtLimitEditing(String(normalizeDriverDebtLimit((pricing as { driver_debt_limit_default?: number }).driver_debt_limit_default)));
     } else {
       setPricingActiveId(null);
       setDebtLimitEditing('');
@@ -81,14 +86,23 @@ export default function AdminBillingPage() {
       .from('pricing_settings')
       .update({ driver_debt_limit_default: v })
       .eq('id', pricingActiveId);
-    setSavingDebtLimit(false);
-    if (error) alert(error.message);
-    else {
-      invalidatePricingCache();
-      alert(
-        'Guardado. Los conductores nuevos usan este default al crearse la cuenta de deuda; los existentes mantienen su límite en la fila del conductor salvo que lo cambies en Conductores.'
-      );
+    if (error) {
+      setSavingDebtLimit(false);
+      alert(error.message);
+      return;
     }
+    invalidatePricingCache();
+    const { updated, error: syncErr } = await syncAllDriverAccountDebtLimits(supabase, v);
+    setSavingDebtLimit(false);
+    if (syncErr) {
+      alert(
+        `Límite guardado en pricing (${v.toLocaleString('es-PY')} PYG), pero no se pudo actualizar cuentas de conductores: ${syncErr}`
+      );
+      return;
+    }
+    alert(
+      `Guardado. Límite ${v.toLocaleString('es-PY')} PYG aplicado al default y a ${updated} cuenta(s) de conductor existente(s).`
+    );
   }
 
   async function markPaid(id: string) {
@@ -177,8 +191,9 @@ export default function AdminBillingPage() {
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6 max-w-xl">
         <h2 className="text-sm font-semibold text-gray-900 mb-1">Límite de deuda (default conductores)</h2>
         <p className="text-xs text-gray-600 mb-3">
-          Monto en PYG a partir del cual la cuenta pasa a suspendida por deuda (nuevas filas en{' '}
-          <code className="bg-gray-100 px-1 rounded">driver_accounts</code>). Configuración completa de tarifas:{' '}
+          Monto en PYG a partir del cual la cuenta pasa a suspendida por deuda. Al guardar se actualiza el default y
+          todas las cuentas en{' '}
+          <code className="bg-gray-100 px-1 rounded">driver_accounts</code> (columna Límite en Conductores). Tarifas:{' '}
           <Link href="/admin/pricing" className="text-green-600 hover:underline">
             Pricing
           </Link>

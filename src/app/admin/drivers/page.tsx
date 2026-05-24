@@ -3,6 +3,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
+import {
+  fetchActiveDriverDebtLimitDefault,
+  normalizeDriverDebtLimit,
+} from '@/lib/driver-debt-limit';
 
 type Profile = {
   id: string;
@@ -83,11 +87,13 @@ export default function AdminDriversPage() {
   const [showAllDriverDocs, setShowAllDriverDocs] = useState(false);
   const [docsQuery, setDocsQuery] = useState('');
   const [expandedDriverDocs, setExpandedDriverDocs] = useState<Record<string, boolean>>({});
+  const [defaultDebtLimitPyg, setDefaultDebtLimitPyg] = useState(50000);
 
   useEffect(() => {
     loadPending();
     loadApproved();
     loadDriverDocs();
+    void fetchActiveDriverDebtLimitDefault().then(setDefaultDebtLimitPyg);
   }, []);
 
   async function loadDriverDocs() {
@@ -199,11 +205,17 @@ export default function AdminDriversPage() {
 
   async function setAccountStatus(driverId: string, status: 'active' | 'suspended') {
     setActing(driverId);
+    const limitPyg = await fetchActiveDriverDebtLimitDefault();
     const { data: existing } = await supabase.from('driver_accounts').select('driver_id').eq('driver_id', driverId).maybeSingle();
     if (existing) {
       await supabase.from('driver_accounts').update({ account_status: status, updated_at: new Date().toISOString() }).eq('driver_id', driverId);
     } else {
-      await supabase.from('driver_accounts').insert({ driver_id: driverId, account_status: status, debt_pyg: 0, debt_limit_pyg: 50000 });
+      await supabase.from('driver_accounts').insert({
+        driver_id: driverId,
+        account_status: status,
+        debt_pyg: 0,
+        debt_limit_pyg: limitPyg,
+      });
     }
     setActing(null);
     loadApproved();
@@ -615,7 +627,9 @@ export default function AdminDriversPage() {
                     </div>
                   </td>
                   <td className="p-3 text-right">{(d.account?.debt_pyg ?? 0).toLocaleString('es-PY')}</td>
-                  <td className="p-3 text-right">{(d.account?.debt_limit_pyg ?? 50000).toLocaleString('es-PY')}</td>
+                  <td className="p-3 text-right">
+                    {(d.account?.debt_limit_pyg ?? defaultDebtLimitPyg).toLocaleString('es-PY')}
+                  </td>
                   <td className="p-3">
                     <div className="space-y-1">
                       <span className={d.account?.account_status === 'suspended' ? 'text-amber-700 font-medium' : 'text-green-700'}>

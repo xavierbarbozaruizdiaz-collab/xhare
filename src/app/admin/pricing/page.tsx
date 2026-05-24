@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { invalidatePricingCache } from '@/lib/pricing/runtime-pricing';
+import { syncAllDriverAccountDebtLimits } from '@/lib/driver-debt-limit';
 
 type PricingRow = {
   id: string;
@@ -95,6 +96,17 @@ export default function AdminPricingPage() {
         if (error) throw error;
       }
       invalidatePricingCache();
+      const { updated, error: syncErr } = await syncAllDriverAccountDebtLimits(
+        supabase,
+        form.driver_debt_limit_default
+      );
+      if (syncErr) {
+        alert(
+          `Pricing guardado, pero no se actualizaron cuentas de conductores: ${syncErr}. Probá de nuevo en Billing → Guardar límite.`
+        );
+      } else if (updated > 0) {
+        alert(`Pricing guardado. Límite de deuda aplicado a ${updated} cuenta(s) de conductor.`);
+      }
       await load();
     } catch (err: any) {
       alert(err?.message ?? 'Error al guardar');
