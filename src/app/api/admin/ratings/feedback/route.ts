@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
         const { data: profiles } = await service
           .from('profiles')
           .select('id, full_name')
-          .in('id', [...profileIds]);
+          .in('id', Array.from(profileIds));
         profilesById = Object.fromEntries(
           (profiles ?? []).map((p) => [String(p.id), { full_name: p.full_name ?? null }])
         );
