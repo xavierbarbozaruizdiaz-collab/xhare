@@ -1,4 +1,4 @@
-import { createClient, type User } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 import type { NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 
@@ -61,4 +61,26 @@ export async function resolveUserFromAccessTokenCandidates(tokens: string[]): Pr
     }
   }
   return null;
+}
+
+/** Cliente anon con un solo JWT en headers (RLS como el usuario móvil). */
+export function createBearerAnonClient(token: string): SupabaseClient {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${token.trim()}` } },
+  });
+}
+
+/**
+ * Auth móvil/API: header Bearer + opcional `access_token` en JSON.
+ * Devuelve usuario y cliente Supabase listo para queries con RLS.
+ */
+export async function resolveBearerAuth(
+  request: NextRequest,
+  body: unknown
+): Promise<{ user: User; supabase: SupabaseClient } | null> {
+  const tokens = collectAccessTokenCandidates(request, body);
+  const user = await resolveUserFromAccessTokenCandidates(tokens);
+  if (!user?.id || tokens.length === 0) return null;
+  return { user, supabase: createBearerAnonClient(tokens[0]) };
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authGetUser, createServerClient } from '@/lib/supabase/server';
+import { resolveBearerAuth } from '@/lib/supabase-bearer-user-from-tokens';
 import { z } from 'zod';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
@@ -11,6 +11,7 @@ const bodySchema = z.object({
     .max(500)
     .optional()
     .transform((v) => (v && v.length > 0 ? v : undefined)),
+  access_token: z.string().optional(),
 });
 
 const RATE_DRIVER_WINDOW_MS = 60_000;
@@ -21,17 +22,18 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = createServerClient(request);
     const rideId = params.id;
+    const rawBody = await request.json();
+    const auth = await resolveBearerAuth(request, rawBody);
 
-    const {
-      data: { user },
-      error: authError,
-    } = await authGetUser(supabase, request);
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!auth) {
+      return NextResponse.json(
+        { error: 'Sesión inválida o expirada. Volvé a iniciar sesión.' },
+        { status: 401 }
+      );
     }
+
+    const { user, supabase } = auth;
 
     const clientId = getClientId(request, user.id);
     if (!checkRateLimit(`rate-driver:${clientId}`, RATE_DRIVER_WINDOW_MS, RATE_DRIVER_MAX_PER_WINDOW)) {
@@ -40,6 +42,8 @@ export async function POST(
         { status: 429 }
       );
     }
+
+    const { stars, comment } = bodySchema.parse(rawBody);
 
     const { data: ride } = await supabase
       .from('rides')
@@ -65,9 +69,6 @@ export async function POST(
         { status: 403 }
       );
     }
-
-    const body = await request.json();
-    const { stars, comment } = bodySchema.parse(body);
 
     const { data: existing } = await supabase
       .from('driver_ratings')

@@ -160,23 +160,37 @@ export async function assignDispatchRide(rideId: string) {
 }
 
 export async function rateDriver(rideId: string, stars: number, comment?: string) {
-  const body: { stars: number; comment?: string } = { stars };
+  const body: Record<string, unknown> = { stars };
   const trimmed = comment?.trim();
   if (trimmed) body.comment = trimmed.slice(0, 500);
+  const token = await resolveApiAccessToken({ forceRefresh: true });
+  if (!token) throw new Error('No hay sesión activa. Volvé a iniciar sesión.');
+  body.access_token = token;
   const res = await apiPost(`/api/rides/${rideId}/rate-driver`, body);
   if (!res.ok) {
-    throw new Error(res.error ?? 'No se pudo enviar la calificación');
+    const msg =
+      res.status === 401
+        ? 'Sesión expirada. Volvé a iniciar sesión e intentá de nuevo.'
+        : (res.error ?? 'No se pudo enviar la calificación');
+    throw new Error(msg);
   }
   return res;
 }
 
 export async function ratePassenger(rideId: string, passengerId: string, stars: number, comment?: string) {
-  const body: { passengerId: string; stars: number; comment?: string } = { passengerId, stars };
+  const body: Record<string, unknown> = { passengerId, stars };
   const trimmed = comment?.trim();
   if (trimmed) body.comment = trimmed.slice(0, 500);
+  const token = await resolveApiAccessToken({ forceRefresh: true });
+  if (!token) throw new Error('No hay sesión activa. Volvé a iniciar sesión.');
+  body.access_token = token;
   const res = await apiPost(`/api/rides/${rideId}/rate-passenger`, body);
   if (!res.ok) {
-    throw new Error(res.error ?? 'No se pudo enviar la calificación');
+    const msg =
+      res.status === 401
+        ? 'Sesión expirada. Volvé a iniciar sesión e intentá de nuevo.'
+        : (res.error ?? 'No se pudo enviar la calificación');
+    throw new Error(msg);
   }
   return res;
 }
