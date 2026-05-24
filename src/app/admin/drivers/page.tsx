@@ -14,9 +14,30 @@ type Profile = {
   vehicle_photo_url: string | null;
   avatar_reupload_enabled?: boolean | null;
   vehicle_photo_reupload_enabled?: boolean | null;
+  vehicle_data_reupload_enabled?: boolean | null;
+  vehicle_make?: string | null;
+  vehicle_model?: string | null;
+  vehicle_year?: number | null;
+  vehicle_seat_count?: number | null;
   role: string;
   created_at?: string;
 };
+
+function isVehicleDataComplete(p: Profile): boolean {
+  return (
+    String(p.vehicle_model ?? '').trim() !== '' &&
+    p.vehicle_year != null &&
+    p.vehicle_seat_count != null
+  );
+}
+
+function vehicleDataSummary(p: Profile): string | null {
+  if (!isVehicleDataComplete(p)) return null;
+  const make = String(p.vehicle_make ?? '').trim();
+  const model = String(p.vehicle_model ?? '').trim();
+  const label = [make, model].filter(Boolean).join(' ') || model;
+  return `${label} (${p.vehicle_year}) · ${p.vehicle_seat_count} asientos`;
+}
 
 type DriverAccount = {
   driver_id: string;
@@ -84,11 +105,27 @@ export default function AdminDriversPage() {
   }
 
   async function loadApproved() {
-    const { data: drivers } = await supabase
+    let { data: drivers, error } = await supabase
       .from('profiles')
-      .select('id, full_name, phone, address, city, avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled, role, created_at')
+      .select(
+        'id, full_name, phone, address, city, avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled, vehicle_data_reupload_enabled, vehicle_make, vehicle_model, vehicle_year, vehicle_seat_count, role, created_at'
+      )
       .eq('role', 'driver')
       .order('full_name');
+    if (error?.code === '42703' || error?.message?.includes('column')) {
+      const res = await supabase
+        .from('profiles')
+        .select(
+          'id, full_name, phone, address, city, avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled, vehicle_model, vehicle_year, vehicle_seat_count, role, created_at'
+        )
+        .eq('role', 'driver')
+        .order('full_name');
+      drivers = (res.data ?? []).map((d) => ({
+        ...d,
+        vehicle_make: null,
+        vehicle_data_reupload_enabled: false,
+      }));
+    }
     const { data: accounts } = await supabase
       .from('driver_accounts')
       .select(
@@ -174,7 +211,7 @@ export default function AdminDriversPage() {
 
   async function enableProfileReupload(
     driverId: string,
-    field: 'avatar_reupload_enabled' | 'vehicle_photo_reupload_enabled'
+    field: 'avatar_reupload_enabled' | 'vehicle_photo_reupload_enabled' | 'vehicle_data_reupload_enabled'
   ) {
     setActing(driverId);
     const { error } = await supabase
@@ -569,7 +606,12 @@ export default function AdminDriversPage() {
                           {(d.full_name || '?').charAt(0).toUpperCase()}
                         </div>
                       )}
-                      <span>{d.full_name || d.id.slice(0, 8)}</span>
+                      <div>
+                        <span>{d.full_name || d.id.slice(0, 8)}</span>
+                        {vehicleDataSummary(d) ? (
+                          <p className="text-xs text-gray-500 mt-0.5">{vehicleDataSummary(d)}</p>
+                        ) : null}
+                      </div>
                     </div>
                   </td>
                   <td className="p-3 text-right">{(d.account?.debt_pyg ?? 0).toLocaleString('es-PY')}</td>
@@ -712,6 +754,19 @@ export default function AdminDriversPage() {
                             <span className="text-xs text-emerald-700 font-semibold">Recarga vehículo habilitada</span>
                           )}
                         </>
+                      ) : null}
+                      {isVehicleDataComplete(d) && !d.vehicle_data_reupload_enabled ? (
+                        <button
+                          type="button"
+                          disabled={acting !== null}
+                          onClick={() => enableProfileReupload(d.id, 'vehicle_data_reupload_enabled')}
+                          className="text-emerald-700 hover:underline text-sm font-medium disabled:opacity-50"
+                        >
+                          Habilitar edición datos vehículo
+                        </button>
+                      ) : null}
+                      {isVehicleDataComplete(d) && d.vehicle_data_reupload_enabled ? (
+                        <span className="text-xs text-emerald-700 font-semibold">Edición datos vehículo habilitada</span>
                       ) : null}
                     </div>
                   </td>

@@ -13,6 +13,7 @@ import {
   Alert,
   ActivityIndicator,
   Image,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -27,6 +28,21 @@ import type { MainStackParamList } from '../navigation/types';
 import { getAppFlavor } from '../core/flavor';
 import { supabase } from '../backend/supabase';
 import { getNavAppAvailability, type NavAppAvailability } from '../external-navigation';
+import { SEAT_COUNT_MAX, SEAT_COUNT_MIN } from '../lib/seatCountOptions';
+
+function isVehicleDataComplete(row: {
+  vehicle_make?: string | null;
+  vehicle_model?: string | null;
+  vehicle_year?: number | null;
+  vehicle_seat_count?: number | null;
+} | null | undefined): boolean {
+  if (!row) return false;
+  return (
+    String(row.vehicle_model ?? '').trim() !== '' &&
+    row.vehicle_year != null &&
+    row.vehicle_seat_count != null
+  );
+}
 
 const NAV_OPTIONS: { value: NavPreference; label: string }[] = [
   { value: 'google_maps', label: 'Google Maps' },
@@ -73,6 +89,14 @@ export function SettingsScreen() {
   const [signingOut, setSigningOut] = useState(false);
   const [loadingProfilePhotos, setLoadingProfilePhotos] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingVehiclePhoto, setUploadingVehiclePhoto] = useState(false);
+  const [vehicleMake, setVehicleMake] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
+  const [vehicleYear, setVehicleYear] = useState('');
+  const [vehicleSeatCount, setVehicleSeatCount] = useState('');
+  const [savingVehicle, setSavingVehicle] = useState(false);
+  const [vehicleDataReuploadEnabled, setVehicleDataReuploadEnabled] = useState(false);
+  const [vehicleDataLocked, setVehicleDataLocked] = useState(false);
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [uploadingDocumentType, setUploadingDocumentType] = useState<DriverDocumentType | null>(null);
   const [driverDocuments, setDriverDocuments] = useState<DriverDocumentRow[]>([]);
@@ -125,22 +149,56 @@ export function SettingsScreen() {
     if (!userId) {
       setProfileAvatarUrl(null);
       setVehiclePhotoUrl(null);
+      setVehicleMake('');
+      setVehicleModel('');
+      setVehicleYear('');
+      setVehicleSeatCount('');
+      setVehicleDataReuploadEnabled(false);
+      setVehicleDataLocked(false);
       return;
     }
 
     setLoadingProfilePhotos(true);
     (async () => {
-      const { data, error } = await supabase
+      const driverFields =
+        flavor === 'driver'
+          ? ', vehicle_make, vehicle_model, vehicle_year, vehicle_seat_count, vehicle_data_reupload_enabled'
+          : '';
+      let { data, error } = await supabase
         .from('profiles')
-        .select('avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled')
+        .select(
+          `avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled${driverFields}`
+        )
         .eq('id', userId)
         .maybeSingle();
+      if (
+        flavor === 'driver' &&
+        error?.code === '42703' ||
+        String(error?.message ?? '').includes('vehicle_make') ||
+        String(error?.message ?? '').includes('vehicle_data_reupload_enabled')
+      ) {
+        const fallback = await supabase
+          .from('profiles')
+          .select(
+            'avatar_url, vehicle_photo_url, avatar_reupload_enabled, vehicle_photo_reupload_enabled, vehicle_model, vehicle_year, vehicle_seat_count'
+          )
+          .eq('id', userId)
+          .maybeSingle();
+        data = fallback.data;
+        error = fallback.error;
+      }
       if (cancelled) return;
       if (error) {
         setProfileAvatarUrl(null);
         setVehiclePhotoUrl(null);
         setAvatarReuploadEnabled(false);
         setVehiclePhotoReuploadEnabled(false);
+        setVehicleMake('');
+        setVehicleModel('');
+        setVehicleYear('');
+        setVehicleSeatCount('');
+        setVehicleDataReuploadEnabled(false);
+        setVehicleDataLocked(false);
       } else {
         setProfileAvatarUrl((data?.avatar_url as string | null) ?? null);
         setVehiclePhotoUrl(flavor === 'driver' ? ((data?.vehicle_photo_url as string | null) ?? null) : null);
@@ -148,6 +206,24 @@ export function SettingsScreen() {
         setVehiclePhotoReuploadEnabled(
           Boolean((data as { vehicle_photo_reupload_enabled?: unknown } | null)?.vehicle_photo_reupload_enabled)
         );
+        if (flavor === 'driver') {
+          const row = data as {
+            vehicle_make?: string | null;
+            vehicle_model?: string | null;
+            vehicle_year?: number | null;
+            vehicle_seat_count?: number | null;
+            vehicle_data_reupload_enabled?: boolean | null;
+          } | null;
+          const make = String(row?.vehicle_make ?? '').trim();
+          const model = String(row?.vehicle_model ?? '').trim();
+          setVehicleMake(make);
+          setVehicleModel(model);
+          setVehicleYear(row?.vehicle_year != null ? String(row.vehicle_year) : '');
+          setVehicleSeatCount(row?.vehicle_seat_count != null ? String(row.vehicle_seat_count) : '');
+          const reupload = Boolean(row?.vehicle_data_reupload_enabled);
+          setVehicleDataReuploadEnabled(reupload);
+          setVehicleDataLocked(isVehicleDataComplete(row) && !reupload);
+        }
       }
       setLoadingProfilePhotos(false);
     })();
@@ -294,9 +370,82 @@ export function SettingsScreen() {
     }
   };
 
+  const handleSaveVehicle = async () => {
+    const userId = session?.id;
+    if (!userId || savingVehicle) return;
+    if (vehicleDataLocked) {
+      Alert.alert(
+        'Edición bloqueada',
+        'Los datos del vehículo ya fueron guardados. Solo podés modificarlos si un admin habilita la edición.'
+      );
+      return;
+    }
+    const make = vehicleMake.trim();
+    const model = vehicleModel.trim();
+    const yearStr = vehicleYear.trim();
+    const seatStr = vehicleSeatCount.trim();
+    if (!make || !model || !yearStr || !seatStr) {
+      Alert.alert('Datos incompletos', 'Completá marca, modelo, año y cantidad de asientos.');
+      return;
+    }
+    const year = parseInt(yearStr, 10);
+    const seats = parseInt(seatStr, 10);
+    const maxYear = new Date().getFullYear() + 1;
+    if (!Number.isFinite(year) || year < 1980 || year > maxYear) {
+      Alert.alert('Año inválido', `Ingresá un año entre 1980 y ${maxYear}.`);
+      return;
+    }
+    if (!Number.isFinite(seats) || seats < SEAT_COUNT_MIN || seats > SEAT_COUNT_MAX) {
+      Alert.alert('Asientos inválidos', `La cantidad debe estar entre ${SEAT_COUNT_MIN} y ${SEAT_COUNT_MAX}.`);
+      return;
+    }
+    setSavingVehicle(true);
+    try {
+      const withMake = {
+        vehicle_make: make,
+        vehicle_model: model,
+        vehicle_year: year,
+        vehicle_seat_count: seats,
+        vehicle_seat_layout: null,
+        vehicle_data_reupload_enabled: false,
+      };
+      let { error } = await supabase.from('profiles').update(withMake).eq('id', userId);
+      if (error?.code === '42703' || String(error?.message ?? '').includes('vehicle_make')) {
+        const { error: fallbackErr } = await supabase
+          .from('profiles')
+          .update({
+            vehicle_model: `${make} ${model}`.trim(),
+            vehicle_year: year,
+            vehicle_seat_count: seats,
+            vehicle_seat_layout: null,
+          })
+          .eq('id', userId);
+        if (fallbackErr) throw fallbackErr;
+      } else if (error) {
+        throw error;
+      }
+      setVehicleDataReuploadEnabled(false);
+      setVehicleDataLocked(true);
+      Alert.alert('Listo', 'Datos del vehículo guardados.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Intentá de nuevo.';
+      if (msg.includes('vehicle data already set')) {
+        Alert.alert(
+          'Edición bloqueada',
+          'Los datos del vehículo ya están registrados. Pedí a un admin que habilite la edición.'
+        );
+        setVehicleDataLocked(true);
+        return;
+      }
+      Alert.alert('No se pudo guardar', msg);
+    } finally {
+      setSavingVehicle(false);
+    }
+  };
+
   const handleUploadVehiclePhoto = async () => {
     const userId = session?.id;
-    if (!userId || uploadingAvatar) return;
+    if (!userId || uploadingVehiclePhoto) return;
     if (vehiclePhotoUrl && !vehiclePhotoReuploadEnabled) {
       Alert.alert(
         'Carga bloqueada',
@@ -319,7 +468,7 @@ export function SettingsScreen() {
     const asset = picked.assets[0];
     if (!asset?.uri) return;
     try {
-      setUploadingAvatar(true);
+      setUploadingVehiclePhoto(true);
       const content = await readUriToArrayBuffer(asset.uri);
       const sizeBytes = asset.fileSize ?? content.byteLength;
       const maxBytes = 3 * 1024 * 1024;
@@ -353,7 +502,7 @@ export function SettingsScreen() {
     } catch (e) {
       Alert.alert('No se pudo subir la foto', e instanceof Error ? e.message : 'Intentá de nuevo.');
     } finally {
-      setUploadingAvatar(false);
+      setUploadingVehiclePhoto(false);
     }
   };
 
@@ -508,6 +657,80 @@ export function SettingsScreen() {
           </View>
           {flavor === 'driver' ? (
             <View style={styles.photoBlock}>
+              <Text style={styles.photoLabel}>Datos del vehículo</Text>
+              <Text style={styles.fieldLabel}>Marca</Text>
+              <TextInput
+                style={[styles.textInput, vehicleDataLocked && styles.textInputDisabled]}
+                placeholder="Ej. Toyota"
+                placeholderTextColor="#94a3b8"
+                value={vehicleMake}
+                onChangeText={setVehicleMake}
+                autoCapitalize="words"
+                editable={!savingVehicle && !vehicleDataLocked}
+                accessibilityLabel="Marca del vehículo"
+              />
+              <Text style={styles.fieldLabel}>Modelo</Text>
+              <TextInput
+                style={[styles.textInput, vehicleDataLocked && styles.textInputDisabled]}
+                placeholder="Ej. Hiace"
+                placeholderTextColor="#94a3b8"
+                value={vehicleModel}
+                onChangeText={setVehicleModel}
+                autoCapitalize="words"
+                editable={!savingVehicle && !vehicleDataLocked}
+                accessibilityLabel="Modelo del vehículo"
+              />
+              <Text style={styles.fieldLabel}>Año</Text>
+              <TextInput
+                style={[styles.textInput, vehicleDataLocked && styles.textInputDisabled]}
+                placeholder="Ej. 2018"
+                placeholderTextColor="#94a3b8"
+                value={vehicleYear}
+                onChangeText={setVehicleYear}
+                keyboardType="number-pad"
+                maxLength={4}
+                editable={!savingVehicle && !vehicleDataLocked}
+                accessibilityLabel="Año del vehículo"
+              />
+              <Text style={styles.fieldLabel}>Cantidad de asientos</Text>
+              <TextInput
+                style={[styles.textInput, vehicleDataLocked && styles.textInputDisabled]}
+                placeholder={`Entre ${SEAT_COUNT_MIN} y ${SEAT_COUNT_MAX}`}
+                placeholderTextColor="#94a3b8"
+                value={vehicleSeatCount}
+                onChangeText={(t) => setVehicleSeatCount(t.replace(/\D/g, '').slice(0, 2))}
+                keyboardType="number-pad"
+                maxLength={2}
+                editable={!savingVehicle && !vehicleDataLocked}
+                accessibilityLabel="Cantidad de asientos del vehículo"
+              />
+              <TouchableOpacity
+                style={[
+                  styles.smallActionBtn,
+                  (savingVehicle || vehicleDataLocked) && styles.buttonDisabled,
+                ]}
+                onPress={() => void handleSaveVehicle()}
+                disabled={savingVehicle || vehicleDataLocked}
+              >
+                {savingVehicle ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.smallActionBtnText}>
+                    {vehicleDataLocked ? 'Bloqueado por admin' : 'Guardar datos del vehículo'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+              <Text style={styles.profileHint}>
+                {vehicleDataLocked
+                  ? 'Ya guardaste los datos del vehículo. Solo admin puede habilitar una nueva edición.'
+                  : vehicleDataReuploadEnabled
+                    ? 'Un admin habilitó la edición. Guardá los cambios; luego quedarán bloqueados de nuevo.'
+                    : 'Podés guardar una sola vez; para cambiarlos necesitás habilitación de admin.'}
+              </Text>
+            </View>
+          ) : null}
+          {flavor === 'driver' ? (
+            <View style={styles.photoBlock}>
               <Text style={styles.photoLabel}>Foto del vehículo</Text>
               {vehiclePhotoUrl ? (
                 <Image source={{ uri: vehiclePhotoUrl }} style={styles.vehiclePhoto} />
@@ -519,12 +742,13 @@ export function SettingsScreen() {
               <TouchableOpacity
                 style={[
                   styles.smallActionBtn,
-                  (uploadingAvatar || (vehiclePhotoUrl != null && !vehiclePhotoReuploadEnabled)) && styles.buttonDisabled,
+                  (uploadingVehiclePhoto || (vehiclePhotoUrl != null && !vehiclePhotoReuploadEnabled)) &&
+                    styles.buttonDisabled,
                 ]}
                 onPress={() => void handleUploadVehiclePhoto()}
-                disabled={uploadingAvatar || (vehiclePhotoUrl != null && !vehiclePhotoReuploadEnabled)}
+                disabled={uploadingVehiclePhoto || (vehiclePhotoUrl != null && !vehiclePhotoReuploadEnabled)}
               >
-                {uploadingAvatar ? (
+                {uploadingVehiclePhoto ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
                   <Text style={styles.smallActionBtnText}>
@@ -770,6 +994,22 @@ const styles = StyleSheet.create({
   photoBlock: { gap: 8 },
   avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
   photoLabel: { fontSize: 13, color: '#334155', fontWeight: '700', fontFamily: appBrand.fonts.semibold },
+  fieldLabel: { fontSize: 12, color: '#64748b', fontWeight: '700', fontFamily: appBrand.fonts.semibold },
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#0f172a',
+    backgroundColor: '#fff',
+    fontFamily: appBrand.fonts.regular,
+  },
+  textInputDisabled: {
+    backgroundColor: '#f1f5f9',
+    color: '#64748b',
+  },
   profilePhoto: {
     width: 84,
     height: 84,

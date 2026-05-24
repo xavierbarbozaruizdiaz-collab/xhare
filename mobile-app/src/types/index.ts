@@ -50,6 +50,7 @@ export interface Profile {
   rating_count: number;
   verified: boolean;
   vehicle_photo_url: string | null;
+  vehicle_make: string | null;
   vehicle_model: string | null;
   vehicle_year: number | null;
   available: boolean;

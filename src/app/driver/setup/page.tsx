@@ -22,6 +22,8 @@ export default function DriverSetupPage() {
   const [vehicleYear, setVehicleYear] = useState('');
   const [seatCount, setSeatCount] = useState(6);
   const [migrationMissing, setMigrationMissing] = useState(false);
+  const [vehicleDataLocked, setVehicleDataLocked] = useState(false);
+  const [vehicleDataReuploadEnabled, setVehicleDataReuploadEnabled] = useState(false);
 
   useEffect(() => {
     loadProfile();
@@ -36,7 +38,9 @@ export default function DriverSetupPage() {
       }
       let { data, error } = await supabase
         .from('profiles')
-        .select('role, vehicle_model, vehicle_year, vehicle_seat_count, vehicle_seat_layout, driver_approved_at')
+        .select(
+          'role, vehicle_model, vehicle_year, vehicle_seat_count, vehicle_seat_layout, driver_approved_at, vehicle_data_reupload_enabled'
+        )
         .eq('id', user.id)
         .maybeSingle();
       if (error?.code === '42703' || error?.message?.includes('column')) {
@@ -74,6 +78,13 @@ export default function DriverSetupPage() {
       setVehicleYear(String(data.vehicle_year ?? ''));
       const count = Math.max(6, (data.vehicle_seat_count as number | null | undefined) ?? 6);
       setSeatCount(count);
+      const complete =
+        String(data.vehicle_model ?? '').trim() !== '' &&
+        data.vehicle_year != null &&
+        data.vehicle_seat_count != null;
+      const reupload = Boolean((data as { vehicle_data_reupload_enabled?: boolean | null }).vehicle_data_reupload_enabled);
+      setVehicleDataReuploadEnabled(reupload);
+      setVehicleDataLocked(complete && !reupload);
     } finally {
       setLoading(false);
     }
@@ -85,6 +96,10 @@ export default function DriverSetupPage() {
     if (!user || !profile) return;
     if (migrationMissing) {
       alert('Para guardar vehículo y asientos, ejecutá la migración en Supabase: SQL Editor → archivo supabase/migrations/011_driver_vehicle_and_seat_layout.sql');
+      return;
+    }
+    if (vehicleDataLocked) {
+      alert('Los datos del vehículo ya están guardados. Pedí a un admin que habilite la edición desde el panel de conductores.');
       return;
     }
     setSubmitting(true);
@@ -139,10 +154,24 @@ export default function DriverSetupPage() {
           </div>
         )}
         <p className="text-gray-600 mb-6">
-          Indicá el vehículo que usás y cuántos asientos tenés disponibles.
+          Indicá el vehículo que usás y cuántos asientos tenés disponibles. También podés cargarlos en la app conductor (Ajustes).
         </p>
 
+        {vehicleDataLocked ? (
+          <div className="mb-4 p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-sm">
+            <p className="font-medium">Datos del vehículo bloqueados</p>
+            <p className="mt-1">
+              Ya están guardados. Para modificarlos, un admin debe usar &quot;Habilitar edición datos vehículo&quot; en Conductores.
+            </p>
+          </div>
+        ) : vehicleDataReuploadEnabled ? (
+          <div className="mb-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm">
+            Un admin habilitó la edición. Guardá los cambios; luego quedarán bloqueados de nuevo.
+          </div>
+        ) : null}
+
         <form onSubmit={handleSubmit} className="space-y-6 bg-white rounded-xl border border-gray-200 p-6">
+          <fieldset disabled={vehicleDataLocked || submitting} className="space-y-6 disabled:opacity-60">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Vehículo (modelo o nombre)</label>
             <input
@@ -176,14 +205,15 @@ export default function DriverSetupPage() {
               ))}
             </select>
           </div>
+          </fieldset>
 
           <div className="flex gap-3 pt-2">
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || vehicleDataLocked}
               className="flex-1 px-4 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50"
             >
-              {submitting ? 'Guardando...' : 'Guardar y continuar'}
+              {vehicleDataLocked ? 'Bloqueado' : submitting ? 'Guardando...' : 'Guardar y continuar'}
             </button>
             <Link
               href="/my-rides"
