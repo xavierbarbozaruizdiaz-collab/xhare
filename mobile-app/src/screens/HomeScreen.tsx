@@ -1,7 +1,7 @@
 /**
  * Home base: bienvenida, favoritos (pasajero), accesos rapidos, banners conductor/admin.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   View,
   Text,
@@ -32,8 +32,7 @@ import { getAppFlavor } from '../core/flavor';
 import {
   fetchPassengerHomeFavoritesCopy,
   fetchPassengerHomeShortcutsVisible,
-  DEFAULT_PASSENGER_HOME_FAVORITES_TITLE,
-  DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE,
+  readPassengerHomeFavoritesCopyCache,
 } from '../backend/passengerUiSettings';
 import { fetchDriverHomeHowTo, DEFAULT_DRIVER_HOME_HOW_TO } from '../backend/driverUiSettings';
 import { pushPassengerHomeMapShortcuts } from '../backend/passengerHomeMapShortcutSync';
@@ -446,8 +445,8 @@ export function HomeScreen() {
   const [favorites, setFavorites] = useState<Partial<Record<PassengerFavoriteSlot, PassengerFavoriteSnapshot>>>({});
   const [addFavoriteOpen, setAddFavoriteOpen] = useState(false);
   const [homeShortcutsVisible, setHomeShortcutsVisible] = useState(true);
-  const [favoritesTitle, setFavoritesTitle] = useState(DEFAULT_PASSENGER_HOME_FAVORITES_TITLE);
-  const [favoritesSubtitle, setFavoritesSubtitle] = useState(DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE);
+  const [favoritesTitle, setFavoritesTitle] = useState<string | null>(null);
+  const [favoritesSubtitle, setFavoritesSubtitle] = useState<string | null>(null);
   const [fromIconIndex, setFromIconIndex] = useState(0);
   const [toIconIndex, setToIconIndex] = useState(0);
 
@@ -684,6 +683,19 @@ export function HomeScreen() {
       cancelled = true;
     };
   }, [session, isPassengerFlavor, homeFavoriteSlots, favorites]);
+
+  useLayoutEffect(() => {
+    if (!isPassengerFlavor) return;
+    let cancelled = false;
+    void readPassengerHomeFavoritesCopyCache().then((cached) => {
+      if (cancelled || !cached) return;
+      setFavoritesTitle(cached.title);
+      setFavoritesSubtitle(cached.subtitle);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isPassengerFlavor]);
 
   useFocusEffect(
     useCallback(() => {
@@ -1298,12 +1310,16 @@ export function HomeScreen() {
             <View style={[styles.heroBlob, styles.heroBlob1]} />
             <View style={[styles.heroBlob, styles.heroBlob2]} />
             <Text style={styles.heroEyebrow}>VIAJÁ INTELIGENTE</Text>
-            <Text style={styles.heroTitle} numberOfLines={4}>
-              {favoritesTitle}
-            </Text>
-            <Text style={styles.heroSubtitle} numberOfLines={5}>
-              {favoritesSubtitle}
-            </Text>
+            {favoritesTitle ? (
+              <Text style={styles.heroTitle} numberOfLines={4}>
+                {favoritesTitle}
+              </Text>
+            ) : null}
+            {favoritesSubtitle ? (
+              <Text style={styles.heroSubtitle} numberOfLines={5}>
+                {favoritesSubtitle}
+              </Text>
+            ) : null}
             <TouchableOpacity
               style={styles.heroCtaBtn}
               onPress={openAddFavorite}

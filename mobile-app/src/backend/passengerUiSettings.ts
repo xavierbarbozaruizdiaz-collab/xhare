@@ -1,17 +1,51 @@
 /**
  * Flags de UI para pasajero leídos desde `settings` en Supabase (RLS: solo claves permitidas).
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, isEnvConfigured } from './supabase';
 import { env } from '../core/env';
+
+const PASSENGER_HOME_FAVORITES_COPY_CACHE_KEY = '@xhare/passenger_home_favorites_copy_v1';
 
 export const PASSENGER_HOME_SHORTCUTS_VISIBLE_KEY = 'passenger_home_shortcuts_visible';
 export const PASSENGER_HOME_FAVORITES_TITLE_KEY = 'passenger_home_favorites_title';
 export const PASSENGER_HOME_FAVORITES_SUBTITLE_KEY = 'passenger_home_favorites_subtitle';
 export const PASSENGER_PRICING_POLYLINE_VISIBLE_KEY = 'passenger_pricing_polyline_visible';
 
-export const DEFAULT_PASSENGER_HOME_FAVORITES_TITLE = 'Hola. Configura tus favoritos para viajes rapidos.';
-export const DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE =
-  'Lista apilada con switch: activas solo el trayecto que quieras usar. Cada fila muestra la hora de recogida.';
+/** Solo si no hay cache ni red; no usar como estado inicial de pantalla (evita pestañeo). */
+export const DEFAULT_PASSENGER_HOME_FAVORITES_TITLE = 'Precio de moto, comodidad de auto';
+export const DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE = 'Activa solo el trayecto que quieras';
+
+export type PassengerHomeFavoritesCopy = { title: string; subtitle: string };
+
+export async function readPassengerHomeFavoritesCopyCache(): Promise<PassengerHomeFavoritesCopy | null> {
+  try {
+    const raw = await AsyncStorage.getItem(PASSENGER_HOME_FAVORITES_COPY_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { title?: unknown; subtitle?: unknown };
+    const title = typeof parsed.title === 'string' ? parsed.title.trim() : '';
+    const subtitle = typeof parsed.subtitle === 'string' ? parsed.subtitle.trim() : '';
+    if (!title || !subtitle) return null;
+    return { title, subtitle };
+  } catch {
+    return null;
+  }
+}
+
+export async function writePassengerHomeFavoritesCopyCache(copy: PassengerHomeFavoritesCopy): Promise<void> {
+  try {
+    await AsyncStorage.setItem(PASSENGER_HOME_FAVORITES_COPY_CACHE_KEY, JSON.stringify(copy));
+  } catch {
+    /* ignore */
+  }
+}
+
+function normalizeFavoritesCopy(title: string, subtitle: string): PassengerHomeFavoritesCopy {
+  return {
+    title: title.trim() || DEFAULT_PASSENGER_HOME_FAVORITES_TITLE,
+    subtitle: subtitle.trim() || DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE,
+  };
+}
 
 function parseShortcutsVisible(value: unknown): boolean {
   if (typeof value === 'boolean') return value;
@@ -73,25 +107,28 @@ async function fetchPassengerUiSettingsFromApi(): Promise<PassengerUiSettingsPay
   }
 }
 
-export async function fetchPassengerHomeFavoritesCopy(): Promise<{ title: string; subtitle: string }> {
+export async function fetchPassengerHomeFavoritesCopy(): Promise<PassengerHomeFavoritesCopy> {
+  const cached = await readPassengerHomeFavoritesCopyCache();
+
   const api = await fetchPassengerUiSettingsFromApi();
   if (api && (typeof api.favoritesTitle === 'string' || typeof api.favoritesSubtitle === 'string')) {
-    return {
-      title:
-        typeof api.favoritesTitle === 'string' && api.favoritesTitle.trim()
-          ? api.favoritesTitle.trim()
-          : DEFAULT_PASSENGER_HOME_FAVORITES_TITLE,
-      subtitle:
-        typeof api.favoritesSubtitle === 'string' && api.favoritesSubtitle.trim()
-          ? api.favoritesSubtitle.trim()
-          : DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE,
-    };
+    const copy = normalizeFavoritesCopy(
+      typeof api.favoritesTitle === 'string' && api.favoritesTitle.trim()
+        ? api.favoritesTitle.trim()
+        : cached?.title ?? DEFAULT_PASSENGER_HOME_FAVORITES_TITLE,
+      typeof api.favoritesSubtitle === 'string' && api.favoritesSubtitle.trim()
+        ? api.favoritesSubtitle.trim()
+        : cached?.subtitle ?? DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE
+    );
+    await writePassengerHomeFavoritesCopyCache(copy);
+    return copy;
   }
   if (!isEnvConfigured()) {
-    return {
-      title: DEFAULT_PASSENGER_HOME_FAVORITES_TITLE,
-      subtitle: DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE,
-    };
+    if (cached) return cached;
+    return normalizeFavoritesCopy(
+      DEFAULT_PASSENGER_HOME_FAVORITES_TITLE,
+      DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE
+    );
   }
 
   const [titleRes, subtitleRes] = await Promise.all([
@@ -99,14 +136,16 @@ export async function fetchPassengerHomeFavoritesCopy(): Promise<{ title: string
     supabase.from('settings').select('value').eq('key', PASSENGER_HOME_FAVORITES_SUBTITLE_KEY).maybeSingle(),
   ]);
 
-  return {
-    title: titleRes.error
-      ? DEFAULT_PASSENGER_HOME_FAVORITES_TITLE
-      : parseTextValue(titleRes.data?.value, DEFAULT_PASSENGER_HOME_FAVORITES_TITLE),
-    subtitle: subtitleRes.error
-      ? DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE
-      : parseTextValue(subtitleRes.data?.value, DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE),
-  };
+  const copy = normalizeFavoritesCopy(
+    titleRes.error
+      ? cached?.title ?? DEFAULT_PASSENGER_HOME_FAVORITES_TITLE
+      : parseTextValue(titleRes.data?.value, cached?.title ?? DEFAULT_PASSENGER_HOME_FAVORITES_TITLE),
+    subtitleRes.error
+      ? cached?.subtitle ?? DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE
+      : parseTextValue(subtitleRes.data?.value, cached?.subtitle ?? DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE)
+  );
+  await writePassengerHomeFavoritesCopyCache(copy);
+  return copy;
 }
 
 /**
