@@ -16,6 +16,7 @@ type RideStatus =
 
 type Ride = {
   id: string;
+  route_name: string | null;
   origin_label: string | null;
   destination_label: string | null;
   departure_time: string | null;
@@ -27,6 +28,25 @@ type Ride = {
   driver_id: string | null;
   driver?: { full_name: string | null } | null;
 };
+
+const RIDES_PAGE_SIZE = 25;
+const RIDES_QUERY_LIMIT = 200;
+
+/** Etiqueta corta para admin: calle o primer tramo, sin repetir país/región. */
+function shortenPlaceLabel(label: string | null | undefined, maxLen = 44): string {
+  const raw = String(label ?? '').trim();
+  if (!raw) return '—';
+  const parts = raw.split(',').map((p) => p.trim()).filter(Boolean);
+  const skip = new Set(['paraguay', 'paraguái', 'región oriental', 'region oriental', 'central department']);
+  const meaningful = parts.filter((p) => !skip.has(p.toLowerCase()));
+  const candidate = meaningful[0] ?? parts[0] ?? raw;
+  if (candidate.length <= maxLen) return candidate;
+  return candidate.slice(0, maxLen - 1) + '…';
+}
+
+function formatRouteSummary(origin: string | null, destination: string | null): string {
+  return `${shortenPlaceLabel(origin)} → ${shortenPlaceLabel(destination)}`;
+}
 
 const STATUS_FILTERS: { value: 'all' | RideStatus; label: string }[] = [
   { value: 'all', label: 'Todos' },
@@ -79,6 +99,7 @@ export default function AdminRidesPage() {
   const [forceCompletingId, setForceCompletingId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | RideStatus>('all');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
 
   const loadRides = useCallback(async () => {
     let q = supabase
@@ -86,6 +107,7 @@ export default function AdminRidesPage() {
       .select(
         `
           id,
+          route_name,
           origin_label,
           destination_label,
           departure_time,
@@ -99,7 +121,7 @@ export default function AdminRidesPage() {
         `
       )
       .order('departure_time', { ascending: false })
-      .limit(400);
+      .limit(RIDES_QUERY_LIMIT);
 
     if (statusFilter !== 'all') {
       q = q.eq('status', statusFilter);
@@ -117,6 +139,7 @@ export default function AdminRidesPage() {
       const driver = Array.isArray(rawDriver) ? rawDriver[0] ?? null : rawDriver ?? null;
       return {
         id: row.id,
+        route_name: row.route_name ?? null,
         origin_label: row.origin_label ?? null,
         destination_label: row.destination_label ?? null,
         departure_time: row.departure_time ?? null,
@@ -134,6 +157,10 @@ export default function AdminRidesPage() {
     });
     setRides(normalized);
   }, [statusFilter]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [statusFilter, search]);
 
   useEffect(() => {
     if (!ready || !isAdmin) return;
@@ -236,6 +263,7 @@ export default function AdminRidesPage() {
       : rides.filter((r) => {
           const hay = [
             r.id,
+            r.route_name,
             r.origin_label,
             r.destination_label,
             r.driver?.full_name,
@@ -246,6 +274,13 @@ export default function AdminRidesPage() {
             .toLowerCase();
           return hay.includes(searchTrim);
         });
+
+  const totalFiltered = filteredRides.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / RIDES_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pagedRides = filteredRides.slice(safePage * RIDES_PAGE_SIZE, (safePage + 1) * RIDES_PAGE_SIZE);
+  const rangeStart = totalFiltered === 0 ? 0 : safePage * RIDES_PAGE_SIZE + 1;
+  const rangeEnd = Math.min((safePage + 1) * RIDES_PAGE_SIZE, totalFiltered);
 
   if (!ready || !isAdmin) {
     return <div className="text-gray-500 text-sm py-8">Comprobando permisos…</div>;
@@ -308,25 +343,41 @@ export default function AdminRidesPage() {
           <table className="w-full text-left min-w-[720px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Origen → Destino</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Salida</th>
+                <th className="px-4 py-3 text-sm font-medium text-gray-700 w-[min(320px,36%)]">Viaje</th>
+                <th className="px-4 py-3 text-sm font-medium text-gray-700 whitespace-nowrap">Salida</th>
                 <th className="px-4 py-3 text-sm font-medium text-gray-700">Chofer</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Asientos</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Estado</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700 min-w-[200px]">Acciones</th>
+                <th className="px-4 py-3 text-sm font-medium text-gray-700 whitespace-nowrap">Asientos</th>
+                <th className="px-4 py-3 text-sm font-medium text-gray-700 whitespace-nowrap">Estado</th>
+                <th className="px-4 py-3 text-sm font-medium text-gray-700 min-w-[180px]">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {filteredRides.map((r) => (
+              {pagedRides.map((r) => {
+                const routeTitle = formatRouteSummary(r.origin_label, r.destination_label);
+                const routeFull =
+                  r.origin_label && r.destination_label
+                    ? `${r.origin_label} → ${r.destination_label}`
+                    : routeTitle;
+                const routeName = String(r.route_name ?? '').trim();
+                return (
                 <tr
                   key={r.id}
-                  className={`border-b border-gray-100 ${r.status === 'en_route' ? 'bg-amber-50/60' : ''}`}
+                  className={`border-b border-gray-100 align-top ${r.status === 'en_route' ? 'bg-amber-50/60' : ''}`}
                 >
-                  <td className="px-4 py-3">
-                    <div className="text-xs text-gray-500 font-mono mb-0.5">{r.id.slice(0, 8)}…</div>
-                    <Link href={`/rides/${r.id}`} className="text-green-700 hover:underline font-medium">
-                      {r.origin_label ?? '—'} → {r.destination_label ?? '—'}
+                  <td className="px-4 py-3 max-w-[320px]">
+                    {routeName ? (
+                      <div className="font-semibold text-gray-900 truncate mb-0.5" title={routeName}>
+                        {routeName}
+                      </div>
+                    ) : null}
+                    <Link
+                      href={`/rides/${r.id}`}
+                      className="text-green-700 hover:underline text-sm line-clamp-2 leading-snug"
+                      title={routeFull}
+                    >
+                      {routeTitle}
                     </Link>
+                    <div className="text-[11px] text-gray-400 font-mono mt-1">{r.id.slice(0, 8)}…</div>
                   </td>
                   <td className="px-4 py-3 text-sm whitespace-nowrap">
                     {r.departure_time ? new Date(r.departure_time).toLocaleString('es-PY') : '—'}
@@ -364,12 +415,39 @@ export default function AdminRidesPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
-          <p className="text-xs text-gray-500 px-4 py-2 border-t border-gray-100 bg-gray-50">
-            Mostrando hasta 400 viajes por consulta (orden por fecha de salida). Usá filtros o la búsqueda para acotar.
-          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-600">
+            <span>
+              {rangeStart}–{rangeEnd} de {totalFiltered} viaje{totalFiltered === 1 ? '' : 's'}
+              {rides.length >= RIDES_QUERY_LIMIT ? ` (máx. ${RIDES_QUERY_LIMIT} cargados)` : ''}
+            </span>
+            {totalPages > 1 ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={safePage <= 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  className="px-2.5 py-1 rounded border border-gray-200 bg-white hover:border-green-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Anterior
+                </button>
+                <span className="text-gray-500">
+                  Página {safePage + 1} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={safePage >= totalPages - 1}
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  className="px-2.5 py-1 rounded border border-gray-200 bg-white hover:border-green-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Siguiente
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       )}
     </div>
