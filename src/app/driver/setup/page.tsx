@@ -45,7 +45,9 @@ export default function DriverSetupPage() {
         .maybeSingle();
       if (error?.code === '42703' || error?.message?.includes('column')) {
         const res = await supabase.from('profiles').select('role, vehicle_model, vehicle_year, driver_approved_at').eq('id', user.id).maybeSingle();
-        data = res.data ? { ...res.data, vehicle_seat_count: null, vehicle_seat_layout: null } : res.data;
+        data = res.data
+          ? { ...res.data, vehicle_seat_count: null, vehicle_seat_layout: null, vehicle_data_reupload_enabled: false }
+          : res.data;
         error = res.error;
         setMigrationMissing(true);
       }
@@ -62,8 +64,21 @@ export default function DriverSetupPage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ access_token: session }),
           });
-          const res = await supabase.from('profiles').select('role, vehicle_model, vehicle_year, vehicle_seat_count, vehicle_seat_layout, driver_approved_at').eq('id', user.id).maybeSingle();
-          data = res.data ?? data;
+          const res = await supabase
+            .from('profiles')
+            .select(
+              'role, vehicle_model, vehicle_year, vehicle_seat_count, vehicle_seat_layout, driver_approved_at, vehicle_data_reupload_enabled'
+            )
+            .eq('id', user.id)
+            .maybeSingle();
+          data = res.data
+            ? {
+                ...res.data,
+                vehicle_data_reupload_enabled:
+                  (res.data as { vehicle_data_reupload_enabled?: boolean | null }).vehicle_data_reupload_enabled ??
+                  false,
+              }
+            : data;
         }
       }
       const approved = (data as { driver_approved_at?: string | null }).driver_approved_at;
