@@ -4,6 +4,10 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
+import {
+  resolveWebPostAuthPath,
+  WEB_POST_AUTH_PROFILE_SELECT,
+} from '@/lib/web-post-auth-redirect';
 
 type LegalDocResponse = { version?: string };
 
@@ -71,7 +75,12 @@ export default function LegalAcceptPage() {
         const json = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(json.error || 'No se pudo registrar la aceptación legal.');
       }
-      router.replace('/app');
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select(WEB_POST_AUTH_PROFILE_SELECT)
+        .eq('id', session.user.id)
+        .maybeSingle();
+      router.replace(profile ? resolveWebPostAuthPath(profile) : '/descargar');
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo guardar la aceptación legal.');

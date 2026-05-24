@@ -34,6 +34,7 @@
       "android": {
         "buildType": "apk"
       },
+      "prebuildCommand": "npx expo prebuild --platform android --clean",
       "env": {
         "APP_FLAVOR": "passenger",
         "EXPO_PUBLIC_APP_FLAVOR": "passenger"
@@ -44,6 +45,7 @@
       "android": {
         "buildType": "apk"
       },
+      "prebuildCommand": "npx expo prebuild --platform android --clean",
       "env": {
         "APP_FLAVOR": "driver",
         "EXPO_PUBLIC_APP_FLAVOR": "driver"
@@ -54,6 +56,7 @@
       "android": {
         "buildType": "app-bundle"
       },
+      "prebuildCommand": "npx expo prebuild --platform android --clean",
       "env": {
         "APP_FLAVOR": "passenger",
         "EXPO_PUBLIC_APP_FLAVOR": "passenger"
@@ -64,6 +67,7 @@
       "android": {
         "buildType": "app-bundle"
       },
+      "prebuildCommand": "npx expo prebuild --platform android --clean",
       "env": {
         "APP_FLAVOR": "passenger",
         "EXPO_PUBLIC_APP_FLAVOR": "passenger"
@@ -74,6 +78,7 @@
       "android": {
         "buildType": "app-bundle"
       },
+      "prebuildCommand": "npx expo prebuild --platform android --clean",
       "env": {
         "APP_FLAVOR": "driver",
         "EXPO_PUBLIC_APP_FLAVOR": "driver"

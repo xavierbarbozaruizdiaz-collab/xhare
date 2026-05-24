@@ -64,6 +64,50 @@ function getApiBase(): string {
   return base ? base.replace(/\/$/, '') : '';
 }
 
+/** Registra o actualiza el perfil como `driver_pending` (misma ruta que la web en signup conductor). */
+export async function ensureDriverPendingProfile(options?: {
+  full_name?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+}): Promise<{ ok: boolean; role?: string; error?: string }> {
+  const base = getApiBase();
+  if (!base) {
+    return { ok: false, error: 'EXPO_PUBLIC_API_BASE_URL no configurado' };
+  }
+
+  let lastError = 'No autenticado';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const token = await resolveApiAccessToken({ forceRefresh: attempt > 0 });
+    if (!token) {
+      await new Promise((r) => setTimeout(r, 500));
+      continue;
+    }
+    try {
+      const res = await fetch(`${base}/api/auth/ensure-driver-pending`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          access_token: token,
+          full_name: options?.full_name,
+          phone: options?.phone,
+          address: options?.address,
+          city: options?.city,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; role?: string; error?: string };
+      if (res.ok) {
+        return { ok: true, role: typeof json.role === 'string' ? json.role : 'driver_pending' };
+      }
+      lastError = json.error || `Error ${res.status}`;
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : 'Error de red';
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return { ok: false, error: lastError };
+}
+
 /** Mensaje de timeout: en producción (HTTPS remoto) no mezclar pistas de emulador/localhost. */
 function timeoutMessageForApiBase(base: string): string {
   const trimmed = base.replace(/\/$/, '');

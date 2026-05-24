@@ -6,6 +6,10 @@ import Link from 'next/link';
 import BrandLink from '@/components/BrandLink';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase/client';
+import {
+  resolveWebPostAuthPath,
+  WEB_POST_AUTH_PROFILE_SELECT,
+} from '@/lib/web-post-auth-redirect';
 import AppDrawer from '@/components/AppDrawer';
 import UserRoleBadge from '@/components/UserRoleBadge';
 
@@ -44,7 +48,7 @@ export default function Home() {
         }
         const { data: profile } = await supabase
           .from('profiles')
-          .select('role')
+          .select(WEB_POST_AUTH_PROFILE_SELECT)
           .eq('id', user.id)
           .single();
         if (cancelled) return;
@@ -55,7 +59,7 @@ export default function Home() {
         }
         if (profile?.role === 'driver' || profile?.role === 'driver_pending' || profile?.role === 'passenger') {
           setAuthState('passenger');
-          router.replace('/descargar');
+          router.replace(resolveWebPostAuthPath(profile));
           return;
         }
         setAuthState('guest');

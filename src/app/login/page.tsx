@@ -5,6 +5,10 @@ import { supabase } from '@/lib/supabase/client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { APP_NAME } from '@/lib/brand';
+import {
+  resolveWebPostAuthPath,
+  WEB_POST_AUTH_PROFILE_SELECT,
+} from '@/lib/web-post-auth-redirect';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -36,24 +40,13 @@ export default function LoginPage() {
       }
       const { data: profile } = await supabase
         .from('profiles')
-        .select('role, terms_accepted_at, privacy_accepted_at')
+        .select(WEB_POST_AUTH_PROFILE_SELECT)
         .eq('id', session.user.id)
         .maybeSingle();
       if (cancelled) return;
-      if (!profile?.terms_accepted_at || !profile?.privacy_accepted_at) {
+      if (profile) {
         didRedirect = true;
-        router.replace('/legal/accept');
-        return;
-      }
-      const role = profile?.role;
-      if (role === 'admin') {
-        didRedirect = true;
-        router.replace('/admin');
-        return;
-      }
-      if (role === 'driver' || role === 'driver_pending' || role === 'passenger') {
-        didRedirect = true;
-        router.replace('/descargar');
+        router.replace(resolveWebPostAuthPath(profile, nextUrl));
         return;
       }
       didRedirect = true;
@@ -123,7 +116,7 @@ export default function LoginPage() {
         if (userId) {
           const { data: profile, error: profileError } = await supabase
             .from('profiles')
-            .select('role, terms_accepted_at, privacy_accepted_at')
+            .select(WEB_POST_AUTH_PROFILE_SELECT)
             .eq('id', userId)
             .maybeSingle();
           if (profileError) {
@@ -131,22 +124,8 @@ export default function LoginPage() {
             setLoading(false);
             return;
           }
-          if (!profile?.terms_accepted_at || !profile?.privacy_accepted_at) {
-            router.push('/legal/accept');
-            router.refresh();
-            return;
-          }
-          if (profile?.role === 'admin') {
-            router.push('/admin');
-            router.refresh();
-            return;
-          }
-          if (
-            profile?.role === 'driver_pending' ||
-            profile?.role === 'driver' ||
-            profile?.role === 'passenger'
-          ) {
-            router.push('/descargar');
+          if (profile) {
+            router.push(resolveWebPostAuthPath(profile, nextUrl));
             router.refresh();
             return;
           }

@@ -83,8 +83,21 @@ applyFlavorEnvFromEasJsonProfile(activeEasProfile);
  */
 function resolveAppFlavor() {
   const profile = activeEasProfile || String(process.env.EAS_BUILD_PROFILE ?? '').trim();
-  if (profile === 'production_driver' || profile === 'preview_driver') return 'driver';
-  if (profile === 'production_passenger' || profile === 'preview_passenger') return 'passenger';
+  if (
+    profile === 'production_driver' ||
+    profile === 'production_driver_aab' ||
+    profile === 'preview_driver'
+  ) {
+    return 'driver';
+  }
+  if (
+    profile === 'production_passenger' ||
+    profile === 'production_passenger_aab' ||
+    profile === 'production_aab' ||
+    profile === 'preview_passenger'
+  ) {
+    return 'passenger';
+  }
   // `production` / `preview` en eas.json llevan APP_FLAVOR pasajero; sin esto, un secret global
   // EXPO_PUBLIC_APP_FLAVOR=driver en Expo podía hacer que todo pareciera "solo conductor".
   if (profile === 'production' || profile === 'preview') return 'passenger';

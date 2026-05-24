@@ -61,7 +61,7 @@ export default function DriverPendingPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-xl border border-gray-200 p-8 text-center">
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
-          <span className="text-3xl" aria-hidden>‚è≥</span>
+          <span className="text-3xl" aria-hidden>‚ˇ≥</span>
         </div>
         <h1 className="text-xl font-bold text-gray-900 mb-2">Solicitud en revisi√≥n</h1>
         <p className="text-gray-600 mb-4">
@@ -81,8 +81,20 @@ export default function DriverPendingPage() {
           </div>
         )}
         <Link
+          href="/driver/setup"
+          className="inline-block w-full px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 mb-3"
+        >
+          Cargar datos del veh?culo
+        </Link>
+        <Link
+          href="/descargar"
+          className="inline-block w-full px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 mb-3"
+        >
+          Descargar app conductor
+        </Link>
+        <Link
           href="/"
-          className="inline-block px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700"
+          className="inline-block text-sm text-gray-500 hover:text-gray-700"
         >
           Volver al inicio
         </Link>

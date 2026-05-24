@@ -22,14 +22,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BrandScreenBackdrop } from '../ui/BrandScreenBackdrop';
 import { appBrand } from '../ui/theme/brand';
+import { ensureDriverPendingProfile } from '../backend/api';
 import { supabase, isEnvConfigured } from '../backend/supabase';
 import { useAuth } from '../auth/AuthContext';
+import { getAppFlavor } from '../core/flavor';
 import { env } from '../core/env';
 
 export function LoginScreen() {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const { refreshSession } = useAuth();
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -38,6 +43,25 @@ export function LoginScreen() {
   const [resetSent, setResetSent] = useState(false);
   const termsUrl = `${env.apiBaseUrl?.trim().replace(/\/$/, '') || ''}/legal/terms`;
   const privacyUrl = `${env.apiBaseUrl?.trim().replace(/\/$/, '') || ''}/legal/privacy`;
+  const isDriverApp = getAppFlavor() === 'driver';
+
+  async function registerDriverProfileAfterAuth(profile?: {
+    full_name?: string;
+    phone?: string;
+  }): Promise<void> {
+    if (!isDriverApp) return;
+    const ensured = await ensureDriverPendingProfile({
+      full_name: profile?.full_name,
+      phone: profile?.phone,
+    });
+    if (!ensured.ok) {
+      throw new Error(
+        ensured.error ||
+          'No se pudo registrar la solicitud de conductor. Revisá la conexión o contactá soporte.'
+      );
+    }
+    await refreshSession(null);
+  }
 
   async function handleSubmit() {
     if (!isEnvConfigured()) {
@@ -62,12 +86,54 @@ export function LoginScreen() {
         if (typeof (authAny?.signUp) !== 'function') {
           throw new Error('Supabase auth no tiene signUp');
         }
+        let driverFullName: string | undefined;
+        let driverPhone: string | undefined;
+        if (isDriverApp) {
+          const fn = firstName.trim();
+          const ln = lastName.trim();
+          driverPhone = phone.trim();
+          driverFullName = [fn, ln].filter(Boolean).join(' ');
+          if (!fn || !ln) {
+            setMessage('Ingresá nombre y apellido para registrarte como conductor.');
+            setLoading(false);
+            return;
+          }
+          if (!driverPhone) {
+            setMessage('Ingresá tu número de teléfono.');
+            setLoading(false);
+            return;
+          }
+        }
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
+          options: isDriverApp
+            ? {
+                data: {
+                  role: 'driver',
+                  full_name: driverFullName,
+                  phone: driverPhone,
+                },
+              }
+            : undefined,
         });
         console.log('MOBILE signUp result:', !!data?.session, error);
         if (error) throw error;
+        if (isDriverApp) {
+          if (data.session) {
+            await refreshSession(data.session);
+          } else {
+            await new Promise((r) => setTimeout(r, 1000));
+            const {
+              data: { session: delayedSession },
+            } = await supabase.auth.getSession();
+            if (delayedSession) await refreshSession(delayedSession);
+          }
+          await registerDriverProfileAfterAuth({
+            full_name: driverFullName,
+            phone: driverPhone,
+          });
+        }
         setMessage('Cuenta creada. Antes de continuar te pediremos aceptar TyC y Privacidad.');
       } else {
         if (typeof (authAny?.signInWithPassword) !== 'function') {
@@ -80,6 +146,9 @@ export function LoginScreen() {
         console.log('MOBILE signInWithPassword result:', !!data?.session, error);
         if (error) throw error;
         await refreshSession((data as any)?.session ?? null);
+        if (isDriverApp) {
+          await registerDriverProfileAfterAuth();
+        }
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Error';
@@ -169,6 +238,41 @@ export function LoginScreen() {
             accessibilityLabel={appBrand.appName}
           />
         </View>
+        {isSignUp && isDriverApp ? (
+          <>
+            <Text style={styles.driverSignupTitle}>Datos del conductor</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Nombre"
+              placeholderTextColor="#888"
+              value={firstName}
+              onChangeText={setFirstName}
+              autoCapitalize="words"
+              editable={!loading}
+              accessibilityLabel="Nombre"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Apellido"
+              placeholderTextColor="#888"
+              value={lastName}
+              onChangeText={setLastName}
+              autoCapitalize="words"
+              editable={!loading}
+              accessibilityLabel="Apellido"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Teléfono (ej. 0981 123 456)"
+              placeholderTextColor="#888"
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+              editable={!loading}
+              accessibilityLabel="Teléfono"
+            />
+          </>
+        ) : null}
         <TextInput
           style={styles.input}
           placeholder="Email"
@@ -241,7 +345,16 @@ export function LoginScreen() {
 
         <TouchableOpacity
           style={styles.switch}
-          onPress={() => { setIsSignUp(!isSignUp); setMessage(''); setResetSent(false); }}
+          onPress={() => {
+            setIsSignUp(!isSignUp);
+            setMessage('');
+            setResetSent(false);
+            if (isSignUp) {
+              setFirstName('');
+              setLastName('');
+              setPhone('');
+            }
+          }}
           disabled={loading}
           accessibilityLabel={isSignUp ? 'Ya tenés cuenta, ir a iniciar sesión' : 'No tenés cuenta, crear cuenta'}
           accessibilityRole="button"
@@ -290,6 +403,13 @@ const styles = StyleSheet.create({
     aspectRatio: 390 / 313,
     maxHeight: 128,
     backgroundColor: 'transparent',
+  },
+  driverSignupTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: appBrand.colors.text,
+    marginBottom: 8,
+    fontFamily: appBrand.fonts.semibold,
   },
   input: {
     borderWidth: 1,
