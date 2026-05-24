@@ -5,6 +5,12 @@ import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 
 const bodySchema = z.object({
   stars: z.number().int().min(1).max(5),
+  comment: z
+    .string()
+    .trim()
+    .max(500)
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
 });
 
 const RATE_DRIVER_WINDOW_MS = 60_000;
@@ -61,7 +67,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { stars } = bodySchema.parse(body);
+    const { stars, comment } = bodySchema.parse(body);
 
     const { data: existing } = await supabase
       .from('driver_ratings')
@@ -82,6 +88,7 @@ export async function POST(
       driver_id: ride.driver_id,
       passenger_id: user.id,
       stars,
+      ...(comment ? { comment } : {}),
     });
 
     if (insertError) {

@@ -159,12 +159,26 @@ export async function assignDispatchRide(rideId: string) {
   return apiPost('/api/rides/assign-driver', { ride_id: rideId });
 }
 
-export async function rateDriver(rideId: string, stars: number) {
-  return apiPost(`/api/rides/${rideId}/rate-driver`, { stars });
+export async function rateDriver(rideId: string, stars: number, comment?: string) {
+  const body: { stars: number; comment?: string } = { stars };
+  const trimmed = comment?.trim();
+  if (trimmed) body.comment = trimmed.slice(0, 500);
+  const res = await apiPost(`/api/rides/${rideId}/rate-driver`, body);
+  if (!res.ok) {
+    throw new Error(res.error ?? 'No se pudo enviar la calificación');
+  }
+  return res;
 }
 
-export async function ratePassenger(rideId: string, passengerId: string, stars: number) {
-  return apiPost(`/api/rides/${rideId}/rate-passenger`, { passengerId, stars });
+export async function ratePassenger(rideId: string, passengerId: string, stars: number, comment?: string) {
+  const body: { passengerId: string; stars: number; comment?: string } = { passengerId, stars };
+  const trimmed = comment?.trim();
+  if (trimmed) body.comment = trimmed.slice(0, 500);
+  const res = await apiPost(`/api/rides/${rideId}/rate-passenger`, body);
+  if (!res.ok) {
+    throw new Error(res.error ?? 'No se pudo enviar la calificación');
+  }
+  return res;
 }
 
 export type ArriveVisitPayload = {

@@ -80,7 +80,7 @@ import {
   fetchMyBookings,
 } from '../rides/api';
 import { supabase } from '../backend/supabase';
-import { formatProfileRatingStars } from '../lib/profileRating';
+import { DEFAULT_RATING_STARS, formatProfileRatingStars } from '../lib/profileRating';
 import { updateRideStatus } from '../backend/rideStatus';
 import {
   loadDriverHomeTemplateRows,
@@ -477,7 +477,7 @@ export function HomeScreen() {
   const [homeMessagesBadge, setHomeMessagesBadge] = useState(0);
   const [homeBookingsBadge, setHomeBookingsBadge] = useState(0);
   const [driverTripsCompletedCount, setDriverTripsCompletedCount] = useState(0);
-  const [driverRatingAvg, setDriverRatingAvg] = useState<number | null>(null);
+  const [driverRatingAvg, setDriverRatingAvg] = useState(DEFAULT_RATING_STARS);
   const [driverPassengersServedCount, setDriverPassengersServedCount] = useState(0);
   const [driverPendingTripRequestsBadge, setDriverPendingTripRequestsBadge] = useState(0);
   const [driverHomeMessagesBadge, setDriverHomeMessagesBadge] = useState(0);
@@ -540,12 +540,12 @@ export function HomeScreen() {
       setDriverHomeMessagesBadge(unread);
       const prof = profileRes.data as { rating_average?: number | null; rating_count?: number | null } | null;
       const stars = formatProfileRatingStars(prof?.rating_average, prof?.rating_count);
-      setDriverRatingAvg(stars != null ? Number(stars) : null);
+      setDriverRatingAvg(Number(stars));
       setDriverPendingTripRequestsBadge(typeof pendingReqRes.count === 'number' ? pendingReqRes.count : 0);
     } catch {
       setDriverHomeMessagesBadge(0);
       setDriverTripsCompletedCount(0);
-      setDriverRatingAvg(null);
+      setDriverRatingAvg(DEFAULT_RATING_STARS);
       setDriverPassengersServedCount(0);
       setDriverPendingTripRequestsBadge(0);
     }
@@ -1788,9 +1788,7 @@ export function HomeScreen() {
                 <Text style={styles.driverStatLabel}>Viajes</Text>
               </View>
               <View style={styles.driverStatCard}>
-                <Text style={styles.driverStatValue}>
-                  {driverRatingAvg != null ? `${driverRatingAvg.toFixed(1)}★` : 'Nuevo'}
-                </Text>
+                <Text style={styles.driverStatValue}>{driverRatingAvg.toFixed(1)}★</Text>
                 <Text style={styles.driverStatLabel}>Calificación</Text>
               </View>
               <View style={styles.driverStatCard}>

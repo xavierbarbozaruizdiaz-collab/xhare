@@ -110,7 +110,7 @@ module.exports = {
     splash: {
       image: isDriver ? './assets/brand/driver-logo.png' : './assets/brand/passenger-logo.png',
       resizeMode: 'contain',
-      backgroundColor: isDriver ? '#F0F2F5' : '#F8F9FB',
+      backgroundColor: isDriver ? '#E0F0E4' : '#F5E8DC',
     },
     extra: {
       eas: {
@@ -145,7 +145,7 @@ module.exports = {
     ],
     android: {
       adaptiveIcon: {
-        backgroundColor: isDriver ? '#F0F2F5' : '#F8F9FB',
+        backgroundColor: isDriver ? '#105020' : '#F5E8DC',
         foregroundImage: isDriver ? './assets/brand/driver-icon.png' : './assets/brand/passenger-icon.png',
       },
       // Para poder instalar "driver" y "pasajero" simultáneamente en el emulador.

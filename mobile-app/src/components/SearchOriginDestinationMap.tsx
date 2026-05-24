@@ -15,7 +15,7 @@ import {
   StatusBar,
   Pressable,
 } from 'react-native';
-import MapView, { Marker, Polyline, type MapPressEvent, type Region } from 'react-native-maps';
+import MapView, { Marker, Polyline, type Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -136,6 +136,7 @@ export function SearchOriginDestinationMap({
   onRouteEtaChangeRef.current = onRouteEtaChange;
   const [mode, setMode] = useState<'origin' | 'destination'>('origin');
   const [fullVisible, setFullVisible] = useState(false);
+  const [selectionCenter, setSelectionCenter] = useState<Point | null>(null);
   const [geocoding, setGeocoding] = useState(false);
   const [locating, setLocating] = useState(false);
   const [locationOk, setLocationOk] = useState(false);
@@ -227,17 +228,39 @@ export function SearchOriginDestinationMap({
   }, [fullVisible, osrmCoords, lineCoords]);
 
   const openFull = useCallback((nextMode?: 'origin' | 'destination') => {
+    const m = nextMode ?? mode;
     if (nextMode) setMode(nextMode);
+    const initial =
+      m === 'origin' && origin
+        ? origin
+        : m === 'destination' && destination
+          ? destination
+          : { lat: region.latitude, lng: region.longitude };
+    setSelectionCenter(initial);
     setFullVisible(true);
-  }, []);
+  }, [mode, origin, destination, region.latitude, region.longitude]);
 
-  const onMapPress = useCallback(
-    async (e: MapPressEvent) => {
-      const { latitude, longitude } = e.nativeEvent.coordinate;
-      const p: Point = { lat: latitude, lng: longitude };
+  useEffect(() => {
+    if (!fullVisible) return;
+    const p = mode === 'origin' ? origin : mode === 'destination' ? destination : null;
+    if (!p) return;
+    setSelectionCenter(p);
+    mapRef.current?.animateToRegion(
+      {
+        latitude: p.lat,
+        longitude: p.lng,
+        latitudeDelta: Math.max(region.latitudeDelta, 0.06),
+        longitudeDelta: Math.max(region.longitudeDelta, 0.06),
+      },
+      320
+    );
+  }, [mode, fullVisible, origin, destination, region.latitudeDelta, region.longitudeDelta]);
+
+  const applyPoint = useCallback(
+    async (p: Point) => {
       setGeocoding(true);
       try {
-        const r = await reverseGeocodeStructured(latitude, longitude);
+        const r = await reverseGeocodeStructured(p.lat, p.lng);
         const label = shortenLabel(r.displayName);
         if (mode === 'origin') {
           onOriginChange(p);
@@ -252,6 +275,11 @@ export function SearchOriginDestinationMap({
     },
     [mode, onOriginChange, onDestinationChange, onOriginLabelResolved, onDestinationLabelResolved]
   );
+
+  const confirmPointAtCenter = useCallback(() => {
+    if (!selectionCenter) return;
+    void applyPoint(selectionCenter);
+  }, [selectionCenter, applyPoint]);
 
   const goToMyLocation = useCallback(async () => {
     setLocating(true);
@@ -323,7 +351,7 @@ export function SearchOriginDestinationMap({
       {!hideInlineTitles ? (
         <>
           <Text style={styles.sectionLabel}>Mapa</Text>
-          <Text style={styles.hint}>Tocá el mapa para marcar origen y destino.</Text>
+          <Text style={styles.hint}>Mové el mapa y confirmá origen y destino en el centro.</Text>
         </>
       ) : null}
 
@@ -382,13 +410,19 @@ export function SearchOriginDestinationMap({
             <View style={styles.modalHeaderSpacer} />
           </View>
 
+          <Text style={styles.modalHint}>
+            Mové el mapa; el ícono del centro marca el punto. Confirmá con el botón de abajo.
+          </Text>
+
           <View style={styles.modalMapWrap}>
             <MapView
               ref={mapRef}
               provider={androidMapProvider}
               style={styles.modalMap}
               initialRegion={region}
-              onPress={onMapPress}
+              onRegionChangeComplete={(r) => {
+                setSelectionCenter({ lat: r.latitude, lng: r.longitude });
+              }}
               scrollEnabled
               zoomEnabled
               rotateEnabled={false}
@@ -398,6 +432,13 @@ export function SearchOriginDestinationMap({
             >
               {mapChildren}
             </MapView>
+            <View style={styles.centerPinWrap} pointerEvents="none">
+              <Ionicons
+                name={mode === 'origin' ? 'location' : 'flag'}
+                size={34}
+                color={mode === 'destination' ? '#b91c1c' : MAP_PRIMARY}
+              />
+            </View>
             <TouchableOpacity
               style={styles.locateBtn}
               onPress={() => void goToMyLocation()}
@@ -427,6 +468,17 @@ export function SearchOriginDestinationMap({
               onSelectOrigin={() => setMode('origin')}
               onSelectDestination={() => setMode('destination')}
             />
+            <TouchableOpacity
+              style={[styles.confirmBtn, geocoding && styles.confirmBtnDisabled]}
+              onPress={confirmPointAtCenter}
+              disabled={geocoding || !selectionCenter}
+              accessibilityRole="button"
+              accessibilityLabel={mode === 'origin' ? 'Confirmar origen' : 'Confirmar destino'}
+            >
+              <Text style={styles.confirmBtnText}>
+                {mode === 'origin' ? 'Confirmar origen' : 'Confirmar destino'}
+              </Text>
+            </TouchableOpacity>
             <View style={styles.modalClearRow}>
               {origin ? (
                 <TouchableOpacity onPress={() => onOriginChange(null)} accessibilityRole="button">
@@ -533,8 +585,39 @@ const styles = StyleSheet.create({
     fontFamily: appBrand.fonts.semibold,
   },
   modalHeaderSpacer: { minWidth: 48 },
+  modalHint: {
+    fontSize: 13,
+    color: '#6b7280',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: '#f9fafb',
+    fontFamily: appBrand.fonts.regular,
+  },
   modalMapWrap: { flex: 1, position: 'relative' },
   modalMap: { ...StyleSheet.absoluteFillObject },
+  centerPinWrap: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginLeft: -17,
+    marginTop: -34,
+    zIndex: 5,
+  },
+  confirmBtn: {
+    marginTop: 10,
+    marginHorizontal: 4,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: MAP_PRIMARY,
+    alignItems: 'center',
+  },
+  confirmBtnDisabled: { opacity: 0.55 },
+  confirmBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    fontFamily: appBrand.fonts.semibold,
+  },
   locateBtn: {
     position: 'absolute',
     right: 14,

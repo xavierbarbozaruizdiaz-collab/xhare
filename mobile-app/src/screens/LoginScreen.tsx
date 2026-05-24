@@ -16,13 +16,19 @@ import {
   Alert,
   Linking,
   Image,
+  ScrollView,
+  useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BrandScreenBackdrop } from '../ui/BrandScreenBackdrop';
 import { appBrand } from '../ui/theme/brand';
 import { supabase, isEnvConfigured } from '../backend/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { env } from '../core/env';
 
 export function LoginScreen() {
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const { refreshSession } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -134,20 +140,35 @@ export function LoginScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-      accessibilityLabel="Pantalla de inicio de sesión"
-    >
-      <View style={styles.card}>
-        <Image
-          source={appBrand.logo}
-          style={styles.logoImage}
-          resizeMode="contain"
-          accessibilityLabel={appBrand.appName}
-        />
-        <Text style={styles.tagline}>{appBrand.tagline}</Text>
-
+    <BrandScreenBackdrop>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.container}
+        accessibilityLabel="Pantalla de inicio de sesión"
+      >
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              minHeight: windowHeight - insets.top - insets.bottom,
+              paddingTop: insets.top + 12,
+              paddingBottom: Math.max(insets.bottom, 20),
+            },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.centerBlock}>
+          <View style={styles.card}>
+        <View style={styles.logoWrap}>
+          <Image
+            source={appBrand.logo}
+            style={styles.logoImage}
+            resizeMode="contain"
+            accessibilityLabel={appBrand.appName}
+          />
+        </View>
         <TextInput
           style={styles.input}
           placeholder="Email"
@@ -229,39 +250,46 @@ export function LoginScreen() {
             {isSignUp ? '¿Ya tenés cuenta? Iniciar sesión' : '¿No tenés cuenta? Crear cuenta'}
           </Text>
         </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+          </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </BrandScreenBackdrop>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: appBrand.colors.background,
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
+    paddingHorizontal: 24,
+  },
+  centerBlock: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   card: {
-    backgroundColor: appBrand.colors.surface,
-    borderRadius: 12,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingVertical: 8,
+  },
+  logoWrap: {
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 20,
   },
   logoImage: {
-    width: '100%',
-    height: 140,
-    marginBottom: 4,
-  },
-  tagline: {
-    fontSize: 14,
-    color: appBrand.colors.textMuted,
-    fontFamily: appBrand.fonts.medium,
-    textAlign: 'center',
-    marginBottom: 24,
+    width: '82%',
+    maxWidth: 300,
+    aspectRatio: 390 / 313,
+    maxHeight: 128,
+    backgroundColor: 'transparent',
   },
   input: {
     borderWidth: 1,
@@ -273,6 +301,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     color: appBrand.colors.text,
     fontFamily: appBrand.fonts.regular,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
   },
   message: {
     fontSize: 13,

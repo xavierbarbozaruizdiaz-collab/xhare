@@ -6,6 +6,12 @@ import { checkRateLimit, getClientId } from '@/lib/rate-limit';
 const bodySchema = z.object({
   passengerId: z.string().uuid(),
   stars: z.number().int().min(1).max(5),
+  comment: z
+    .string()
+    .trim()
+    .max(500)
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
 });
 
 const RATE_PASSENGER_WINDOW_MS = 60_000;
@@ -47,7 +53,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { passengerId, stars } = bodySchema.parse(body);
+    const { passengerId, stars, comment } = bodySchema.parse(body);
 
     const { data: booking } = await supabase
       .from('bookings')
@@ -98,6 +104,7 @@ export async function POST(
       driver_id: user.id,
       passenger_id: passengerId,
       stars,
+      ...(comment ? { comment } : {}),
     });
 
     if (insertError) {

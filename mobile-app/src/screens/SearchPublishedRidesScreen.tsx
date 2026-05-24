@@ -508,7 +508,7 @@ export function SearchPublishedRidesScreen() {
                 <Text style={styles.mapCollapsibleTitle}>Mapa</Text>
                 <Text style={styles.mapCollapsibleHint}>
                   {favoriteMapExpanded
-                    ? 'Tocá el mapa para marcar origen y destino del favorito.'
+                    ? 'Mové el mapa y confirmá origen y destino del favorito (ícono fijo al centro).'
                     : 'Mostrá el mapa para ajustar trayecto y horarios con la ruta.'}
                 </Text>
               </View>

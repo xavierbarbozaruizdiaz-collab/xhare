@@ -31,7 +31,8 @@ export async function markDriverRatingRideSkipped(rideId: string): Promise<void>
 
 export async function fetchPendingPassengerDriverRating(
   passengerId: string,
-  skippedRideIds: ReadonlySet<string>
+  skippedRideIds: ReadonlySet<string>,
+  extraExcludedRideIds?: ReadonlySet<string>
 ): Promise<PendingDriverRatingPrompt | null> {
   const uid = String(passengerId ?? '').trim();
   if (!uid) return null;
@@ -82,7 +83,7 @@ export async function fetchPendingPassengerDriverRating(
     const rideId = String(b.ride_id);
     if (!droppedBookingIds.has(bookingId)) continue;
     if (ratedRideIds.has(rideId)) continue;
-    if (skippedRideIds.has(rideId)) continue;
+    if (skippedRideIds.has(rideId) || extraExcludedRideIds?.has(rideId)) continue;
     const ride = rideById.get(rideId);
     if (!ride) continue;
     if (ride.status !== 'en_route' && ride.status !== 'completed') continue;

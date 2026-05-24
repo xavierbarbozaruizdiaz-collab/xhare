@@ -1,38 +1,34 @@
 import React from 'react';
 import { View, ActivityIndicator, StyleSheet, Text, Image } from 'react-native';
+import { BrandScreenBackdrop } from './BrandScreenBackdrop';
 import { appBrand } from './theme/brand';
 
 export function LoadingScreen() {
   return (
-    <View style={styles.container}>
-      <Image source={appBrand.logo} style={styles.logoImage} resizeMode="contain" accessibilityLabel={appBrand.appName} />
-      <Text style={styles.tagline}>{appBrand.tagline}</Text>
-      <ActivityIndicator size="large" color={appBrand.colors.primary} style={styles.spinner} />
-      <Text style={styles.text}>Cargando…</Text>
-    </View>
+    <BrandScreenBackdrop>
+      <View style={styles.center}>
+        <Image source={appBrand.logo} style={styles.logoImage} resizeMode="contain" accessibilityLabel={appBrand.appName} />
+        <ActivityIndicator size="large" color={appBrand.colors.primary} style={styles.spinner} />
+        <Text style={styles.text}>Cargando…</Text>
+      </View>
+    </BrandScreenBackdrop>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: appBrand.colors.background,
     paddingHorizontal: 28,
   },
   logoImage: {
-    width: '88%',
-    maxWidth: 340,
-    height: 200,
-    marginBottom: 8,
-  },
-  tagline: {
-    fontSize: 15,
-    color: appBrand.colors.textMuted,
-    fontFamily: appBrand.fonts.medium,
-    marginBottom: 28,
-    textAlign: 'center',
+    width: '82%',
+    maxWidth: 300,
+    aspectRatio: 390 / 313,
+    maxHeight: 140,
+    marginBottom: 32,
+    backgroundColor: 'transparent',
   },
   spinner: {
     marginBottom: 16,

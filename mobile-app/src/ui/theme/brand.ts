@@ -7,6 +7,8 @@ export type BrandTheme = {
   tagline: string;
   logo: number;
   icon: number;
+  /** Fondo decorativo vertical (splash, carga, login). */
+  splashBackground: number;
   colors: {
     primary: string;
     primaryMuted: string;
@@ -33,8 +35,10 @@ export type BrandTheme = {
 
 const PASSENGER_LOGO = require('../../../assets/brand/passenger-logo.png');
 const PASSENGER_ICON = require('../../../assets/brand/passenger-icon.png');
+const PASSENGER_SPLASH_BG = require('../../../assets/brand/passenger-splash-bg.png');
 const DRIVER_LOGO = require('../../../assets/brand/driver-logo.png');
 const DRIVER_ICON = require('../../../assets/brand/driver-icon.png');
+const DRIVER_SPLASH_BG = require('../../../assets/brand/driver-splash-bg.png');
 
 const PASSENGER_THEME: BrandTheme = {
   flavor: 'passenger',
@@ -42,11 +46,12 @@ const PASSENGER_THEME: BrandTheme = {
   tagline: '¡Tu viaje seguro!',
   logo: PASSENGER_LOGO,
   icon: PASSENGER_ICON,
+  splashBackground: PASSENGER_SPLASH_BG,
   colors: {
     primary: '#20A050',
     primaryMuted: '#1a8844',
     accent: '#FF8C00',
-    background: '#F8F9FB',
+    background: '#F5E8DC',
     surface: '#FFFFFF',
     text: '#2F2F2F',
     textMuted: '#6b7280',
@@ -72,11 +77,12 @@ const DRIVER_THEME: BrandTheme = {
   tagline: '¡Profesionalismo y Control!',
   logo: DRIVER_LOGO,
   icon: DRIVER_ICON,
+  splashBackground: DRIVER_SPLASH_BG,
   colors: {
     primary: '#105020',
     primaryMuted: '#0d4019',
     accent: '#FF6000',
-    background: '#F0F2F5',
+    background: '#E0F0E4',
     surface: '#FFFFFF',
     text: '#2F2F2F',
     textMuted: '#6b7280',

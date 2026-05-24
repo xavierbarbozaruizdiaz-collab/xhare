@@ -11,31 +11,36 @@ import {
   StyleSheet,
   Alert,
   AppState,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
   type AppStateStatus,
 } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
 import { rateDriver } from '../backend/api';
 import { getAppFlavor } from '../core/flavor';
-import {
-  DEFAULT_RATING_STARS,
-  PROFILE_RATING_WINDOW,
-} from '../lib/profileRating';
+import { DEFAULT_RATING_STARS } from '../lib/profileRating';
 import {
   fetchPendingPassengerDriverRating,
   loadSkippedDriverRatingRideIds,
   markDriverRatingRideSkipped,
   type PendingDriverRatingPrompt,
 } from '../lib/passengerRateDriverPrompt';
+import { StarRatingInput } from './StarRatingInput';
 
 const POLL_MS = 22_000;
+const COMMENT_MAX = 500;
 
 export function PassengerRateDriverGate() {
   const { session } = useAuth();
   const flavor = getAppFlavor();
   const [prompt, setPrompt] = useState<PendingDriverRatingPrompt | null>(null);
   const [stars, setStars] = useState(DEFAULT_RATING_STARS);
+  const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const skippedRef = useRef<Set<string>>(new Set());
+  const ratedLocallyRef = useRef<Set<string>>(new Set());
   const checkingRef = useRef(false);
 
   const refreshSkipped = useCallback(async () => {
@@ -47,10 +52,12 @@ export function PassengerRateDriverGate() {
     checkingRef.current = true;
     try {
       await refreshSkipped();
-      const pending = await fetchPendingPassengerDriverRating(session.id, skippedRef.current);
+      const excluded = new Set([...skippedRef.current, ...ratedLocallyRef.current]);
+      const pending = await fetchPendingPassengerDriverRating(session.id, skippedRef.current, excluded);
       if (pending) {
         setPrompt(pending);
         setStars(DEFAULT_RATING_STARS);
+        setComment('');
       } else if (!submitting) {
         setPrompt(null);
       }
@@ -79,10 +86,11 @@ export function PassengerRateDriverGate() {
     };
   }, [flavor, session?.id, checkPending]);
 
-  const close = () => {
+  const close = useCallback(() => {
     setPrompt(null);
     setStars(DEFAULT_RATING_STARS);
-  };
+    setComment('');
+  }, []);
 
   const onSkip = async () => {
     if (prompt?.rideId) {
@@ -95,12 +103,13 @@ export function PassengerRateDriverGate() {
 
   const onSubmit = async () => {
     if (!prompt || stars < 1 || stars > 5 || submitting) return;
+    const rideId = prompt.rideId;
     setSubmitting(true);
     try {
-      await rateDriver(prompt.rideId, stars);
+      await rateDriver(rideId, stars, comment);
+      ratedLocallyRef.current.add(rideId);
       close();
-      Alert.alert('Gracias', 'Tu calificación del conductor fue registrada.');
-      void checkPending();
+      setTimeout(() => void checkPending(), 800);
     } catch (e) {
       Alert.alert(
         'No se pudo calificar',
@@ -115,40 +124,48 @@ export function PassengerRateDriverGate() {
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={() => void onSkip()}>
-      <View style={styles.overlay}>
-        <View style={styles.card}>
-          <Text style={styles.title}>Calificar conductor</Text>
-          <Text style={styles.subtitle}>
-            ¿Cómo fue tu viaje con {prompt.driverName}? Podés cambiar las estrellas (por defecto 5). El
-            promedio público del conductor se recalcula cuando acumula {PROFILE_RATING_WINDOW} calificaciones.
-          </Text>
-          <View style={styles.starsRow}>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <TouchableOpacity
-                key={n}
-                style={[styles.starBtn, stars >= n && styles.starBtnActive]}
-                onPress={() => setStars(n)}
-                accessibilityRole="button"
-                accessibilityLabel={`${n} estrella${n !== 1 ? 's' : ''}`}
-              >
-                <Text style={[styles.starText, stars >= n && styles.starTextActive]}>★</Text>
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
+        >
+          <View style={styles.card}>
+            <Text style={styles.title}>Calificar conductor</Text>
+            <Text style={styles.subtitle}>
+              ¿Cómo te fue tu viaje con {prompt.driverName}?
+            </Text>
+            <StarRatingInput value={stars} onChange={setStars} disabled={submitting} />
+            <Text style={styles.commentLabel}>Comentario (opcional)</Text>
+            <TextInput
+              style={styles.commentInput}
+              value={comment}
+              onChangeText={(t) => setComment(t.slice(0, COMMENT_MAX))}
+              placeholder="Contanos cómo fue el viaje…"
+              placeholderTextColor="#9ca3af"
+              multiline
+              maxLength={COMMENT_MAX}
+              editable={!submitting}
+              textAlignVertical="top"
+            />
+            <View style={styles.footer}>
+              <TouchableOpacity style={styles.skipBtn} onPress={() => void onSkip()} disabled={submitting}>
+                <Text style={styles.skipText}>Omitir</Text>
               </TouchableOpacity>
-            ))}
+              <TouchableOpacity
+                style={[styles.sendBtn, submitting && styles.sendBtnDisabled]}
+                disabled={submitting || stars < 1}
+                onPress={() => void onSubmit()}
+              >
+                <Text style={styles.sendText}>{submitting ? 'Enviando…' : 'Enviar'}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-          <View style={styles.footer}>
-            <TouchableOpacity style={styles.skipBtn} onPress={() => void onSkip()}>
-              <Text style={styles.skipText}>Omitir</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.sendBtn, submitting && styles.sendBtnDisabled]}
-              disabled={submitting || stars < 1}
-              onPress={() => void onSubmit()}
-            >
-              <Text style={styles.sendText}>{submitting ? 'Enviando…' : 'Enviar'}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -157,6 +174,10 @@ const styles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
     padding: 20,
   },
@@ -169,20 +190,20 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   title: { fontSize: 18, fontWeight: '700', color: '#111827', marginBottom: 8 },
-  subtitle: { fontSize: 14, color: '#4b5563', lineHeight: 20, marginBottom: 12 },
-  starsRow: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginVertical: 12 },
-  starBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#e5e7eb',
-    alignItems: 'center',
-    justifyContent: 'center',
+  subtitle: { fontSize: 15, color: '#374151', lineHeight: 22, marginBottom: 16, textAlign: 'center' },
+  commentLabel: { fontSize: 13, fontWeight: '600', color: '#6b7280', marginTop: 16, marginBottom: 6 },
+  commentInput: {
+    minHeight: 88,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#111827',
+    backgroundColor: '#f9fafb',
   },
-  starBtnActive: { backgroundColor: '#f59e0b' },
-  starText: { fontSize: 22, color: '#6b7280' },
-  starTextActive: { color: '#fff' },
-  footer: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  footer: { flexDirection: 'row', gap: 10, marginTop: 16 },
   skipBtn: {
     flex: 1,
     paddingVertical: 12,

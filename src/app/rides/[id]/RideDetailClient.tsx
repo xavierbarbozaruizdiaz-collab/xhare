@@ -53,6 +53,7 @@ export default function RideDetailClient() {
   const [rateDriverModalOpen, setRateDriverModalOpen] = useState(false);
   const [ratePassengerModalOpen, setRatePassengerModalOpen] = useState(false);
   const [rateDriverStars, setRateDriverStars] = useState(DEFAULT_RATING_STARS);
+  const [rateDriverComment, setRateDriverComment] = useState('');
   const [ratePassengerStars, setRatePassengerStars] = useState(DEFAULT_RATING_STARS);
   const [passengerToRate, setPassengerToRate] = useState<{ passengerId: string; fullName: string } | null>(null);
   const [submittingRating, setSubmittingRating] = useState(false);
@@ -863,7 +864,10 @@ export default function RideDetailClient() {
       const res = await fetch(`/api/rides/${rideId}/rate-driver`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ stars: rateDriverStars }),
+        body: JSON.stringify({
+          stars: rateDriverStars,
+          ...(rateDriverComment.trim() ? { comment: rateDriverComment.trim().slice(0, 500) } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -871,6 +875,7 @@ export default function RideDetailClient() {
         return;
       }
       setRateDriverModalOpen(false);
+      setRateDriverComment('');
       setHasRatedDriver(true);
       await loadRide();
     } finally {
@@ -1411,28 +1416,35 @@ export default function RideDetailClient() {
       {rateDriverModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true" aria-labelledby="rate-driver-title">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
-            <h2 id="rate-driver-title" className="text-lg font-semibold text-gray-900 mb-3">Calificar chofer</h2>
-            <p className="text-sm text-gray-600 mb-4">
-              ¿Cómo fue tu experiencia con el conductor? Por defecto 5 estrellas. El promedio público se
-              recalcula cuando el conductor acumula {PROFILE_RATING_WINDOW} calificaciones.
+            <h2 id="rate-driver-title" className="text-lg font-semibold text-gray-900 mb-3">Calificar conductor</h2>
+            <p className="text-sm text-gray-700 mb-4 text-center">
+              ¿Cómo te fue tu viaje con {driver?.full_name?.trim() || 'el conductor'}?
             </p>
-            <div className="flex gap-2 justify-center mb-6">
+            <div className="flex gap-1 justify-center mb-4">
               {[1, 2, 3, 4, 5].map((n) => (
                 <button
                   key={n}
                   type="button"
                   onClick={() => setRateDriverStars(n)}
-                  className={`w-10 h-10 rounded-full text-lg font-medium ${rateDriverStars >= n ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-500'}`}
+                  className={`text-3xl leading-none p-1 ${rateDriverStars >= n ? 'text-amber-500' : 'text-gray-300'}`}
                   aria-label={`${n} estrella${n > 1 ? 's' : ''}`}
                 >
-                  ★
+                  {rateDriverStars >= n ? '★' : '☆'}
                 </button>
               ))}
             </div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Comentario (opcional)</label>
+            <textarea
+              value={rateDriverComment}
+              onChange={(e) => setRateDriverComment(e.target.value.slice(0, 500))}
+              placeholder="Contanos cómo fue el viaje…"
+              rows={3}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 mb-4 resize-y min-h-[80px]"
+            />
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => { setRateDriverModalOpen(false); setSkippedRateDriver(true); }}
+                onClick={() => { setRateDriverModalOpen(false); setRateDriverComment(''); setSkippedRateDriver(true); }}
                 className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50"
               >
                 Omitir
