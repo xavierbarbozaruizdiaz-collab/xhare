@@ -15,7 +15,11 @@ export type RootStackParamList = {
 
 export type MainStackParamList = {
   MainTabs: undefined;
-  RideDetail: { rideId: string };
+  RideDetail: {
+    rideId: string;
+    /** Tras publicar: mostrar diálogo de compartir código en el detalle. */
+    publishSharePrompt?: { code: string; extraMessage?: string };
+  };
   BookRide: { rideId: string };
   PublishRide:
     | {

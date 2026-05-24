@@ -421,7 +421,27 @@ export function RideDetailScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<ScreenRoute>();
   const { session } = useAuth();
-  const { rideId } = route.params;
+  const { rideId, publishSharePrompt } = route.params;
+  const publishSharePromptShownRef = useRef(false);
+
+  useEffect(() => {
+    const code = publishSharePrompt?.code?.trim();
+    if (!code || publishSharePromptShownRef.current) return;
+    publishSharePromptShownRef.current = true;
+    const msg = `Tu viaje quedó publicado.\n\nCódigo para compartir: ${code}${publishSharePrompt?.extraMessage ?? ''}`;
+    const t = setTimeout(() => {
+      Alert.alert('Listo', msg, [
+        {
+          text: 'Compartir código',
+          onPress: () => {
+            void Share.share({ message: `Código de viaje: ${code}` });
+          },
+        },
+        { text: 'Omitir', style: 'cancel' },
+      ]);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [publishSharePrompt]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

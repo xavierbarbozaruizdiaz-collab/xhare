@@ -13,7 +13,6 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
-  Share,
   Platform,
   Pressable,
   Switch,
@@ -1438,67 +1437,17 @@ export function PublishRideScreen() {
         .eq('id', rideId)
         .maybeSingle();
       const rideShareCode = String((shareRow as { share_code?: unknown } | null)?.share_code ?? '').trim();
-      const shareMsg = rideShareCode
-        ? `Tu viaje quedó publicado.\n\nCódigo para compartir: ${rideShareCode}`
-        : 'Tu viaje quedó publicado.';
+      const recurringLine =
+        !isGroupedPublishFlow && recurringExtraPublished > 0
+          ? `\n\nSe publicaron ${recurringExtraPublished} fecha(s) más con el mismo tramo (días de la plantilla). Los pasajeros pueden unirse con anticipación.`
+          : '';
 
-      if (isGroupedPublishFlow) {
-        Alert.alert('Listo', shareMsg, [
-          ...(rideShareCode
-            ? [
-                {
-                  text: 'Compartir código',
-                  onPress: () => {
-                    void Share.share({
-                      message: `Código de viaje: ${rideShareCode}`,
-                    });
-                  },
-                } as const,
-              ]
-            : []),
-          {
-            text: 'Ir a inicio',
-            style: 'cancel',
-            onPress: () => navigation.replace('MainTabs'),
-          },
-          {
-            text: 'Ver viaje',
-            onPress: () => navigation.replace('RideDetail', { rideId }),
-          },
-        ]);
-      } else {
-        const recurringLine =
-          recurringExtraPublished > 0
-            ? `\n\nSe publicaron ${recurringExtraPublished} fecha(s) más con el mismo tramo (días de la plantilla). Los pasajeros pueden unirse con anticipación.`
-            : '';
-        Alert.alert(
-          'Listo',
-          `${shareMsg}\n\nTambién lo encontrás en Conductor → Mis viajes publicados o Inicio.${recurringLine}`,
-          [
-          ...(rideShareCode
-            ? [
-                {
-                  text: 'Compartir código',
-                  onPress: () => {
-                    void Share.share({
-                      message: `Código de viaje: ${rideShareCode}`,
-                    });
-                  },
-                } as const,
-              ]
-            : []),
-          {
-            text: 'Ir a inicio',
-            style: 'cancel',
-            onPress: () => navigation.replace('MainTabs'),
-          },
-          {
-            text: 'Ver viaje',
-            // `replace` saca esta pantalla del stack: al volver desde el detalle no se vuelve al formulario de publicar.
-            onPress: () => navigation.replace('RideDetail', { rideId }),
-          },
-        ]);
-      }
+      navigation.replace('RideDetail', {
+        rideId,
+        publishSharePrompt: rideShareCode
+          ? { code: rideShareCode, extraMessage: recurringLine || undefined }
+          : undefined,
+      });
     } catch (e) {
       Alert.alert('Error', formatSupabaseError(e));
     } finally {

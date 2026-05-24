@@ -116,7 +116,7 @@ module.exports = {
     name: isDriver ? 'ÑandeBus Driver' : 'ÑandeBus',
     slug: 'xhare',
     scheme: 'xhare',
-    version: '1.0.0',
+    version: isDriver ? '1.0.1' : '1.0.0',
     orientation: 'portrait',
     icon: isDriver ? './assets/brand/driver-icon.png' : './assets/brand/passenger-icon.png',
     userInterfaceStyle: 'light',
@@ -157,6 +157,7 @@ module.exports = {
       ],
     ],
     android: {
+      versionCode: isDriver ? 2 : 1,
       adaptiveIcon: {
         backgroundColor: isDriver ? '#105020' : '#F5E8DC',
         foregroundImage: isDriver ? './assets/brand/driver-icon.png' : './assets/brand/passenger-icon.png',
