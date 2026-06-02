@@ -243,6 +243,7 @@ export function RootNavigator() {
   const { session, loading } = useAuth();
   const navRef = useNavigationContainerRef<RootStackParamList>();
   const linkingHandled = useRef<string | null>(null);
+  const [navigationReady, setNavigationReady] = React.useState(false);
 
   useEffect(() => {
     if (!session) return;
@@ -288,7 +289,13 @@ export function RootNavigator() {
   }
 
   return (
-    <NavigationContainer ref={navRef}>
+    <NavigationContainer
+      ref={navRef}
+      onReady={() => setNavigationReady(true)}
+      onStateChange={() => {
+        if (navRef.isReady?.()) setNavigationReady(true);
+      }}
+    >
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {!session ? (
           <RootStack.Screen name="Auth" component={LoginScreen} />
@@ -300,7 +307,7 @@ export function RootNavigator() {
       </RootStack.Navigator>
       {session && legalAccepted ? (
         <>
-          <ActiveRideResumeGate navRef={navRef} />
+          <ActiveRideResumeGate navRef={navRef} navigationReady={navigationReady} />
           <PassengerRateDriverGate />
         </>
       ) : null}

@@ -1813,6 +1813,18 @@ export function HomeScreen() {
               </View>
             </View>
 
+            {activeHomeRideId ? (
+              <TouchableOpacity
+                style={[styles.activeRideShortcutBtn, styles.driverActiveRideBtn]}
+                onPress={() => parentNav?.navigate('RideDetail', { rideId: activeHomeRideId })}
+                accessibilityRole="button"
+                accessibilityLabel="Abrir viaje en curso"
+              >
+                <Ionicons name="navigate-circle" size={22} color="#fff" />
+                <Text style={styles.driverActiveRideBtnText}>Viaje en curso — continuar</Text>
+              </TouchableOpacity>
+            ) : null}
+
             <TouchableOpacity
               onPress={goDriverNewRoutePublish}
               activeOpacity={0.92}
@@ -1825,18 +1837,6 @@ export function HomeScreen() {
                 <Text style={styles.driverPrimaryGradientLabel}>Publicar nueva ruta</Text>
               </View>
             </TouchableOpacity>
-
-            {activeHomeRideId ? (
-              <TouchableOpacity
-                style={styles.driverActiveRideBtn}
-                onPress={() => parentNav?.navigate('RideDetail', { rideId: activeHomeRideId })}
-                accessibilityRole="button"
-                accessibilityLabel="Abrir viaje en curso"
-              >
-                <Ionicons name="navigate-circle-outline" size={20} color="#fff" />
-                <Text style={styles.driverActiveRideBtnText}>Ir al viaje en curso</Text>
-              </TouchableOpacity>
-            ) : null}
 
             {driverTemplateRows.length > 0 ? (
               <View style={styles.driverTemplatesCard}>
@@ -2213,22 +2213,25 @@ const styles = StyleSheet.create({
     fontFamily: appBrand.fonts.semibold,
   },
   driverActiveRideBtn: {
-    marginBottom: 16,
+    marginBottom: 14,
     borderRadius: 16,
-    paddingVertical: 14,
+    paddingVertical: 16,
     paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: appBrand.colors.primary,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    backgroundColor: '#ea580c',
+    borderWidth: 2,
+    borderColor: '#fff',
+    shadowColor: '#c2410c',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
   },
-  driverActiveRideBtnText: { color: '#fff', fontSize: 15, fontWeight: '800', fontFamily: appBrand.fonts.semibold },
+  driverActiveRideBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+    fontFamily: appBrand.fonts.semibold,
+  },
   driverTemplatesCard: {
     backgroundColor: '#fff',
     borderRadius: 20,
@@ -2534,7 +2537,9 @@ const styles = StyleSheet.create({
   quickBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', fontFamily: appBrand.fonts.semibold },
   activeRideShortcutBtnPassenger: {
     marginBottom: 14,
-    backgroundColor: appBrand.colors.primary,
+    backgroundColor: '#ea580c',
+    borderWidth: 2,
+    borderColor: '#fff',
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 14,

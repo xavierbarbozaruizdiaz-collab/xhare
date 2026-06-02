@@ -5,10 +5,17 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import type { NavigationContainerRef } from '@react-navigation/native';
+import { CommonActions, type NavigationContainerRef } from '@react-navigation/native';
 import { useAuth } from '../auth/AuthContext';
 import { findActiveEnRouteRideIdForUser } from '../lib/activeRideResume';
 import type { RootStackParamList } from '../navigation/types';
+
+const NAV_RETRY_MS = 120;
+const NAV_MAX_ATTEMPTS = 12;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function notificationTargetsRide(data: Record<string, unknown>): string | null {
   if (typeof data?.rideId === 'string' && data.rideId.trim()) return data.rideId.trim();
@@ -33,26 +40,35 @@ function getFocusedRideDetailId(navRef: NavigationContainerRef<RootStackParamLis
 
 type Props = {
   navRef: NavigationContainerRef<RootStackParamList>;
+  navigationReady: boolean;
 };
 
-export function ActiveRideResumeGate({ navRef }: Props) {
+export function ActiveRideResumeGate({ navRef, navigationReady }: Props) {
   const { session } = useAuth();
   const busyRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const navigateToRide = useCallback(
-    (rideId: string) => {
+    (rideId: string): boolean => {
       if (!navRef.isReady?.()) return false;
       const current = getFocusedRideDetailId(navRef);
       if (current === rideId) return true;
-      navRef.navigate('Main', { screen: 'RideDetail', params: { rideId } });
+      navRef.dispatch(
+        CommonActions.navigate({
+          name: 'Main',
+          params: {
+            screen: 'RideDetail',
+            params: { rideId },
+          },
+        })
+      );
       return true;
     },
     [navRef]
   );
 
   const resumeActiveRideIfAny = useCallback(async () => {
-    if (!session?.id || busyRef.current) return;
+    if (!session?.id || busyRef.current || !navigationReady) return;
     if (!navRef.isReady?.()) return;
 
     busyRef.current = true;
@@ -62,50 +78,52 @@ export function ActiveRideResumeGate({ navRef }: Props) {
         const data = (lastNotif.notification.request.content.data as Record<string, unknown>) ?? {};
         const rideFromNotif = notificationTargetsRide(data);
         if (rideFromNotif) {
-          navigateToRide(rideFromNotif);
+          for (let i = 0; i < NAV_MAX_ATTEMPTS; i++) {
+            if (!navRef.isReady?.()) {
+              await sleep(NAV_RETRY_MS);
+              continue;
+            }
+            if (navigateToRide(rideFromNotif)) return;
+            await sleep(NAV_RETRY_MS);
+          }
           return;
         }
       }
 
       const rideId = await findActiveEnRouteRideIdForUser(session.id);
-      if (rideId) navigateToRide(rideId);
+      if (!rideId) return;
+
+      for (let i = 0; i < NAV_MAX_ATTEMPTS; i++) {
+        if (!navRef.isReady?.()) {
+          await sleep(NAV_RETRY_MS);
+          continue;
+        }
+        navigateToRide(rideId);
+        if (getFocusedRideDetailId(navRef) === rideId) return;
+        await sleep(NAV_RETRY_MS);
+      }
     } finally {
       busyRef.current = false;
     }
-  }, [session?.id, navRef, navigateToRide]);
+  }, [session?.id, navRef, navigationReady, navigateToRide]);
 
   useEffect(() => {
-    if (!session?.id) return;
-
-    const runWhenReady = () => {
-      if (!navRef.isReady?.()) {
-        setTimeout(runWhenReady, 120);
-        return;
-      }
-      void resumeActiveRideIfAny();
-    };
-    runWhenReady();
-  }, [session?.id, navRef, resumeActiveRideIfAny]);
+    if (!session?.id || !navigationReady) return;
+    void resumeActiveRideIfAny();
+  }, [session?.id, navigationReady, resumeActiveRideIfAny]);
 
   useEffect(() => {
-    if (!session?.id) return;
+    if (!session?.id || !navigationReady) return;
 
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
       const prev = appStateRef.current;
       appStateRef.current = next;
       if (prev.match(/inactive|background/) && next === 'active') {
-        const run = () => {
-          if (!navRef.isReady?.()) {
-            setTimeout(run, 120);
-            return;
-          }
-          void resumeActiveRideIfAny();
-        };
-        run();
+        void resumeActiveRideIfAny();
       }
     });
     return () => sub.remove();
-  }, [session?.id, navRef, resumeActiveRideIfAny]);
+  }, [session?.id, navigationReady, resumeActiveRideIfAny]);
 
   return null;
 }
