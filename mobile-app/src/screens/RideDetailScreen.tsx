@@ -15,6 +15,8 @@ import {
   Platform,
   Image,
   Share,
+  AppState,
+  type AppStateStatus,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -41,8 +43,18 @@ import {
   type OrderedMapVisitRow,
 } from '../lib/buildMasterBookRidePolyline';
 import { filterOperationalDriverStops } from '../lib/rideStopKinds';
-import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
+import {
+  RideDetailRouteMap,
+  type PassengerBookingMapGeo,
+  type PassengerLiveMapMarker,
+} from '../components/RideDetailRouteMap';
+import { passengerDisplayFirstName, passengerLiveMapPoint } from '../lib/passengerLiveMapPoint';
+import { sendPassengerRideLocation } from '../backend/locationApi';
 import { DriverEnRouteTripView } from '../components/DriverEnRouteTripView';
+import {
+  PassengerActiveTripView,
+  passengerHeaderChipForBooking,
+} from '../components/PassengerActiveTripView';
 import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
 import { getSharedTripTrackingUrl } from '../lib/publicWeb';
 import {
@@ -76,6 +88,12 @@ import {
   stopDriverTrackingInBackground,
   isDriverTrackingActive,
 } from '../background/driverTrackingService';
+import {
+  buildDriverVisitStopKey,
+  clearDriverArriveAnchorStorage,
+  setDriverDetailForegroundRide,
+  syncDriverArriveAnchorStorage,
+} from '../background/driverArriveAnchorStorage';
 type Nav = NativeStackNavigationProp<MainStackParamList, 'RideDetail'>;
 type ScreenRoute = RouteProp<MainStackParamList, 'RideDetail'>;
 
@@ -124,6 +142,9 @@ type DriverBookingStop = {
   pickup_lng: number | null;
   dropoff_lat: number | null;
   dropoff_lng: number | null;
+  passenger_lat: number | null;
+  passenger_lng: number | null;
+  passenger_location_updated_at: string | null;
 };
 
 function bookingPickupPoint(b: DriverBookingStop): Point | null {
@@ -463,6 +484,7 @@ export function RideDetailScreen() {
   const [driverBookingPins, setDriverBookingPins] = useState<Array<{ pickup: Point; dropoff: Point }>>([]);
   const [coPassengerPickups, setCoPassengerPickups] = useState<Point[]>([]);
   const [coPassengerDropoffs, setCoPassengerDropoffs] = useState<Point[]>([]);
+  const [passengerDisplayNames, setPassengerDisplayNames] = useState<Record<string, string>>({});
   const [driverRideBookings, setDriverRideBookings] = useState<DriverBookingStop[]>([]);
   const [driverLiveLocalGps, setDriverLiveLocalGps] = useState<Point | null>(null);
   const [bookingDetailsExpanded, setBookingDetailsExpanded] = useState(false);
@@ -681,7 +703,7 @@ export function RideDetailScreen() {
     const { data, error } = await supabase
       .from('bookings')
       .select(
-        'id, booking_code, passenger_id, seats_count, status, pickup_stop_id, dropoff_stop_id, pickup_label, dropoff_label, price_paid, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng'
+        'id, booking_code, passenger_id, seats_count, status, pickup_stop_id, dropoff_stop_id, pickup_label, dropoff_label, price_paid, payment_status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, passenger_lat, passenger_lng, passenger_location_updated_at'
       )
       .eq('ride_id', rideId)
       .neq('status', 'cancelled');
@@ -703,8 +725,32 @@ export function RideDetailScreen() {
         pickup_lng: row.pickup_lng != null ? Number(row.pickup_lng) : null,
         dropoff_lat: row.dropoff_lat != null ? Number(row.dropoff_lat) : null,
         dropoff_lng: row.dropoff_lng != null ? Number(row.dropoff_lng) : null,
+        passenger_lat: row.passenger_lat != null ? Number(row.passenger_lat) : null,
+        passenger_lng: row.passenger_lng != null ? Number(row.passenger_lng) : null,
+        passenger_location_updated_at:
+          row.passenger_location_updated_at != null ? String(row.passenger_location_updated_at) : null,
       }))
     );
+    const passengerIds = [
+      ...new Set(
+        (data ?? [])
+          .map((row: { passenger_id?: unknown }) => String(row.passenger_id ?? '').trim())
+          .filter(Boolean)
+      ),
+    ];
+    if (passengerIds.length > 0) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', passengerIds);
+      const nameMap: Record<string, string> = {};
+      (profs ?? []).forEach((p: { id: string; full_name?: string | null }) => {
+        nameMap[String(p.id)] = passengerDisplayFirstName(p.full_name);
+      });
+      setPassengerDisplayNames(nameMap);
+    } else {
+      setPassengerDisplayNames({});
+    }
     const pins = (data ?? [])
       .map((row: { pickup_lat?: number; pickup_lng?: number; dropoff_lat?: number; dropoff_lng?: number }) => ({
         pickup: { lat: Number(row.pickup_lat), lng: Number(row.pickup_lng) },
@@ -1072,6 +1118,48 @@ export function RideDetailScreen() {
     refetchPassengerBoardingEvents,
   ]);
 
+  /** Pasajero: comparte GPS mientras espera la subida (visible solo para el conductor en esa parada). */
+  useEffect(() => {
+    if (!rideId || !passengerBooking || passengerTripEnded) return;
+    if (!ride || String(ride.driver_id) === String(session?.id ?? '')) return;
+    if (String(ride.status ?? '') !== 'en_route') return;
+    const bid = passengerBooking.id;
+    if (
+      boardingEvents.some(
+        (e) => String(e.booking_id) === bid && String(e.event_type) === 'boarded'
+      )
+    ) {
+      return;
+    }
+
+    const sendOnce = async () => {
+      const {
+        data: { session: authSession },
+      } = await supabase.auth.getSession();
+      const token = authSession?.access_token?.trim();
+      if (!token) return;
+      const perm = await requestLocationPermission();
+      if (!perm) return;
+      try {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        await sendPassengerRideLocation(rideId, loc.coords.latitude, loc.coords.longitude, token);
+      } catch {
+        /* sin GPS puntual */
+      }
+    };
+
+    void sendOnce();
+    const t = setInterval(() => void sendOnce(), 25_000);
+    return () => clearInterval(t);
+  }, [
+    rideId,
+    ride,
+    session?.id,
+    passengerBooking?.id,
+    passengerTripEnded,
+    boardingEvents,
+  ]);
+
   useEffect(() => {
     if (!ride || !session?.id) return;
     if (String(ride.driver_id) !== String(session.id)) return;
@@ -1339,6 +1427,88 @@ export function RideDetailScreen() {
     pickupsOptionalAtArrive.length > 0 ||
     dropoffsOptionalAtArrive.length > 0;
 
+  /** Solo la subida activa del recorrido: GPS en vivo del pasajero que estás yendo a recoger. */
+  const activePickupLiveMarkers = useMemo((): PassengerLiveMapMarker[] => {
+    if (!ride || !session?.id) return [];
+    if (String(ride.driver_id) !== String(session.id)) return [];
+    if (String(ride.status ?? '') !== 'en_route') return [];
+    if (visitKind !== 'pickup') return [];
+    const markers: PassengerLiveMapMarker[] = [];
+    for (const b of primaryArrivePickups) {
+      if (pickupDecisionDone(boardingEvents, b.id)) continue;
+      const pt = passengerLiveMapPoint(b);
+      if (!pt) continue;
+      markers.push({
+        bookingId: b.id,
+        lat: pt.lat,
+        lng: pt.lng,
+        label: passengerDisplayNames[b.passenger_id] ?? 'Pasajero',
+      });
+    }
+    return markers;
+  }, [
+    ride,
+    session?.id,
+    visitKind,
+    primaryArrivePickups,
+    boardingEvents,
+    passengerDisplayNames,
+  ]);
+
+  /** Próximo punto de Llegué en AsyncStorage para geofence con Waze/Maps en primer plano. */
+  useEffect(() => {
+    const own = Boolean(session?.id && ride && String(ride.driver_id) === String(session.id));
+    const st = String(ride?.status ?? '');
+    if (!own || st !== 'en_route' || !rideId) {
+      void clearDriverArriveAnchorStorage();
+      return;
+    }
+    if (
+      Boolean(ride?.awaiting_stop_confirmation) ||
+      currentVisitIndex < 0 ||
+      !currentVisitRow ||
+      !orderedNavigationTarget ||
+      !Number.isFinite(orderedNavigationTarget.lat) ||
+      !Number.isFinite(orderedNavigationTarget.lng)
+    ) {
+      void clearDriverArriveAnchorStorage();
+      return;
+    }
+    void syncDriverArriveAnchorStorage({
+      rideId,
+      lat: orderedNavigationTarget.lat,
+      lng: orderedNavigationTarget.lng,
+      stopKey: buildDriverVisitStopKey(rideId, currentVisitRow),
+      label: currentVisitRow.title?.trim() || undefined,
+    });
+  }, [
+    session?.id,
+    ride,
+    rideId,
+    currentVisitIndex,
+    currentVisitRow,
+    orderedNavigationTarget,
+  ]);
+
+  /** Si la app conductor está activa en Detalle, no duplicar aviso de geofence. */
+  useEffect(() => {
+    const own = Boolean(session?.id && ride && String(ride.driver_id) === String(session.id));
+    if (!own || String(ride?.status ?? '') !== 'en_route' || !rideId) {
+      void setDriverDetailForegroundRide(null);
+      return;
+    }
+    const syncForeground = (state: AppStateStatus) => {
+      if (state === 'active') void setDriverDetailForegroundRide(rideId);
+      else void setDriverDetailForegroundRide(null);
+    };
+    syncForeground(AppState.currentState);
+    const sub = AppState.addEventListener('change', syncForeground);
+    return () => {
+      sub.remove();
+      void setDriverDetailForegroundRide(null);
+    };
+  }, [session?.id, ride, rideId]);
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -1374,6 +1544,7 @@ export function RideDetailScreen() {
   const status = String(ride.status ?? '');
   /** Conductor con viaje en curso: UI más compacta (mapa + acciones; sin textos repetidos de publicación). */
   const driverUiEnRoute = isOwn && status === 'en_route';
+  const passengerUiActive = Boolean(!isOwn && passengerBooking && !passengerTripEnded);
   const depIso = ride.departure_time ? String(ride.departure_time) : '';
   const priceSeat = Number(ride.price_per_seat ?? 0);
   const description = ride.description != null ? String(ride.description).trim() : '';
@@ -1409,6 +1580,17 @@ export function RideDetailScreen() {
     const avgCitySpeedKmh = 28;
     return Math.max(1, Math.round((meters / 1000 / avgCitySpeedKmh) * 60));
   })();
+  const passengerBoarded = useMemo(() => {
+    if (!passengerBooking) return false;
+    const bid = passengerBooking.id;
+    return boardingEvents.some(
+      (e) => String(e.booking_id) === bid && String(e.event_type) === 'boarded'
+    );
+  }, [passengerBooking, boardingEvents]);
+  const passengerEtaForBadge = useMemo(() => {
+    if (!passengerUiActive || passengerBoarded || status !== 'en_route') return null;
+    return passengerEtaToPickupMin;
+  }, [passengerUiActive, passengerBoarded, status, passengerEtaToPickupMin]);
   const allVisitsDone =
     mapVisitOrderRows.length > 0 && mapVisitProgressList.every((p) => p === 'done');
   const canCompleteByStops = mapVisitOrderRows.length === 0 || allVisitsDone;
@@ -1442,10 +1624,10 @@ export function RideDetailScreen() {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerShown: !driverUiEnRoute,
+      headerShown: !driverUiEnRoute && !passengerUiActive,
       title: 'Detalle del viaje',
     });
-  }, [navigation, driverUiEnRoute]);
+  }, [navigation, driverUiEnRoute, passengerUiActive]);
 
   const openExternalNavigation = async (lat: number, lng: number) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -1645,6 +1827,7 @@ export function RideDetailScreen() {
               driverEnRouteNavFocus={orderedNavigationTarget}
               hidePolylineSourceNote
               driverEnRouteVisual
+              passengerLiveMarkers={activePickupLiveMarkers}
               fillHeight
             />
           }
@@ -1671,6 +1854,68 @@ export function RideDetailScreen() {
           completing={statusUpdating}
           onComplete={() => runStatusUpdate('completed')}
           arriveGateM={ARRIVE_GATE_M}
+        />
+      ) : passengerUiActive && passengerBooking ? (
+        <PassengerActiveTripView
+          onBack={() => navigation.goBack()}
+          headerChip={passengerHeaderChipForBooking(
+            passengerBooking.status,
+            status,
+            passengerTripEnded
+          )}
+          mapNode={
+            <RideDetailRouteMap
+              ride={ride}
+              rideStops={rideStops}
+              resolvedRoute={resolvedRideRoute}
+              resolvedRouteLoading={resolvedRideRoute.loading}
+              passengerBookingGeo={passengerMapGeo}
+              coPassengerPickups={mapCoPassengerPickups}
+              coPassengerDropoffs={mapCoPassengerDropoffs}
+              driverLocation={driverLocationForMap}
+              hidePolylineSourceNote
+              passengerCompactVisual
+              passengerEtaMinutes={passengerEtaForBadge}
+            />
+          }
+          ticketCode={passengerBooking.booking_code}
+          totalPaid={passengerBooking.price_paid}
+          seatsCount={passengerBooking.seats_count}
+          paymentPaid={String(passengerBooking.payment_status ?? '').toLowerCase() === 'paid'}
+          driver={
+            driver
+              ? {
+                  fullName: String(driver.full_name ?? 'Conductor'),
+                  avatarUrl: driver.avatar_url ?? null,
+                  ratingAverage: driver.rating_average ?? null,
+                  ratingCount: driver.rating_count ?? null,
+                  vehicleModel: vehicleLine,
+                  availableSeats: available,
+                  totalSeats,
+                }
+              : null
+          }
+          canMessage={passengerDriverContactInCard.show}
+          messageEnabled={passengerDriverContactInCard.show && passengerDriverContactInCard.enabled}
+          messageHint={
+            passengerDriverContactInCard.show && !passengerDriverContactInCard.enabled
+              ? passengerDriverContactInCard.hintDisabled
+              : undefined
+          }
+          contactingDriver={contactingDriver}
+          onMessage={() => void handleContactDriver()}
+          pickupLabel={passengerBooking.pickup_label}
+          dropoffLabel={passengerBooking.dropoff_label}
+          canShareTracking={canPassengerShareSafetyTracking(
+            passengerBooking,
+            status,
+            ride.share_code,
+            boardingEvents
+          )}
+          onShareTracking={() => void handleSharePassengerSafetyTracking()}
+          canCancelBooking={canPassengerCancelReservation(passengerBooking.status, status)}
+          cancellingBooking={cancellingBooking}
+          onCancelBooking={handleCancelPassengerBooking}
         />
       ) : (
       <ScrollView

@@ -3,6 +3,7 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { sendRideLocation } from '../backend/locationApi';
 import { resolveApiAccessToken } from '../backend/api';
+import { maybeAlertDriverArriveGeofence } from './driverArriveGeofenceAlert';
 
 export const TRACK_DRIVER_LOCATION_TASK = 'TRACK_DRIVER_LOCATION';
 const TRACKING_RIDE_ID_KEY = '@xhare/tracking_ride_id';
@@ -35,6 +36,16 @@ if (!(TaskManager as unknown as { isTaskDefined?: (name: string) => boolean }).i
     const last = locations[locations.length - 1];
     if (!last?.coords) return;
 
+    const lat = Number(last.coords.latitude);
+    const lng = Number(last.coords.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    try {
+      await maybeAlertDriverArriveGeofence(rideId, lat, lng);
+    } catch {
+      /* no bloquear envío de ubicación */
+    }
+
     const nowMs = Date.now();
     if (!(await shouldSendNow(nowMs))) return;
 
@@ -43,8 +54,8 @@ if (!(TaskManager as unknown as { isTaskDefined?: (name: string) => boolean }).i
 
     const ok = await sendRideLocation(
       rideId,
-      Number(last.coords.latitude),
-      Number(last.coords.longitude),
+      lat,
+      lng,
       token
     );
     if (ok) await markSent(nowMs);

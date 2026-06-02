@@ -74,6 +74,26 @@ const DRIVER_NEXT_STOP_ORANGE = '#ff6b35';
 
 /** Tamaño fijo en pantalla: el prop `image` del Marker escala mal al alejar en Android/Google Maps. */
 const DRIVER_BUS_MARKER_PX = 40;
+export type PassengerLiveMapMarker = {
+  lat: number;
+  lng: number;
+  label: string;
+  bookingId: string;
+};
+
+function PassengerLiveLocationMarker({ label }: { label: string }) {
+  return (
+    <View style={styles.passengerLiveMarkerWrap} collapsable={false}>
+      <View style={styles.passengerLiveMarkerCircle}>
+        <Ionicons name="person" size={16} color="#fff" />
+      </View>
+      <Text style={styles.passengerLiveMarkerLabel} numberOfLines={1}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
 function DriverMinibusMapMarker({ flipX }: { flipX?: boolean }) {
   return (
     <View
@@ -127,6 +147,12 @@ type Props = {
   hidePolylineSourceNote?: boolean;
   /** Mapa a pantalla parcial: sin título, ruta verde punteada, pin “PRÓXIMA PARADA”. */
   driverEnRouteVisual?: boolean;
+  /** Pasajero: mapa compacto con badge ETA y leyenda. */
+  passengerCompactVisual?: boolean;
+  /** Minutos ETA al punto de subida (solo pasajero compacto). */
+  passengerEtaMinutes?: number | null;
+  /** Conductor: GPS en vivo del pasajero de la subida actual (solo ese grupo). */
+  passengerLiveMarkers?: PassengerLiveMapMarker[];
   /** Ocupa el contenedor padre (altura flexible). */
   fillHeight?: boolean;
 };
@@ -177,6 +203,9 @@ export function RideDetailRouteMap({
   driverEnRouteNavFocus = null,
   hidePolylineSourceNote = false,
   driverEnRouteVisual = false,
+  passengerCompactVisual = false,
+  passengerEtaMinutes = null,
+  passengerLiveMarkers = [],
   fillHeight = false,
 }: Props) {
   const polyline = resolvedRoute.points;
@@ -382,6 +411,9 @@ export function RideDetailRouteMap({
     });
     coPassengerPickups.forEach((p) => pts.push(p));
     coPassengerDropoffs.forEach((p) => pts.push(p));
+    passengerLiveMarkers.forEach((m) => {
+      if (isPlausibleGps(m)) pts.push({ lat: m.lat, lng: m.lng });
+    });
     /** Pin del conductor se dibuja aparte; no incluir en el bbox evita que cada actualización de GPS mueva la cámara. */
     if (pts.length >= 2) return pts;
     if (displayBase.length >= 2) return displayBase;
@@ -393,6 +425,7 @@ export function RideDetailRouteMap({
     otherBookingsGeo,
     coPassengerPickups,
     coPassengerDropoffs,
+    passengerLiveMarkers,
     markerCoords,
   ]);
 
@@ -613,16 +646,42 @@ export function RideDetailRouteMap({
   const routeStrokeWidth = driverEnRouteVisual ? 4 : baseLineWidth;
   const routeDash = driverEnRouteVisual ? ([8, 6] as number[]) : undefined;
 
+  const showPassengerEta =
+    passengerCompactVisual &&
+    passengerEtaMinutes != null &&
+    Number.isFinite(passengerEtaMinutes) &&
+    passengerEtaMinutes > 0;
+
   return (
-    <View style={[styles.block, fillHeight && styles.blockFill]}>
-      {driverEnRouteVisual ? null : <Text style={styles.sectionLabel}>Mapa del recorrido</Text>}
+    <View style={[styles.block, fillHeight && styles.blockFill, passengerCompactVisual && styles.blockCompact]}>
+      {driverEnRouteVisual || passengerCompactVisual ? null : (
+        <Text style={styles.sectionLabel}>Mapa del recorrido</Text>
+      )}
       <View
         style={[
           styles.mapShell,
-          fillHeight ? styles.mapShellFill : { height },
+          fillHeight ? styles.mapShellFill : passengerCompactVisual ? styles.mapShellCompact : { height },
         ]}
         collapsable={Platform.OS === 'android' ? false : undefined}
       >
+        {showPassengerEta ? (
+          <View style={styles.passengerEtaBadge} pointerEvents="none">
+            <Ionicons name="time-outline" size={14} color="#fff" />
+            <Text style={styles.passengerEtaText}>Llega en ~{passengerEtaMinutes} min</Text>
+          </View>
+        ) : null}
+        {passengerCompactVisual ? (
+          <View style={styles.passengerMapLegend} pointerEvents="none">
+            <View style={styles.legendItem}>
+              <View style={[styles.legendLine, styles.legendLineShared]} />
+              <Text style={styles.legendText}>Compartido</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendLine, styles.legendLineYours]} />
+              <Text style={styles.legendText}>Tu tramo</Text>
+            </View>
+          </View>
+        ) : null}
         <MapView
           key={mapViewKey}
           ref={mapRef}
@@ -776,6 +835,20 @@ export function RideDetailRouteMap({
               <View style={styles.otherPassengerPin} collapsable={false} />
             </Marker>
           ))}
+          {passengerLiveMarkers.map((m) =>
+            isPlausibleGps(m) ? (
+              <Marker
+                key={`plive-${m.bookingId}`}
+                coordinate={{ latitude: m.lat, longitude: m.lng }}
+                anchor={{ x: 0.5, y: 1 }}
+                zIndex={125}
+                tracksViewChanges={false}
+                title={`Ubicación de ${m.label}`}
+              >
+                <PassengerLiveLocationMarker label={m.label} />
+              </Marker>
+            ) : null
+          )}
           {driverEnRouteNavFocus && isPlausibleGps(driverEnRouteNavFocus) ? (
             <Marker
               coordinate={{ latitude: driverEnRouteNavFocus.lat, longitude: driverEnRouteNavFocus.lng }}
@@ -817,7 +890,7 @@ export function RideDetailRouteMap({
           de pasajeros. La navegación externa sí puede incluir esas paradas intermedias.
         </Text>
       ) : null}
-      {showCoPassengerPins && passengerBookingGeo ? (
+      {showCoPassengerPins && passengerBookingGeo && !passengerCompactVisual ? (
         <Text style={styles.noteMuted}>
           Gris: recorrido compartido (conductor + reservas). Verde: solo tu tramo por calle entre subida y bajada. Tus
           paradas siguen en azul y violeta.
@@ -840,7 +913,41 @@ export function RideDetailRouteMap({
 const styles = StyleSheet.create({
   block: { marginBottom: 8 },
   blockFill: { flex: 1, marginBottom: 0 },
+  blockCompact: { flex: 1, marginBottom: 0 },
   mapShellFill: { flex: 1, minHeight: 120 },
+  mapShellCompact: { flex: 1, height: 220 },
+  passengerEtaBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    zIndex: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: DRIVER_MAP_PRIMARY,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  passengerEtaText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  passengerMapLegend: {
+    position: 'absolute',
+    left: 10,
+    bottom: 10,
+    zIndex: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendLine: { width: 18, height: 3, borderRadius: 2 },
+  legendLineShared: { backgroundColor: SLATE },
+  legendLineYours: { backgroundColor: GREEN },
+  legendText: { fontSize: 10, color: '#374151', fontWeight: '600' },
   sectionLabel: {
     fontSize: 11,
     color: '#6b7280',
@@ -980,6 +1087,33 @@ const styles = StyleSheet.create({
       },
       android: { elevation: 5 },
     }),
+  },
+  passengerLiveMarkerWrap: { alignItems: 'center', maxWidth: 88 },
+  passengerLiveMarkerCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: PASSENGER_AB,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.25,
+        shadowRadius: 3,
+        shadowOffset: { width: 0, height: 1 },
+      },
+      android: { elevation: 4 },
+    }),
+  },
+  passengerLiveMarkerLabel: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '700',
+    color: PASSENGER_AB,
+    textAlign: 'center',
   },
   nextStopWrap: { alignItems: 'center' },
   nextStopPill: {

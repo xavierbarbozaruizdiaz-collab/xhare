@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { requestBackgroundLocationPermission } from '../permissions';
 import { TRACK_DRIVER_LOCATION_TASK } from './driverLocationTask';
+import { clearDriverArriveAnchorStorage, setDriverDetailForegroundRide } from './driverArriveAnchorStorage';
+import { ensureArriveGateNotificationReady } from './driverArriveGeofenceAlert';
 
 const TRACKING_RIDE_ID_KEY = '@xhare/tracking_ride_id';
 const LAST_SENT_AT_MS_KEY = '@xhare/tracking_last_sent_ms';
@@ -24,6 +26,7 @@ export async function startDriverTrackingInBackground(rideId: string): Promise<b
     const prevRideId = (await AsyncStorage.getItem(TRACKING_RIDE_ID_KEY))?.trim() ?? '';
     await AsyncStorage.setItem(TRACKING_RIDE_ID_KEY, id);
     await AsyncStorage.removeItem(LAST_SENT_AT_MS_KEY);
+    void ensureArriveGateNotificationReady();
 
     const already = await isDriverTrackingActive();
     if (already && prevRideId && prevRideId !== id) {
@@ -62,6 +65,8 @@ export async function stopDriverTrackingInBackground(): Promise<void> {
   } finally {
     await AsyncStorage.removeItem(TRACKING_RIDE_ID_KEY);
     await AsyncStorage.removeItem(LAST_SENT_AT_MS_KEY);
+    await clearDriverArriveAnchorStorage();
+    await setDriverDetailForegroundRide(null);
   }
 }
 

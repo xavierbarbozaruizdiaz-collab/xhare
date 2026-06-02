@@ -40,3 +40,41 @@ export async function sendRideLocation(
   if (first) return true;
   return sendOnce();
 }
+
+/** Pasajero en espera de subida: comparte GPS con el conductor (misma base URL que el conductor). */
+export async function sendPassengerRideLocation(
+  rideId: string,
+  lat: number,
+  lng: number,
+  accessToken: string
+): Promise<boolean> {
+  const base = env.apiBaseUrl?.trim();
+  if (!base) return false;
+  const url = `${base.replace(/\/$/, '')}/api/rides/${rideId}/passenger-location`;
+  const payload = JSON.stringify({ lat, lng });
+
+  const sendOnce = async (): Promise<boolean> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9_000);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: payload,
+        signal: controller.signal,
+      });
+      return res.ok || res.status === 429;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  const first = await sendOnce();
+  if (first) return true;
+  return sendOnce();
+}
