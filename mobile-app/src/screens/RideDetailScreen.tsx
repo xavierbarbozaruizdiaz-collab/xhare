@@ -353,6 +353,21 @@ function canPassengerCancelReservation(bookingStatus: string, rideStatus: string
   return rs === 'published' || rs === 'booked';
 }
 
+/** Pasajero ya bajó o la reserva cerró: solo resumen (tramo + pago), sin mapa en vivo ni contacto. */
+function isPassengerTripEnded(
+  booking: PassengerBookingSummary | null,
+  boardingEvents: BoardingEventRow[]
+): boolean {
+  if (!booking) return false;
+  const bs = String(booking.status ?? '');
+  if (bs === 'completed') return true;
+  if (bs === 'cancelled') return false;
+  const bid = booking.id;
+  return boardingEvents.some(
+    (e) => String(e.booking_id) === bid && String(e.event_type) === 'dropped_off'
+  );
+}
+
 /** Enlace de solo lectura para familiares (misma idea que otras apps de movilidad). */
 function canPassengerShareSafetyTracking(
   booking: PassengerBookingSummary | null,
@@ -1010,6 +1025,11 @@ export function RideDetailScreen() {
     void Share.share(Platform.OS === 'ios' ? { message, url } : { message });
   }, [ride?.share_code, passengerBooking?.id]);
 
+  const passengerTripEnded = useMemo(
+    () => isPassengerTripEnded(passengerBooking, boardingEvents),
+    [passengerBooking, boardingEvents]
+  );
+
   /** Poll de UI: pasajero con reserva ve avances y pin en mapa sin salir de pantalla. */
   useEffect(() => {
     if (!ride) return;
@@ -1020,7 +1040,7 @@ export function RideDetailScreen() {
     );
     const driverNeedsTick = isDriver;
     const passengerNeedsTick =
-      isPassengerWithBooking && st !== 'completed' && st !== 'cancelled';
+      isPassengerWithBooking && st !== 'completed' && st !== 'cancelled' && !passengerTripEnded;
     if (!driverNeedsTick && !passengerNeedsTick) return;
 
     const t = setInterval(() => {
@@ -1043,6 +1063,7 @@ export function RideDetailScreen() {
     ride,
     session?.id,
     passengerBooking?.id,
+    passengerTripEnded,
     load,
     loadPassengerBooking,
     refetchDriverBookingPins,
@@ -1216,7 +1237,7 @@ export function RideDetailScreen() {
   const canContactDriver = useMemo(() => {
     if (!ride) return false;
     const isOwnPassengerView = Boolean(session?.id && ride.driver_id === session.id);
-    if (isOwnPassengerView || !passengerBooking) return false;
+    if (isOwnPassengerView || !passengerBooking || passengerTripEnded) return false;
     const st = String(ride.status ?? '');
     if (st !== 'published' && st !== 'booked' && st !== 'en_route') return false;
     if (st === 'en_route') return true;
@@ -1225,7 +1246,7 @@ export function RideDetailScreen() {
     const nowMs = Date.now();
     const contactWindowStartMs = departureAt ? departureAt.getTime() - 20 * 60 * 1000 : null;
     return contactWindowStartMs != null && nowMs >= contactWindowStartMs;
-  }, [ride, passengerBooking, session?.id]);
+  }, [ride, passengerBooking, session?.id, passengerTripEnded]);
 
   const handleContactDriver = useCallback(async () => {
     if (!canContactDriver || contactingDriver) return;
@@ -1246,7 +1267,7 @@ export function RideDetailScreen() {
   const passengerDriverContactInCard = useMemo(() => {
     if (!ride) return { show: false as const };
     const isOwnPassengerView = Boolean(session?.id && ride.driver_id === session.id);
-    if (isOwnPassengerView || !passengerBooking) return { show: false as const };
+    if (isOwnPassengerView || !passengerBooking || passengerTripEnded) return { show: false as const };
     const bst = String(passengerBooking.status ?? '');
     if (bst !== 'pending' && bst !== 'confirmed') return { show: false as const };
     const st = String(ride.status ?? '');
@@ -1256,7 +1277,7 @@ export function RideDetailScreen() {
       enabled: canContactDriver,
       hintDisabled: 'Se habilita 20 minutos antes de iniciar el viaje.',
     };
-  }, [ride, passengerBooking, session?.id, canContactDriver]);
+  }, [ride, passengerBooking, session?.id, canContactDriver, passengerTripEnded]);
 
   const visitKind: ArriveVisitKind = currentVisitRow?.kind ?? 'published';
   const visitBookingId = currentVisitRow?.bookingId;
@@ -1827,130 +1848,178 @@ export function RideDetailScreen() {
               {String(ride.origin_label ?? 'Origen')} → {String(ride.destination_label ?? 'Destino')}
             </Text>
           ) : null}
-          <RideDetailRouteMap
-            ride={ride}
-            rideStops={rideStops}
-            resolvedRoute={resolvedRideRoute}
-            resolvedRouteLoading={resolvedRideRoute.loading}
-            height={300}
-            passengerBookingGeo={passengerMapGeo}
-            coPassengerPickups={mapCoPassengerPickups}
-            coPassengerDropoffs={mapCoPassengerDropoffs}
-            driverLocation={driverLocationForMap}
-          />
-          {passengerBooking && passengerEtaToPickupMin != null ? (
-            <Text style={styles.passengerEtaHint}>
-              El conductor llega en aprox. {passengerEtaToPickupMin} min a tu punto de subida.
-            </Text>
-          ) : null}
-          {passengerBooking ? (
-            <View style={styles.bookingCard}>
+          {passengerBooking && passengerTripEnded ? (
+            <>
+              <View style={styles.passengerEndedBanner}>
+                <Text style={styles.passengerEndedTitle}>Tu tramo finalizó</Text>
+                <Text style={styles.passengerEndedSubtitle}>
+                  Ya bajaste del minibús. Acá tenés el recorrido que hiciste y lo que pagaste.
+                </Text>
+              </View>
               {formatBookingTicketCode(passengerBooking.booking_code) ? (
-                <View style={styles.miTicketBox}>
-                  <Text style={styles.miTicketLabel}>Mi ticket</Text>
-                  <Text style={styles.miTicketCode}>
-                    {formatBookingTicketCode(passengerBooking.booking_code)}
-                  </Text>
-                  <Text style={styles.miTicketAmount}>
-                    Total a pagar: ₲ {passengerBooking.price_paid.toLocaleString('es-PY')}
-                  </Text>
-                  <Text style={styles.miTicketSeats}>
-                    {formatSeatsLine(passengerBooking.seats_count)}
-                  </Text>
-                  <Text style={styles.miTicketHint}>
-                    Mostrá este código al conductor al subir al minibús.
-                  </Text>
-                </View>
-              ) : null}
-              <Text style={styles.bookingCardTitle}>Tu reserva</Text>
-              <Text style={styles.bookingMeta}>
-                {bookingStatusLabel(passengerBooking.status)}
-                {passengerBooking.payment_status
-                  ? ` · Pago: ${passengerBooking.payment_status}`
-                  : ''}
-              </Text>
-              {canPassengerShareSafetyTracking(
-                passengerBooking,
-                status,
-                ride.share_code,
-                boardingEvents
-              ) ? (
-                <>
-                  <TouchableOpacity
-                    style={styles.shareSafetyBtn}
-                    onPress={() => void handleSharePassengerSafetyTracking()}
-                    accessibilityRole="button"
-                    accessibilityLabel="Compartir enlace de seguimiento del viaje"
-                  >
-                    <Ionicons name="share-social-outline" size={20} color="appBrand.colors.primary" />
-                    <Text style={styles.shareSafetyBtnText}>Compartir seguimiento</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.shareSafetyHint}>
-                    Enlace público de solo lectura con mapa y ubicación del conductor. Deja de actualizarse cuando bajes
-                    del minibús. No incluye tu teléfono ni datos privados.
-                  </Text>
-                </>
-              ) : String(status) === 'en_route' &&
-                passengerBooking &&
-                boardingEvents.some(
-                  (e) =>
-                    String(e.booking_id) === passengerBooking.id &&
-                    String(e.event_type) === 'dropped_off'
-                ) ? (
-                <Text style={styles.shareSafetyHint}>
-                  El seguimiento compartido ya no está disponible porque registraste la bajada del minibús.
+                <Text style={styles.passengerEndedTicket}>
+                  Ticket {formatBookingTicketCode(passengerBooking.booking_code)}
                 </Text>
               ) : null}
-              <View style={styles.bookingSummaryRow}>
-                <View style={styles.bookingSummaryCol}>
-                  <Text style={styles.sectionLabel}>Asientos</Text>
-                  <Text style={styles.bodyLine}>{passengerBooking.seats_count}</Text>
+              <RideDetailRouteMap
+                ride={ride}
+                rideStops={rideStops}
+                resolvedRoute={resolvedRideRoute}
+                resolvedRouteLoading={resolvedRideRoute.loading}
+                height={260}
+                passengerBookingGeo={passengerMapGeo}
+                coPassengerPickups={[]}
+                coPassengerDropoffs={[]}
+                driverLocation={null}
+                hidePolylineSourceNote
+              />
+              <View style={styles.bookingCard}>
+                <Text style={styles.sectionLabel}>Tu recorrido</Text>
+                <Text style={styles.sectionLabel}>Subida</Text>
+                <Text style={passengerBooking.pickup_label ? styles.bodyLine : styles.bodyMuted}>
+                  {passengerBooking.pickup_label ?? 'Ubicación elegida en el mapa al reservar.'}
+                </Text>
+                <Text style={styles.sectionLabel}>Bajada</Text>
+                <Text style={passengerBooking.dropoff_label ? styles.bodyLine : styles.bodyMuted}>
+                  {passengerBooking.dropoff_label ?? 'Ubicación elegida en el mapa al reservar.'}
+                </Text>
+                <View style={styles.passengerEndedPayRow}>
+                  <View style={styles.bookingSummaryCol}>
+                    <Text style={styles.sectionLabel}>Asientos</Text>
+                    <Text style={styles.bodyLine}>{passengerBooking.seats_count}</Text>
+                  </View>
+                  <View style={styles.bookingSummaryCol}>
+                    <Text style={styles.sectionLabel}>Total pagado</Text>
+                    <Text style={styles.passengerEndedAmount}>
+                      ₲ {passengerBooking.price_paid.toLocaleString('es-PY')}
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.bookingSummaryCol}>
-                  <Text style={styles.sectionLabel}>Total</Text>
-                  <Text style={styles.bodyLine}>{passengerBooking.price_paid.toLocaleString('es-PY')} PYG</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.bookingChevronBtn}
-                  onPress={() => setBookingDetailsExpanded((v) => !v)}
-                  accessibilityRole="button"
-                  accessibilityLabel={bookingDetailsExpanded ? 'Ocultar subida y bajada' : 'Ver subida y bajada'}
-                >
-                  <Ionicons
-                    name={bookingDetailsExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
-                    size={20}
-                    color="appBrand.colors.primary"
-                  />
-                </TouchableOpacity>
+                {passengerBooking.payment_status ? (
+                  <Text style={styles.bookingMeta}>Pago: {passengerBooking.payment_status}</Text>
+                ) : null}
               </View>
-              {bookingDetailsExpanded ? (
-                <>
-                  <Text style={styles.sectionLabel}>Subida</Text>
-                  <Text style={passengerBooking.pickup_label ? styles.bodyLine : styles.bodyMuted}>
-                    {passengerBooking.pickup_label ?? 'Ubicación elegida en el mapa al reservar.'}
-                  </Text>
-                  <Text style={styles.sectionLabel}>Bajada</Text>
-                  <Text style={passengerBooking.dropoff_label ? styles.bodyLine : styles.bodyMuted}>
-                    {passengerBooking.dropoff_label ?? 'Ubicación elegida en el mapa al reservar.'}
-                  </Text>
-                </>
+            </>
+          ) : (
+            <>
+              <RideDetailRouteMap
+                ride={ride}
+                rideStops={rideStops}
+                resolvedRoute={resolvedRideRoute}
+                resolvedRouteLoading={resolvedRideRoute.loading}
+                height={300}
+                passengerBookingGeo={passengerMapGeo}
+                coPassengerPickups={mapCoPassengerPickups}
+                coPassengerDropoffs={mapCoPassengerDropoffs}
+                driverLocation={driverLocationForMap}
+              />
+              {passengerBooking && passengerEtaToPickupMin != null ? (
+                <Text style={styles.passengerEtaHint}>
+                  El conductor llega en aprox. {passengerEtaToPickupMin} min a tu punto de subida.
+                </Text>
               ) : null}
-              {canPassengerCancelReservation(passengerBooking.status, status) ? (
-                <TouchableOpacity
-                  style={[styles.cancelBookingBtn, cancellingBooking && styles.btnDisabled]}
-                  onPress={handleCancelPassengerBooking}
-                  disabled={cancellingBooking}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancelar reserva"
-                >
-                  <Text style={styles.cancelBookingBtnText}>
-                    {cancellingBooking ? 'Cancelando…' : 'Cancelar reserva'}
+              {passengerBooking ? (
+                <View style={styles.bookingCard}>
+                  {formatBookingTicketCode(passengerBooking.booking_code) ? (
+                    <View style={styles.miTicketBox}>
+                      <Text style={styles.miTicketLabel}>Mi ticket</Text>
+                      <Text style={styles.miTicketCode}>
+                        {formatBookingTicketCode(passengerBooking.booking_code)}
+                      </Text>
+                      <Text style={styles.miTicketAmount}>
+                        Total a pagar: ₲ {passengerBooking.price_paid.toLocaleString('es-PY')}
+                      </Text>
+                      <Text style={styles.miTicketSeats}>
+                        {formatSeatsLine(passengerBooking.seats_count)}
+                      </Text>
+                      <Text style={styles.miTicketHint}>
+                        Mostrá este código al conductor al subir al minibús.
+                      </Text>
+                    </View>
+                  ) : null}
+                  <Text style={styles.bookingCardTitle}>Tu reserva</Text>
+                  <Text style={styles.bookingMeta}>
+                    {bookingStatusLabel(passengerBooking.status)}
+                    {passengerBooking.payment_status
+                      ? ` · Pago: ${passengerBooking.payment_status}`
+                      : ''}
                   </Text>
-                </TouchableOpacity>
+                  {canPassengerShareSafetyTracking(
+                    passengerBooking,
+                    status,
+                    ride.share_code,
+                    boardingEvents
+                  ) ? (
+                    <>
+                      <TouchableOpacity
+                        style={styles.shareSafetyBtn}
+                        onPress={() => void handleSharePassengerSafetyTracking()}
+                        accessibilityRole="button"
+                        accessibilityLabel="Compartir enlace de seguimiento del viaje"
+                      >
+                        <Ionicons name="share-social-outline" size={20} color="appBrand.colors.primary" />
+                        <Text style={styles.shareSafetyBtnText}>Compartir seguimiento</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.shareSafetyHint}>
+                        Enlace público de solo lectura con mapa y ubicación del conductor. Deja de actualizarse cuando
+                        bajes del minibús. No incluye tu teléfono ni datos privados.
+                      </Text>
+                    </>
+                  ) : null}
+                  <View style={styles.bookingSummaryRow}>
+                    <View style={styles.bookingSummaryCol}>
+                      <Text style={styles.sectionLabel}>Asientos</Text>
+                      <Text style={styles.bodyLine}>{passengerBooking.seats_count}</Text>
+                    </View>
+                    <View style={styles.bookingSummaryCol}>
+                      <Text style={styles.sectionLabel}>Total</Text>
+                      <Text style={styles.bodyLine}>
+                        {passengerBooking.price_paid.toLocaleString('es-PY')} PYG
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.bookingChevronBtn}
+                      onPress={() => setBookingDetailsExpanded((v) => !v)}
+                      accessibilityRole="button"
+                      accessibilityLabel={bookingDetailsExpanded ? 'Ocultar subida y bajada' : 'Ver subida y bajada'}
+                    >
+                      <Ionicons
+                        name={bookingDetailsExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+                        size={20}
+                        color="appBrand.colors.primary"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                  {bookingDetailsExpanded ? (
+                    <>
+                      <Text style={styles.sectionLabel}>Subida</Text>
+                      <Text style={passengerBooking.pickup_label ? styles.bodyLine : styles.bodyMuted}>
+                        {passengerBooking.pickup_label ?? 'Ubicación elegida en el mapa al reservar.'}
+                      </Text>
+                      <Text style={styles.sectionLabel}>Bajada</Text>
+                      <Text style={passengerBooking.dropoff_label ? styles.bodyLine : styles.bodyMuted}>
+                        {passengerBooking.dropoff_label ?? 'Ubicación elegida en el mapa al reservar.'}
+                      </Text>
+                    </>
+                  ) : null}
+                  {canPassengerCancelReservation(passengerBooking.status, status) ? (
+                    <TouchableOpacity
+                      style={[styles.cancelBookingBtn, cancellingBooking && styles.btnDisabled]}
+                      onPress={handleCancelPassengerBooking}
+                      disabled={cancellingBooking}
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancelar reserva"
+                    >
+                      <Text style={styles.cancelBookingBtnText}>
+                        {cancellingBooking ? 'Cancelando…' : 'Cancelar reserva'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               ) : null}
-            </View>
-          ) : null}
-          {status !== 'en_route' ? (
+            </>
+          )}
+          {!passengerTripEnded && status !== 'en_route' ? (
             <>
               <Text style={styles.sectionLabel}>Salida</Text>
               <Text style={styles.bodyLine}>
@@ -1961,86 +2030,95 @@ export function RideDetailScreen() {
               </Text>
             </>
           ) : null}
-          <Text style={styles.sectionLabel}>Cupos</Text>
-          <Text style={styles.bodyLine}>
-            {available} disponibles
-            {totalSeats > 0 ? ` de ${totalSeats}` : ''}
-          </Text>
-          {priceSeat > 0 ? (
+          {!passengerTripEnded ? (
             <>
-              <Text style={styles.sectionLabel}>Precio por asiento</Text>
-              <Text style={styles.bodyLine}>{priceSeat.toLocaleString('es-PY')} PYG</Text>
-            </>
-          ) : null}
-          {vehicleLine ? (
-            <>
-              <Text style={styles.sectionLabel}>Vehículo</Text>
-              <Text style={styles.bodyLine}>{vehicleLine}</Text>
-            </>
-          ) : null}
-          {driver?.vehicle_photo_url ? (
-            <Image
-              source={{ uri: String(driver.vehicle_photo_url) }}
-              style={styles.vehiclePhoto}
-              resizeMode="cover"
-            />
-          ) : null}
-          {description ? (
-            <>
-              <Text style={styles.sectionLabel}>Descripción</Text>
-              <Text style={styles.description}>{description}</Text>
-            </>
-          ) : null}
-          {driver ? (
-            <View style={styles.card}>
-              <Text style={styles.cardLabel}>Conductor</Text>
-              {driver.avatar_url ? (
-                <Image source={{ uri: String(driver.avatar_url) }} style={styles.driverAvatar} resizeMode="cover" />
+              <Text style={styles.sectionLabel}>Cupos</Text>
+              <Text style={styles.bodyLine}>
+                {available} disponibles
+                {totalSeats > 0 ? ` de ${totalSeats}` : ''}
+              </Text>
+              {priceSeat > 0 ? (
+                <>
+                  <Text style={styles.sectionLabel}>Precio por asiento</Text>
+                  <Text style={styles.bodyLine}>{priceSeat.toLocaleString('es-PY')} PYG</Text>
+                </>
               ) : null}
-              <Text style={styles.cardValue}>{driver.full_name ?? '—'}</Text>
-              {driverRatingLabel ? (
-                <Text style={styles.meta}>
-                  ★ {driverRatingLabel}
-                  {driver.rating_count && driver.rating_count > 0
-                    ? ` · ${driver.rating_count} calificación${driver.rating_count !== 1 ? 'es' : ''}`
-                    : ''}
-                </Text>
+              {vehicleLine ? (
+                <>
+                  <Text style={styles.sectionLabel}>Vehículo</Text>
+                  <Text style={styles.bodyLine}>{vehicleLine}</Text>
+                </>
               ) : null}
-              {passengerDriverContactInCard.show ? (
-                <View style={styles.driverCardContactWrap}>
-                  <TouchableOpacity
-                    style={[
-                      styles.contactBtnInCard,
-                      (!passengerDriverContactInCard.enabled || contactingDriver) && styles.contactBtnInCardDisabled,
-                    ]}
-                    onPress={() => void handleContactDriver()}
-                    disabled={!passengerDriverContactInCard.enabled || contactingDriver}
-                    accessibilityRole="button"
-                    accessibilityState={{
-                      disabled: !passengerDriverContactInCard.enabled || contactingDriver,
-                    }}
-                    accessibilityLabel={
-                      passengerDriverContactInCard.enabled
-                        ? 'Contactar conductor'
-                        : 'Contactar conductor, disponible 20 minutos antes del viaje'
-                    }
-                  >
-                    <Text
-                      style={[
-                        styles.contactBtnInCardText,
-                        (!passengerDriverContactInCard.enabled || contactingDriver) &&
-                          styles.contactBtnInCardTextDisabled,
-                      ]}
-                    >
-                      {contactingDriver ? 'Abriendo chat…' : 'Mensaje al conductor'}
+              {driver?.vehicle_photo_url ? (
+                <Image
+                  source={{ uri: String(driver.vehicle_photo_url) }}
+                  style={styles.vehiclePhoto}
+                  resizeMode="cover"
+                />
+              ) : null}
+              {description ? (
+                <>
+                  <Text style={styles.sectionLabel}>Descripción</Text>
+                  <Text style={styles.description}>{description}</Text>
+                </>
+              ) : null}
+              {driver ? (
+                <View style={styles.card}>
+                  <Text style={styles.cardLabel}>Conductor</Text>
+                  {driver.avatar_url ? (
+                    <Image
+                      source={{ uri: String(driver.avatar_url) }}
+                      style={styles.driverAvatar}
+                      resizeMode="cover"
+                    />
+                  ) : null}
+                  <Text style={styles.cardValue}>{driver.full_name ?? '—'}</Text>
+                  {driverRatingLabel ? (
+                    <Text style={styles.meta}>
+                      ★ {driverRatingLabel}
+                      {driver.rating_count && driver.rating_count > 0
+                        ? ` · ${driver.rating_count} calificación${driver.rating_count !== 1 ? 'es' : ''}`
+                        : ''}
                     </Text>
-                  </TouchableOpacity>
-                  {!passengerDriverContactInCard.enabled ? (
-                    <Text style={styles.contactBtnHint}>{passengerDriverContactInCard.hintDisabled}</Text>
+                  ) : null}
+                  {passengerDriverContactInCard.show ? (
+                    <View style={styles.driverCardContactWrap}>
+                      <TouchableOpacity
+                        style={[
+                          styles.contactBtnInCard,
+                          (!passengerDriverContactInCard.enabled || contactingDriver) &&
+                            styles.contactBtnInCardDisabled,
+                        ]}
+                        onPress={() => void handleContactDriver()}
+                        disabled={!passengerDriverContactInCard.enabled || contactingDriver}
+                        accessibilityRole="button"
+                        accessibilityState={{
+                          disabled: !passengerDriverContactInCard.enabled || contactingDriver,
+                        }}
+                        accessibilityLabel={
+                          passengerDriverContactInCard.enabled
+                            ? 'Contactar conductor'
+                            : 'Contactar conductor, disponible 20 minutos antes del viaje'
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.contactBtnInCardText,
+                            (!passengerDriverContactInCard.enabled || contactingDriver) &&
+                              styles.contactBtnInCardTextDisabled,
+                          ]}
+                        >
+                          {contactingDriver ? 'Abriendo chat…' : 'Mensaje al conductor'}
+                        </Text>
+                      </TouchableOpacity>
+                      {!passengerDriverContactInCard.enabled ? (
+                        <Text style={styles.contactBtnHint}>{passengerDriverContactInCard.hintDisabled}</Text>
+                      ) : null}
+                    </View>
                   ) : null}
                 </View>
               ) : null}
-            </View>
+            </>
           ) : null}
         </>
       )}
@@ -2706,6 +2784,26 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 17,
   },
+  passengerEndedBanner: {
+    backgroundColor: appBrand.colors.greenLight,
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  passengerEndedTitle: { fontSize: 17, fontWeight: '800', color: appBrand.colors.primary, marginBottom: 4 },
+  passengerEndedSubtitle: { fontSize: 13, color: '#374151', lineHeight: 18 },
+  passengerEndedTicket: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6b7280',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  passengerEndedPayRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
+  passengerEndedAmount: { fontSize: 18, fontWeight: '800', color: appBrand.colors.primary },
   bookingCard: {
     backgroundColor: appBrand.colors.greenLight,
     borderWidth: 1,
