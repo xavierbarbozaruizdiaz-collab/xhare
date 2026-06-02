@@ -61,7 +61,6 @@ import {
   ARRIVE_NEAR_BUS_M,
   driverNearArriveAnchor,
   boardedBookingsPendingDropoff,
-  dropoffBookingsForArriveModal,
   extraPickupBookingsNearBus,
   nearestPublishedStopOrder,
   primaryDropoffBookingsForVisit,
@@ -468,6 +467,8 @@ export function RideDetailScreen() {
   const [passengerToRate, setPassengerToRate] = useState<{ passengerId: string; displayName: string } | null>(
     null
   );
+  /** Pasajeros que bajaron y faltan calificar (uno por modal). */
+  const [passengerRatingQueue, setPassengerRatingQueue] = useState<DriverBookingStop[]>([]);
   const [submittingPassengerRating, setSubmittingPassengerRating] = useState(false);
   /** Evita re-render del mapa si el poll silencioso no cambió datos visibles (menos peticiones de ruta). */
   const rideVisualSigRef = useRef<string>('');
@@ -794,6 +795,31 @@ export function RideDetailScreen() {
     void refetchCoPassengerMapPoints();
   }, [refetchCoPassengerMapPoints]);
 
+  const displayNameForBooking = useCallback(async (b: DriverBookingStop): Promise<string> => {
+    let displayName = formatBookingTicketCode(b.booking_code) || b.pickup_label?.trim() || 'Pasajero';
+    if (!b.passenger_id) return displayName;
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', b.passenger_id)
+      .maybeSingle();
+    if (prof?.full_name && String(prof.full_name).trim()) {
+      displayName = String(prof.full_name).trim();
+    }
+    return displayName;
+  }, []);
+
+  const openRatingModalForBooking = useCallback(
+    async (booking: DriverBookingStop) => {
+      if (!booking.passenger_id) return;
+      const displayName = await displayNameForBooking(booking);
+      setPassengerToRate({ passengerId: booking.passenger_id, displayName });
+      setRatePassengerStars(DEFAULT_RATING_STARS);
+      setRatePassengerModalOpen(true);
+    },
+    [displayNameForBooking]
+  );
+
   const promptRatePassengerAfterDrop = useCallback(
     async (droppedBookings: DriverBookingStop[]) => {
       if (droppedBookings.length === 0) return;
@@ -803,23 +829,26 @@ export function RideDetailScreen() {
         .eq('ride_id', rideId);
       const rated = new Set((pr ?? []).map((r: { passenger_id: string }) => String(r.passenger_id)));
       setPassengerRatingsGiven(rated);
-      const first = droppedBookings.find((b) => b.passenger_id && !rated.has(b.passenger_id));
-      if (!first?.passenger_id) return;
-      let displayName = formatBookingTicketCode(first.booking_code) || first.pickup_label?.trim() || 'Pasajero';
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select('full_name')
-        .eq('id', first.passenger_id)
-        .maybeSingle();
-      if (prof?.full_name && String(prof.full_name).trim()) {
-        displayName = String(prof.full_name).trim();
-      }
-      setPassengerToRate({ passengerId: first.passenger_id, displayName });
-      setRatePassengerStars(DEFAULT_RATING_STARS);
-      setRatePassengerModalOpen(true);
+      const unrated = droppedBookings.filter((b) => b.passenger_id && !rated.has(b.passenger_id));
+      if (unrated.length === 0) return;
+      setPassengerRatingQueue(unrated.slice(1));
+      await openRatingModalForBooking(unrated[0]);
     },
-    [rideId]
+    [rideId, openRatingModalForBooking]
   );
+
+  const advancePassengerRatingQueue = useCallback(async () => {
+    setPassengerRatingQueue((queue) => {
+      if (queue.length === 0) {
+        setRatePassengerModalOpen(false);
+        setPassengerToRate(null);
+        return [];
+      }
+      const [next, ...rest] = queue;
+      void openRatingModalForBooking(next);
+      return rest;
+    });
+  }, [openRatingModalForBooking]);
 
   const submitManualDropoff = useCallback(
     async (booking: DriverBookingStop) => {
@@ -866,9 +895,16 @@ export function RideDetailScreen() {
     try {
       await ratePassenger(rideId, passengerToRate.passengerId, ratePassengerStars);
       setPassengerRatingsGiven((prev) => new Set(prev).add(passengerToRate.passengerId));
-      setRatePassengerModalOpen(false);
-      setPassengerToRate(null);
-      Alert.alert('Gracias', 'Calificación del pasajero registrada.');
+      const hadMore = passengerRatingQueue.length > 0;
+      if (hadMore) {
+        await advancePassengerRatingQueue();
+      } else {
+        setRatePassengerModalOpen(false);
+        setPassengerToRate(null);
+      }
+      if (!hadMore) {
+        Alert.alert('Gracias', 'Calificación del pasajero registrada.');
+      }
     } catch (e) {
       Alert.alert(
         'No se pudo calificar',
@@ -877,7 +913,14 @@ export function RideDetailScreen() {
     } finally {
       setSubmittingPassengerRating(false);
     }
-  }, [rideId, passengerToRate, ratePassengerStars, submittingPassengerRating]);
+  }, [
+    rideId,
+    passengerToRate,
+    ratePassengerStars,
+    submittingPassengerRating,
+    passengerRatingQueue.length,
+    advancePassengerRatingQueue,
+  ]);
 
   useFocusEffect(
     useCallback(() => {
@@ -1244,27 +1287,6 @@ export function RideDetailScreen() {
     ) as DriverBookingStop[];
   }, [driverRideBookings, boardingEvents, arriveDriverForLists, primaryArriveIds]);
 
-  const dropoffArriveList = useMemo(() => {
-    if (!arriveDriverForLists || !arriveAnchor) return [] as DriverBookingStop[];
-    return dropoffBookingsForArriveModal(
-      driverRideBookings,
-      boardingEvents,
-      arriveDriverForLists,
-      resolvedRideRoute.points,
-      visitKind,
-      visitBookingId,
-      arriveAnchor
-    ) as DriverBookingStop[];
-  }, [
-    driverRideBookings,
-    boardingEvents,
-    arriveDriverForLists,
-    resolvedRideRoute.points,
-    visitKind,
-    visitBookingId,
-    arriveAnchor,
-  ]);
-
   const passengersOnBus = useMemo((): DriverBookingStop[] => {
     const pending = boardedBookingsPendingDropoff(driverRideBookings, boardingEvents);
     const base = resolvedRideRoute.points;
@@ -1280,11 +1302,17 @@ export function RideDetailScreen() {
     }) as DriverBookingStop[];
   }, [driverRideBookings, boardingEvents, resolvedRideRoute.points]);
 
+  /** Todos los que van a bordo, salvo el de “Este punto” si ya está en la fila principal de bajada. */
+  const dropoffsOptionalAtArrive = useMemo((): DriverBookingStop[] => {
+    const primaryIds = new Set(primaryArriveDropoffs.map((b) => b.id));
+    return passengersOnBus.filter((b) => !primaryIds.has(b.id));
+  }, [passengersOnBus, primaryArriveDropoffs]);
+
   const arriveModalHasPassengers =
     primaryArrivePickups.length > 0 ||
     primaryArriveDropoffs.length > 0 ||
     extraArrivePickups.length > 0 ||
-    dropoffArriveList.length > 0;
+    dropoffsOptionalAtArrive.length > 0;
 
   if (loading) {
     return (
@@ -1470,7 +1498,7 @@ export function RideDetailScreen() {
         return;
       }
       const pickupRows = [...primaryArrivePickups, ...extraArrivePickups];
-      const dropRows = [...primaryArriveDropoffs, ...dropoffArriveList];
+      const dropRows = [...primaryArriveDropoffs, ...dropoffsOptionalAtArrive];
       const passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }> = [];
       for (const b of pickupRows) {
         const v = arriveDecisions[`pickup:${b.id}`];
@@ -2087,7 +2115,8 @@ export function RideDetailScreen() {
             <ScrollView style={styles.arriveBody}>
               {arriveModalHasPassengers ? (
                 <Text style={styles.arriveSectionHint}>
-                  Quienes aparecen acá están cerca del punto o del minibús. Marcar subida/bajada es opcional.
+                  Subidas cerca del minibús o bajadas de quienes van a bordo. Marcar es opcional; podés usar también
+                  “Pasajeros a bordo” en la pantalla anterior.
                 </Text>
               ) : null}
               {(primaryArrivePickups.length > 0 || primaryArriveDropoffs.length > 0) && (
@@ -2182,19 +2211,19 @@ export function RideDetailScreen() {
                   ))
                 : null}
 
-              {(dropoffArriveList.length > 0 || primaryArriveDropoffs.length > 0) && (
+              {dropoffsOptionalAtArrive.length > 0 ? (
                 <TouchableOpacity
                   style={styles.arriveExpandHit}
                   onPress={() => setArriveDropExpanded((v) => !v)}
                 >
                   <Text style={styles.arriveExpandText}>
-                    {arriveDropExpanded ? '▼' : '▶'} Bajar en el recorrido (opcional)
-                    {dropoffArriveList.length > 0 ? ` · ${dropoffArriveList.length}` : ''}
+                    {arriveDropExpanded ? '▼' : '▶'} Otros a bordo — bajada (opcional)
+                    {` · ${dropoffsOptionalAtArrive.length}`}
                   </Text>
                 </TouchableOpacity>
-              )}
+              ) : null}
               {arriveDropExpanded
-                ? dropoffArriveList.map((b) => (
+                ? dropoffsOptionalAtArrive.map((b) => (
                     <View key={`dr:${b.id}`} style={styles.arriveRowIndented}>
                       <ArrivePassengerRowHeader kind="dropoff" booking={b} ticketEmphasis />
                       <View style={styles.arriveActions}>
@@ -2243,8 +2272,12 @@ export function RideDetailScreen() {
           <View style={styles.arriveCard}>
             <Text style={styles.arriveTitle}>Calificar pasajero</Text>
             <Text style={styles.arriveSubtitle}>
-              ¿Cómo fue tu experiencia con {passengerToRate?.displayName ?? 'el pasajero'}? Por defecto 5
-              estrellas. El promedio público se recalcula al llegar a {PROFILE_RATING_WINDOW} calificaciones.
+              ¿Cómo fue tu experiencia con {passengerToRate?.displayName ?? 'el pasajero'}?
+              {passengerRatingQueue.length > 0
+                ? ` Quedan ${passengerRatingQueue.length} más por calificar u omitir.`
+                : ''}{' '}
+              Por defecto 5 estrellas. El promedio público se recalcula al llegar a {PROFILE_RATING_WINDOW}{' '}
+              calificaciones.
             </Text>
             <View style={styles.rateStarsRow}>
               {[1, 2, 3, 4, 5].map((n) => (
@@ -2266,8 +2299,7 @@ export function RideDetailScreen() {
                   if (passengerToRate) {
                     setPassengerRatingsGiven((prev) => new Set(prev).add(passengerToRate.passengerId));
                   }
-                  setRatePassengerModalOpen(false);
-                  setPassengerToRate(null);
+                  void advancePassengerRatingQueue();
                 }}
               >
                 <Text style={styles.arriveCancelText}>Omitir</Text>
