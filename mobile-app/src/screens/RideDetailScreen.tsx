@@ -61,8 +61,8 @@ import {
   ARRIVE_NEAR_BUS_M,
   driverNearArriveAnchor,
   boardedBookingsPendingDropoff,
-  extraPickupBookingsNearBus,
   nearestPublishedStopOrder,
+  pickupDecisionDone,
   primaryDropoffBookingsForVisit,
   primaryPickupBookingsForVisit,
   type ArriveVisitKind,
@@ -452,6 +452,15 @@ export function RideDetailScreen() {
   const [bookingDetailsExpanded, setBookingDetailsExpanded] = useState(false);
   const [arriveModalOpen, setArriveModalOpen] = useState(false);
   const [arriveDecisions, setArriveDecisions] = useState<Record<string, 'boarded' | 'no_show' | 'dropped_off'>>({});
+  const arriveDecisionsRef = useRef(arriveDecisions);
+  arriveDecisionsRef.current = arriveDecisions;
+  const setArriveDecision = useCallback((key: string, value: 'boarded' | 'no_show' | 'dropped_off') => {
+    setArriveDecisions((prev) => {
+      const next = { ...prev, [key]: value };
+      arriveDecisionsRef.current = next;
+      return next;
+    });
+  }, []);
   const [arriveExtraExpanded, setArriveExtraExpanded] = useState(false);
   const [arriveDropExpanded, setArriveDropExpanded] = useState(false);
   const [arriveDriverPoint, setArriveDriverPoint] = useState<Point | null>(null);
@@ -865,6 +874,8 @@ export function RideDetailScreen() {
         await refetchDriverBookingPins();
         await promptRatePassengerAfterDrop([booking]);
         Alert.alert('Listo', 'Bajada registrada.');
+      } catch {
+        Alert.alert('No se pudo registrar', 'Revisá la conexión e intentá de nuevo.');
       } finally {
         setManualDropoffBookingId(null);
       }
@@ -1250,8 +1261,6 @@ export function RideDetailScreen() {
   const visitKind: ArriveVisitKind = currentVisitRow?.kind ?? 'published';
   const visitBookingId = currentVisitRow?.bookingId;
   const arriveAnchor = orderedNavigationTarget;
-  const arriveDriverForLists = arriveDriverPoint ?? driverLocationForMap ?? arriveAnchor;
-
   const primaryArrivePickups = useMemo(() => {
     if (visitKind !== 'pickup') return [] as DriverBookingStop[];
     return primaryPickupBookingsForVisit(
@@ -1270,22 +1279,16 @@ export function RideDetailScreen() {
     ) as DriverBookingStop[];
   }, [visitKind, visitBookingId, driverRideBookings, boardingEvents]);
 
-  const primaryArriveIds = useMemo(() => {
-    const s = new Set<string>();
-    for (const b of primaryArrivePickups) s.add(b.id);
-    for (const b of primaryArriveDropoffs) s.add(b.id);
-    return s;
-  }, [primaryArrivePickups, primaryArriveDropoffs]);
-
-  const extraArrivePickups = useMemo(() => {
-    if (!arriveDriverForLists) return [] as DriverBookingStop[];
-    return extraPickupBookingsNearBus(
-      driverRideBookings,
-      boardingEvents,
-      arriveDriverForLists,
-      primaryArriveIds
+  /** Subidas pendientes salvo la fila principal de “Este punto”. */
+  const pickupsOptionalAtArrive = useMemo((): DriverBookingStop[] => {
+    const primaryIds = new Set(primaryArrivePickups.map((b) => b.id));
+    return driverRideBookings.filter(
+      (b) =>
+        b.status !== 'cancelled' &&
+        !primaryIds.has(b.id) &&
+        !pickupDecisionDone(boardingEvents, b.id)
     ) as DriverBookingStop[];
-  }, [driverRideBookings, boardingEvents, arriveDriverForLists, primaryArriveIds]);
+  }, [driverRideBookings, boardingEvents, primaryArrivePickups]);
 
   const passengersOnBus = useMemo((): DriverBookingStop[] => {
     const pending = boardedBookingsPendingDropoff(driverRideBookings, boardingEvents);
@@ -1311,7 +1314,7 @@ export function RideDetailScreen() {
   const arriveModalHasPassengers =
     primaryArrivePickups.length > 0 ||
     primaryArriveDropoffs.length > 0 ||
-    extraArrivePickups.length > 0 ||
+    pickupsOptionalAtArrive.length > 0 ||
     dropoffsOptionalAtArrive.length > 0;
 
   if (loading) {
@@ -1467,6 +1470,7 @@ export function RideDetailScreen() {
       }
     }
     setArriveDecisions({});
+    arriveDecisionsRef.current = {};
     setArriveExtraExpanded(false);
     setArriveDropExpanded(false);
     setArriveModalOpen(true);
@@ -1497,17 +1501,19 @@ export function RideDetailScreen() {
         Alert.alert('Ubicación', 'No se pudo leer tu posición. Revisá que el GPS esté activo e intentá de nuevo.');
         return;
       }
-      const pickupRows = [...primaryArrivePickups, ...extraArrivePickups];
+      const pickupRows = [...primaryArrivePickups, ...pickupsOptionalAtArrive];
       const dropRows = [...primaryArriveDropoffs, ...dropoffsOptionalAtArrive];
+      /** Tras GPS async: leer ref para no perder toques recientes en secciones desplegables. */
+      const decisions = { ...arriveDecisionsRef.current };
       const passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }> = [];
       for (const b of pickupRows) {
-        const v = arriveDecisions[`pickup:${b.id}`];
+        const v = decisions[`pickup:${b.id}`];
         if (v === 'boarded' || v === 'no_show') {
           passengers.push({ id: b.id, action: v });
         }
       }
       for (const b of dropRows) {
-        if (arriveDecisions[`dropoff:${b.id}`] === 'dropped_off') {
+        if (decisions[`dropoff:${b.id}`] === 'dropped_off') {
           passengers.push({ id: b.id, action: 'dropped_off' });
         }
       }
@@ -1550,11 +1556,9 @@ export function RideDetailScreen() {
       if (typeof nextIdx === 'number' && Number.isFinite(nextIdx)) {
         setRide((r) => (r ? { ...r, current_stop_index: nextIdx } : r));
       }
-      const droppedExplicit = dropRows.filter(
-        (b) => arriveDecisions[`dropoff:${b.id}`] === 'dropped_off'
-      );
+      const droppedExplicit = dropRows.filter((b) => decisions[`dropoff:${b.id}`] === 'dropped_off');
       for (const b of pickupRows) {
-        if (arriveDecisions[`pickup:${b.id}`] === 'boarded') {
+        if (decisions[`pickup:${b.id}`] === 'boarded') {
           const paid = await confirmRideBookingPayment(rideId, b.id);
           if (!paid.ok) {
             Alert.alert(
@@ -2115,8 +2119,8 @@ export function RideDetailScreen() {
             <ScrollView style={styles.arriveBody}>
               {arriveModalHasPassengers ? (
                 <Text style={styles.arriveSectionHint}>
-                  Subidas cerca del minibús o bajadas de quienes van a bordo. Marcar es opcional; podés usar también
-                  “Pasajeros a bordo” en la pantalla anterior.
+                  Marcá subidas o bajadas y tocá “Confirmar y seguir” para guardarlas. Los botones del desplegable solo
+                  preparan la lista; “Pasajeros a bordo” sirve para bajadas en cualquier momento.
                 </Text>
               ) : null}
               {(primaryArrivePickups.length > 0 || primaryArriveDropoffs.length > 0) && (
@@ -2131,9 +2135,7 @@ export function RideDetailScreen() {
                         styles.arriveChip,
                         arriveDecisions[`pickup:${b.id}`] === 'boarded' && styles.arriveChipActiveOk,
                       ]}
-                      onPress={() =>
-                        setArriveDecisions((prev) => ({ ...prev, [`pickup:${b.id}`]: 'boarded' }))
-                      }
+                      onPress={() => setArriveDecision(`pickup:${b.id}`, 'boarded')}
                     >
                       <Text style={styles.arriveChipText}>Subió + cobrar</Text>
                     </TouchableOpacity>
@@ -2142,9 +2144,7 @@ export function RideDetailScreen() {
                         styles.arriveChip,
                         arriveDecisions[`pickup:${b.id}`] === 'no_show' && styles.arriveChipActiveNo,
                       ]}
-                      onPress={() =>
-                        setArriveDecisions((prev) => ({ ...prev, [`pickup:${b.id}`]: 'no_show' }))
-                      }
+                      onPress={() => setArriveDecision(`pickup:${b.id}`, 'no_show')}
                     >
                       <Text style={styles.arriveChipText}>No subió</Text>
                     </TouchableOpacity>
@@ -2160,9 +2160,7 @@ export function RideDetailScreen() {
                         styles.arriveChip,
                         arriveDecisions[`dropoff:${b.id}`] === 'dropped_off' && styles.arriveChipActiveWarn,
                       ]}
-                      onPress={() =>
-                        setArriveDecisions((prev) => ({ ...prev, [`dropoff:${b.id}`]: 'dropped_off' }))
-                      }
+                      onPress={() => setArriveDecision(`dropoff:${b.id}`, 'dropped_off')}
                     >
                       <Text style={styles.arriveChipText}>Bajó</Text>
                     </TouchableOpacity>
@@ -2175,12 +2173,12 @@ export function RideDetailScreen() {
                 onPress={() => setArriveExtraExpanded((v) => !v)}
               >
                 <Text style={styles.arriveExpandText}>
-                  {arriveExtraExpanded ? '▼' : '▶'} Subió cerca del minibús (opcional, ≤{ARRIVE_NEAR_BUS_M} m)
-                  {extraArrivePickups.length > 0 ? ` · ${extraArrivePickups.length}` : ''}
+                  {arriveExtraExpanded ? '▼' : '▶'} Otras subidas pendientes (opcional)
+                  {pickupsOptionalAtArrive.length > 0 ? ` · ${pickupsOptionalAtArrive.length}` : ''}
                 </Text>
               </TouchableOpacity>
               {arriveExtraExpanded
-                ? extraArrivePickups.map((b) => (
+                ? pickupsOptionalAtArrive.map((b) => (
                     <View key={`x:${b.id}`} style={styles.arriveRowIndented}>
                       <ArrivePassengerRowHeader kind="pickup" booking={b} showAmount ticketEmphasis />
                       <View style={styles.arriveActions}>
@@ -2189,9 +2187,7 @@ export function RideDetailScreen() {
                             styles.arriveChip,
                             arriveDecisions[`pickup:${b.id}`] === 'boarded' && styles.arriveChipActiveOk,
                           ]}
-                          onPress={() =>
-                            setArriveDecisions((prev) => ({ ...prev, [`pickup:${b.id}`]: 'boarded' }))
-                          }
+                          onPress={() => setArriveDecision(`pickup:${b.id}`, 'boarded')}
                         >
                           <Text style={styles.arriveChipText}>Subió + cobrar</Text>
                         </TouchableOpacity>
@@ -2200,9 +2196,7 @@ export function RideDetailScreen() {
                             styles.arriveChip,
                             arriveDecisions[`pickup:${b.id}`] === 'no_show' && styles.arriveChipActiveNo,
                           ]}
-                          onPress={() =>
-                            setArriveDecisions((prev) => ({ ...prev, [`pickup:${b.id}`]: 'no_show' }))
-                          }
+                          onPress={() => setArriveDecision(`pickup:${b.id}`, 'no_show')}
                         >
                           <Text style={styles.arriveChipText}>No subió</Text>
                         </TouchableOpacity>
@@ -2232,9 +2226,7 @@ export function RideDetailScreen() {
                             styles.arriveChip,
                             arriveDecisions[`dropoff:${b.id}`] === 'dropped_off' && styles.arriveChipActiveWarn,
                           ]}
-                          onPress={() =>
-                            setArriveDecisions((prev) => ({ ...prev, [`dropoff:${b.id}`]: 'dropped_off' }))
-                          }
+                          onPress={() => setArriveDecision(`dropoff:${b.id}`, 'dropped_off')}
                         >
                           <Text style={styles.arriveChipText}>Bajó</Text>
                         </TouchableOpacity>

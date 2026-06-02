@@ -215,20 +215,17 @@ export function canRegisterPassengerAction(
   if (!b || b.status === 'cancelled') return false;
 
   if (passenger.action === 'boarded' || passenger.action === 'no_show') {
+    if (pickupDecisionDone(events, b.id)) return false;
     if (primaryPickupIds.has(b.id)) return true;
-    const p = bookingPickupPoint(b);
-    return Boolean(p && distanceMeters(driver, p) <= ARRIVE_NEAR_BUS_M && !pickupDecisionDone(events, b.id));
+    // Confirmación explícita del conductor en el modal (misma regla que bajada manual).
+    return true;
   }
 
   if (passenger.action === 'dropped_off') {
     if (!isBoarded(events, b.id) || dropoffDone(events, b.id)) return false;
     if (primaryDropoffIds.has(b.id)) return true;
-    const drop = bookingDropoffPoint(b);
-    if (!drop) return false;
-    const atVisit = visitKind === 'dropoff' && b.id === visitBookingId;
-    const nearBus = distanceMeters(driver, drop) <= ARRIVE_NEAR_BUS_M;
-    const nearAnchor = distanceMeters(anchor, drop) <= ARRIVE_GATE_M;
-    return atVisit || nearBus || nearAnchor;
+    // Misma regla que POST /dropoff-passenger: el conductor puede registrar la bajada sin estar en el pin.
+    return true;
   }
 
   return false;
