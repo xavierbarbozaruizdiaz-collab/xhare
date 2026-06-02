@@ -1,21 +1,19 @@
 /**
- * Polilínea única (mapa gris en reserva): OSRM que une paradas del conductor + subidas/bajadas
- * de pasajeros ya reservados, ordenadas por progreso sobre la ruta publicada del conductor.
+ * Polilínea única (mapa gris en reserva): Google Routes vía `/api/route/polyline`, uniendo
+ * ajustes de ruta del conductor + subidas/bajadas ya reservadas, ordenadas sobre la ruta publicada.
  *
- * Escala: con muchos pasajeros, una sola URL con decenas de `via` falla a menudo; encadenar
- * A→B→C en N−1 peticiones no escala (lento + riesgo de rate limit 40/min en `/api/route/polyline`).
- * Por eso usamos **chunks** (varios waypoints por petición, tope conservador) y solo caemos al
- * encadenamiento de a pares como último recurso antes del polyline solo del conductor.
+ * Escala: muchos puntos → varios tramos (chunks) antes de encadenar A→B→C de a pares.
  */
 import { fetchRoute, type RouteFetchOptions } from '../backend/routeApi';
 import { distanceMeters, getPositionAlongPolyline, type Point } from './geo';
+import { filterRouteAdjustmentStops, isOperationalDriverStop } from './rideStopKinds';
 
 const DEDUP_M = 12;
 const JOIN_TOL_M = 14;
 
 /**
- * Misma secuencia que usa `buildMasterBookRidePolyline` antes de pedir OSRM: orden por avance sobre
- * la ruta base del conductor y deduplicación por distancia (sin llamadas de red).
+ * Orden de visitas en mapa (Llegué / lista): solo origen/destino publicados + reservas;
+ * no incluye ajustes de ruta (is_base_stop false).
  */
 export type OrderedMapVisitRow = {
   kind: 'published' | 'pickup' | 'dropoff';
@@ -34,6 +32,7 @@ export type DriverStopForMapOrder = {
   lng: number;
   label: string | null;
   stop_order: number;
+  is_base_stop?: boolean | null;
 };
 
 export type BookingGeoForMapOrder = {
@@ -59,7 +58,9 @@ export function computeOrderedVisitStopsForMap(params: {
   const tagged: Tagged[] = [];
   let ord = 0;
 
-  const sortedDriver = [...driverStops].sort((a, b) => a.stop_order - b.stop_order);
+  const sortedDriver = [...driverStops]
+    .filter(isOperationalDriverStop)
+    .sort((a, b) => a.stop_order - b.stop_order);
   for (const s of sortedDriver) {
     if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) continue;
     const p = { lat: s.lat, lng: s.lng };
@@ -71,7 +72,7 @@ export function computeOrderedVisitStopsForMap(params: {
         kind: 'published',
         lat: p.lat,
         lng: p.lng,
-        title: s.label?.trim() || 'Parada del recorrido publicado',
+        title: s.label?.trim() || 'Punto de tu ruta publicada',
         rideStopId: s.id,
         stopOrder: s.stop_order,
       },
@@ -165,10 +166,7 @@ function concatPolylineParts(parts: Point[][]): Point[] | null {
   return out.length >= 2 ? out : null;
 }
 
-/**
- * Varias peticiones OSRM, cada una con hasta MAX_VIA_PER_REQUEST waypoints.
- * Ej. 40 paradas → ~5 llamadas en lugar de 39 en el encadenamiento de a pares.
- */
+/** Varias peticiones a `/api/route/polyline`, cada una con hasta MAX_VIA_PER_REQUEST waypoints. */
 async function fetchChunkedOsrm(ordered: Point[], routeOpts?: RouteFetchOptions): Promise<Point[] | null> {
   if (ordered.length < 2) return null;
   if (ordered.length === 2) {
@@ -196,7 +194,7 @@ async function fetchChunkedOsrm(ordered: Point[], routeOpts?: RouteFetchOptions)
   return concatPolylineParts(parts);
 }
 
-/** Encadena A→B→C… con OSRM en cada par consecutivo (último recurso; costoso si hay muchas paradas). */
+/** Encadena A→B→C… por calles en cada par consecutivo (último recurso). */
 async function chainOsrmThroughPoints(ordered: Point[], routeOpts?: RouteFetchOptions): Promise<Point[] | null> {
   if (ordered.length < 2) return null;
   const parts: Point[][] = [];
@@ -217,14 +215,19 @@ async function chainOsrmThroughPoints(ordered: Point[], routeOpts?: RouteFetchOp
   return concatPolylineParts(parts);
 }
 
-export type MasterBookRideStop = { lat: number; lng: number; stop_order?: number };
+export type MasterBookRideStop = {
+  lat: number;
+  lng: number;
+  stop_order?: number;
+  is_base_stop?: boolean | null;
+};
 
 export async function buildMasterBookRidePolyline(params: {
   driverBaseRoute: Point[];
   driverStops: MasterBookRideStop[];
   existingPickups: Array<{ lat: number; lng: number }>;
   existingDropoffs: Array<{ lat: number; lng: number }>;
-  /** Cancelación: al abortar se devuelve la poly base del conductor sin seguir encadenando OSRM. */
+  /** Cancelación: al abortar se devuelve la poly base del conductor sin seguir encadenando rutas. */
   signal?: AbortSignal;
 }): Promise<Point[]> {
   const { driverBaseRoute: base, driverStops, existingPickups, existingDropoffs, signal } = params;
@@ -232,9 +235,12 @@ export async function buildMasterBookRidePolyline(params: {
   if (base.length < 2) return [];
   if (signal?.aborted) return [];
 
+  /** Origen/destino ya están en `base`; solo los ajustes de ruta son vías extra al reordenar con reservas. */
+  const driverRouteVias = filterRouteAdjustmentStops(driverStops);
+
   const tagged: { p: Point; t: number; ord: number }[] = [];
   let ord = 0;
-  for (const s of driverStops) {
+  for (const s of driverRouteVias) {
     if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) continue;
     const p = { lat: s.lat, lng: s.lng };
     tagged.push({ p, t: getPositionAlongPolyline(p, base), ord: ord++ });

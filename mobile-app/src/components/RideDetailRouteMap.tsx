@@ -1,6 +1,6 @@
 /**
  * Mapa de solo lectura: misma lógica de recorrido que al reservar (`BookRide`).
- * Gris: OSRM conductor + subidas/bajadas de reservas (`buildMasterBookRidePolyline`).
+ * Gris: ruta publicada + reservas (`buildMasterBookRidePolyline` → Google Routes).
  * Verde: solo tramo del pasajero con reserva (`buildPassengerMergedRoute` → tramo `mid`).
  */
 import { appBrand } from '../ui/theme/brand';
@@ -14,7 +14,8 @@ import { buildMasterBookRidePolyline } from '../lib/buildMasterBookRidePolyline'
 import { captionForPolylineSource, type ResolvedPolyline } from '../lib/resolveRidePolyline';
 import type { RideStopForReserve } from '../rides/api';
 import { buildPassengerMergedRoute, type PassengerMergedSegments } from '../lib/passengerMergedRoute';
-import { driverIntermediateStopsBetween, mergeOsrmWaypointsBetween } from '../lib/passengerRouteWaypoints';
+import { driverIntermediateStopsBetween, mergeDrivingWaypointsBetween } from '../lib/passengerRouteWaypoints';
+import { filterOperationalDriverStops } from '../lib/rideStopKinds';
 import { fetchRoute } from '../backend/routeApi';
 
 /** Evita pin en (0,0) si algún caller pasa coordenadas basura. */
@@ -74,7 +75,7 @@ type Props = {
   resolvedRoute: ResolvedPolyline;
   resolvedRouteLoading: boolean;
   height?: number;
-  /** Pasajero con reserva: A/B, paradas extra y misma OSRM que al reservar (respeta paradas del conductor en el tramo). */
+  /** Pasajero con reserva: A/B, paradas extra y misma lógica de ruta que al reservar. */
   passengerBookingGeo?: PassengerBookingMapGeo | null;
   /** Conductor: subidas/bajadas de todas las reservas no canceladas. */
   otherBookingsGeo?: Array<{ pickup: Point; dropoff: Point }>;
@@ -154,19 +155,27 @@ export function RideDetailRouteMap({
   );
   const prevDriverPointRef = useRef<Point | null>(null);
 
-  const sortedStops = useMemo(
+  const sortedStopsAll = useMemo(
     () => [...rideStops].sort((a, b) => a.stop_order - b.stop_order),
     [rideStops]
   );
+  /** Pins en mapa: solo origen/destino publicados; los ajustes de ruta no se muestran. */
+  const sortedStopsForMarkers = useMemo(
+    () => filterOperationalDriverStops(sortedStopsAll),
+    [sortedStopsAll]
+  );
 
-  const stopsKey = useMemo(() => sortedStops.map((s) => `${s.id}:${s.stop_order}:${s.lat},${s.lng}`).join('|'), [sortedStops]);
+  const stopsKey = useMemo(
+    () => sortedStopsAll.map((s) => `${s.id}:${s.stop_order}:${s.lat},${s.lng}:${s.is_base_stop}`).join('|'),
+    [sortedStopsAll]
+  );
   const rideId = String(ride.id ?? '');
-  const stopsRef = useRef(sortedStops);
+  const stopsRef = useRef(sortedStopsAll);
   const polylineRef = useRef(polyline);
   const mapRef = useRef<React.ComponentRef<typeof MapView>>(null);
   const detailPerfT0 = useRef(0);
   const mapReadyAtRef = useRef(0);
-  stopsRef.current = sortedStops;
+  stopsRef.current = sortedStopsAll;
   polylineRef.current = polyline;
 
   useEffect(() => {
@@ -288,7 +297,7 @@ export function RideDetailRouteMap({
     setPassengerLineLoading(true);
     try {
       const drv = driverIntermediateStopsBetween(pl, pickup, dropoff, stops);
-      const wp = mergeOsrmWaypointsBetween(pl, pickup, dropoff, extras, drv, []);
+      const wp = mergeDrivingWaypointsBetween(pl, pickup, dropoff, extras, drv, []);
       void buildPassengerMergedRoute(pl, pickup, dropoff, wp, { signal: ac.signal })
         .then((seg) => {
           if (cancelled) return;
@@ -313,8 +322,10 @@ export function RideDetailRouteMap({
   }, [pbKey, displayBaseSig, stopsKey]);
 
   const markerCoords: Point[] = useMemo(() => {
-    return sortedStops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng)).map((s) => ({ lat: s.lat, lng: s.lng }));
-  }, [sortedStops]);
+    return sortedStopsForMarkers
+      .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
+      .map((s) => ({ lat: s.lat, lng: s.lng }));
+  }, [sortedStopsForMarkers]);
 
   const regionPts = useMemo(() => {
     const pts: Point[] = [...displayBase];
@@ -610,9 +621,9 @@ export function RideDetailRouteMap({
               zIndex={3}
             />
           ) : null}
-          {sortedStops.map((s, i) => {
+          {sortedStopsForMarkers.map((s, i) => {
             if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return null;
-            const last = i === sortedStops.length - 1;
+            const last = i === sortedStopsForMarkers.length - 1;
             const title = `${i + 1}. ${s.label?.trim() || (i === 0 ? 'Salida' : last ? 'Llegada' : 'Parada')}`;
             return (
               <Marker

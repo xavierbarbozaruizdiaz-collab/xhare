@@ -212,7 +212,7 @@ export default function ReservarPage() {
     })();
   }, [rideId, router, isEditMode]);
 
-  // Calcular distancia y precio base del tramo (recogida → descenso) vía OSRM
+  // Calcular distancia y precio del tramo (recogida → descenso) vía Google Routes
   useEffect(() => {
     if (!pickup?.lat || !pickup?.lng || !dropoff?.lat || !dropoff?.lng) {
       setSegmentDistanceKm(null);
@@ -290,9 +290,12 @@ export default function ReservarPage() {
   }, [ride]);
 
   const driverIntermediateStops = useMemo(() => {
-    if (!ride?.ride_stops || ride.ride_stops.length <= 2) return [];
+    if (!ride?.ride_stops?.length) return [];
     const sorted = [...ride.ride_stops].sort((a: any, b: any) => (a.stop_order ?? 0) - (b.stop_order ?? 0));
-    return sorted.slice(1, -1).map((s: any) => ({ lat: s.lat, lng: s.lng })).filter((p: any) => p.lat != null && p.lng != null);
+    return sorted
+      .filter((s: any) => s.is_base_stop === false)
+      .map((s: any) => ({ lat: s.lat, lng: s.lng }))
+      .filter((p: any) => p.lat != null && p.lng != null);
   }, [ride]);
 
   useEffect(() => {

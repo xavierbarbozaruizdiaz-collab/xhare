@@ -194,7 +194,11 @@ export function PublishRouteMapModal({
   }, [allowEditingPoints, selectionCenter, onMapPress]);
 
   const modeLabel =
-    mapMode === 'origin' ? 'Marcá el origen' : mapMode === 'destination' ? 'Marcá el destino' : 'Marcá una parada';
+    mapMode === 'origin'
+      ? 'Marcá el origen'
+      : mapMode === 'destination'
+        ? 'Marcá el destino'
+        : 'Marcá un ajuste de ruta';
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
@@ -211,10 +215,10 @@ export function PublishRouteMapModal({
         </View>
         <Text style={styles.hint}>
           {allowEditingPoints
-            ? 'Mové el mapa y confirmá el punto del centro. La ruta verde es por calles (origen → paradas → destino).'
+            ? 'Mové el mapa y confirmá el punto del centro. La ruta verde es por calles (origen → ajustes → destino).'
             : 'Vista de solo lectura: los puntos del grupo son fijos y no se pueden editar.'}
           {allowEditingPoints && mapMode === 'waypoint'
-            ? ' Colocá la parada donde quieras (entre origen y destino). Para quitarla, tocá el pin o la etiqueta.'
+            ? ' Colocá el ajuste donde quieras (entre origen y destino). Para quitarlo, tocá el pin o la etiqueta.'
             : ''}
         </Text>
         <View style={styles.mapContainer}>
@@ -250,7 +254,7 @@ export function PublishRouteMapModal({
               >
                 <View style={styles.wpMarker} pointerEvents="box-none" collapsable={false}>
                   <View style={styles.wpChip} collapsable={false}>
-                    <Text style={styles.wpChipText}>Parada {i + 1}</Text>
+                    <Text style={styles.wpChipText}>Ajuste {i + 1}</Text>
                     <View
                       style={styles.wpRemove}
                       accessibilityElementsHidden
@@ -351,7 +355,7 @@ export function PublishRouteMapModal({
                     !originDestinationReady && styles.modeTextDisabled,
                   ]}
                 >
-                  + Parada ({waypointCount}/{maxWaypoints})
+                  + Ajuste ({waypointCount}/{maxWaypoints})
                 </Text>
               </TouchableOpacity>
             ) : null}
@@ -381,7 +385,7 @@ export function PublishRouteMapModal({
                   ? 'Confirmar origen'
                   : mapMode === 'destination'
                     ? 'Confirmar destino'
-                    : 'Confirmar parada'
+                    : 'Confirmar ajuste'
               }
             >
               <Text style={styles.confirmBtnText}>
@@ -389,7 +393,7 @@ export function PublishRouteMapModal({
                   ? 'Confirmar origen'
                   : mapMode === 'destination'
                     ? 'Confirmar destino'
-                    : 'Confirmar parada'}
+                    : 'Confirmar ajuste'}
               </Text>
             </TouchableOpacity>
           ) : null}

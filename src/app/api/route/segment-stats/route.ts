@@ -1,10 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOsrmBaseUrl, getOsrmRequestTimeoutMs } from '@/lib/osrm-routing';
 import { checkRateLimit, getClientId } from '@/lib/rate-limit';
+import { computeGoogleDrivingRoute } from '@/lib/google-routes-polyline';
 
 type Point = { lat: number; lng: number };
+
 const SEGMENT_STATS_WINDOW_MS = 60_000;
 const SEGMENT_STATS_MAX_PER_WINDOW = 90;
+
+const statsCache = new Map<string, { data: unknown; expiresAt: number }>();
+const CACHE_TTL_OK_MS = 5 * 60 * 1000;
+const CACHE_TTL_FALLBACK_MS = 45 * 1000;
+
+function isValidLatLng(p: unknown): p is Point {
+  if (p == null || typeof p !== 'object') return false;
+  const o = p as Record<string, unknown>;
+  return (
+    typeof o.lat === 'number' &&
+    Number.isFinite(o.lat) &&
+    typeof o.lng === 'number' &&
+    Number.isFinite(o.lng)
+  );
+}
+
+function cacheKey(origin: Point, destination: Point, waypoints: Point[]): string {
+  const round = (p: Point) => `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`;
+  return [round(origin), round(destination), ...waypoints.map(round)].join('|');
+}
 
 function haversineKm(a: Point, b: Point): number {
   const R = 6371;
@@ -18,19 +39,18 @@ function haversineKm(a: Point, b: Point): number {
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
-function estimateFallback(origin: Point, destination: Point, waypoints: Point[]) {
-  const points = [origin, ...waypoints, destination].filter((p) => p?.lat != null && p?.lng != null);
+function estimateFallback(origin: Point, destination: Point, waypoints: Point[], reason: string) {
+  const points = [origin, ...waypoints, destination].filter(isValidLatLng);
   let distanceKm = 0;
   for (let i = 0; i < points.length - 1; i++) distanceKm += haversineKm(points[i], points[i + 1]);
   const durationMinutes = Math.max(15, Math.ceil((distanceKm / 45) * 60));
-  return { distanceKm, durationMinutes, fallback: true };
+  return { distanceKm, durationMinutes, fallback: true, fallbackReason: reason };
 }
 
 /**
  * POST /api/route/segment-stats
  * Body: { origin: { lat, lng }, destination: { lat, lng }, waypoints?: { lat, lng }[] }
- * waypoints: puntos intermedios en orden (ej. paradas del pasajero entre recogida y descenso).
- * Returns distance (km) and duration (min) for the recorrido completo vía motor OSRM-compatible.
+ * Motor: Google Routes API (mismo que `/api/route/polyline`).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -41,71 +61,54 @@ export async function POST(request: NextRequest) {
         { status: 429 }
       );
     }
-    const body = await request.json();
-    const origin = body.origin as Point;
-    const destination = body.destination as Point;
-    const waypoints = Array.isArray(body.waypoints) ? (body.waypoints as Point[]) : [];
 
-    if (origin?.lat == null || origin?.lng == null || destination?.lat == null || destination?.lng == null) {
+    const body = await request.json();
+    const origin = body.origin;
+    const destination = body.destination;
+    const waypointsRaw = body.waypoints ?? [];
+
+    if (!isValidLatLng(origin) || !isValidLatLng(destination)) {
       return NextResponse.json(
         { error: 'origin and destination with lat/lng required' },
         { status: 400 }
       );
     }
 
-    const MAX_VIA = 8;
-    const via = waypoints
-      .filter((p) => p?.lat != null && p?.lng != null)
-      .slice(0, MAX_VIA);
-    const coords: Point[] = [origin, ...via, destination];
-    const path = coords.map((p) => `${p.lng},${p.lat}`).join(';');
-    const OSRM_BASE = getOsrmBaseUrl();
-    const OSRM_TIMEOUT_MS = getOsrmRequestTimeoutMs();
-    const url = `${OSRM_BASE}/route/v1/driving/${path}?overview=false`;
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), OSRM_TIMEOUT_MS);
-      const res = await fetch(url, {
-        cache: 'no-store',
-        headers: { Accept: 'application/json' },
-        signal: controller.signal,
-      }).finally(() => clearTimeout(timeout));
-      if (!res.ok) {
-        return NextResponse.json({
-          ...estimateFallback(origin, destination, via),
-          fallbackReason: `osrm_http_${res.status}`,
-        });
-      }
-      const data = await res.json();
-      if (data.code === 'Ok' && data.routes?.[0]) {
-        const route = data.routes[0];
-        const distanceKm = route.distance != null ? Number(route.distance) / 1000 : null;
-        const durationSeconds = route.duration != null ? Number(route.duration) : null;
-        if (distanceKm == null || durationSeconds == null) {
-          return NextResponse.json({
-            ...estimateFallback(origin, destination, via),
-            fallbackReason: 'osrm_missing_distance_or_duration',
-          });
-        }
-        return NextResponse.json({
-          distanceKm,
-          durationMinutes: Math.max(1, Math.ceil(durationSeconds / 60)),
-          fallback: false,
-        });
-      }
-    } catch (err) {
-      console.error('OSRM segment-stats fetch error:', err);
-      return NextResponse.json({
-        ...estimateFallback(origin, destination, via),
-        fallbackReason: 'osrm_network_error',
-      });
+    const waypoints = Array.isArray(waypointsRaw) ? waypointsRaw.filter(isValidLatLng) : [];
+
+    const key = cacheKey(origin, destination, waypoints);
+    const cached = statsCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      return NextResponse.json(cached.data);
     }
-    return NextResponse.json({
-      ...estimateFallback(origin, destination, via),
-      fallbackReason: 'osrm_no_route',
-    });
+
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
+    if (!apiKey) {
+      console.warn('[route/segment-stats] fallback: GOOGLE_MAPS_API_KEY not configured');
+      const fallbackResult = estimateFallback(origin, destination, waypoints, 'google_error');
+      statsCache.set(key, { data: fallbackResult, expiresAt: Date.now() + CACHE_TTL_FALLBACK_MS });
+      return NextResponse.json(fallbackResult);
+    }
+
+    const google = await computeGoogleDrivingRoute(apiKey, origin, destination, waypoints);
+
+    if (!google) {
+      console.warn('[route/segment-stats] fallback: google_error');
+      const fallbackResult = estimateFallback(origin, destination, waypoints, 'google_error');
+      statsCache.set(key, { data: fallbackResult, expiresAt: Date.now() + CACHE_TTL_FALLBACK_MS });
+      return NextResponse.json(fallbackResult);
+    }
+
+    const result = {
+      distanceKm: google.distanceMeters / 1000,
+      durationMinutes: Math.max(1, Math.ceil(google.durationSeconds / 60)),
+      fallback: false,
+    };
+
+    statsCache.set(key, { data: result, expiresAt: Date.now() + CACHE_TTL_OK_MS });
+    return NextResponse.json(result);
   } catch (error) {
-    console.error('Segment stats error:', error);
+    console.error('[route/segment-stats] error:', error);
     return NextResponse.json(
       { error: 'Route request failed', code: 'segment_stats_error' },
       { status: 500 }

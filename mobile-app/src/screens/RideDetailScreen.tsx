@@ -40,6 +40,7 @@ import {
   computeOrderedVisitStopsForMap,
   type OrderedMapVisitRow,
 } from '../lib/buildMasterBookRidePolyline';
+import { filterOperationalDriverStops } from '../lib/rideStopKinds';
 import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
 import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
 import { getSharedTripTrackingUrl } from '../lib/publicWeb';
@@ -257,7 +258,7 @@ function resolveMapVisitProgressList(
   });
 }
 
-/** Destino de navegación para una fila del recorrido ordenado (misma geometría que la lista / OSRM). */
+/** Destino de navegación para una fila del recorrido ordenado (misma geometría que la lista). */
 function navTargetForMapVisitRow(
   row: OrderedMapVisitRow,
   rideStopsSorted: RideStopForReserve[],
@@ -278,20 +279,6 @@ function navTargetForMapVisitRow(
     return stop ? externalNavTargetForStop(stop, bookings) : null;
   }
   return null;
-}
-
-/** Lista colapsable “paradas que cargué al publicar”: mismo criterio que la fila published del recorrido en mapa. */
-function publishedStopRowProgress(
-  stop: RideStopForReserve | undefined,
-  status: string,
-  hasValidCurrentStop: boolean,
-  stopIdxForActualBadge: number,
-  rowIndex: number
-): MapVisitProgress {
-  const arrived = stop?.arrived_at != null && String(stop.arrived_at).length > 0;
-  if (arrived) return 'done';
-  if (status === 'en_route' && hasValidCurrentStop && rowIndex === stopIdxForActualBadge) return 'current';
-  return 'upcoming';
 }
 
 function formatSeatsLine(seats: number): string {
@@ -466,8 +453,6 @@ export function RideDetailScreen() {
   const [submittingArrive, setSubmittingArrive] = useState(false);
   /** Lista orden mapa (muchos ítems): colapsada por defecto. */
   const [mapRouteListExpanded, setMapRouteListExpanded] = useState(false);
-  /** Lista “paradas publicadas”; el conductor la abre solo si la necesita. */
-  const [driverPublishedStopsExpanded, setDriverPublishedStopsExpanded] = useState(false);
   const [boardingEvents, setBoardingEvents] = useState<BoardingEventRow[]>([]);
   const [passengerRatingsGiven, setPassengerRatingsGiven] = useState<Set<string>>(new Set());
   const [ratePassengerModalOpen, setRatePassengerModalOpen] = useState(false);
@@ -476,7 +461,7 @@ export function RideDetailScreen() {
     null
   );
   const [submittingPassengerRating, setSubmittingPassengerRating] = useState(false);
-  /** Evita re-render del mapa si el poll silencioso no cambió datos visibles (menos parpadeo / menos OSRM). */
+  /** Evita re-render del mapa si el poll silencioso no cambió datos visibles (menos peticiones de ruta). */
   const rideVisualSigRef = useRef<string>('');
 
   const resolvedRideRoute = useRideResolvedPolyline(ride, rideStops);
@@ -1064,13 +1049,13 @@ export function RideDetailScreen() {
     if (rideStops.length === 0) return [];
     const pts = resolvedRideRoute.points;
     if (pts.length < 2) {
-      return [...rideStops]
+      return filterOperationalDriverStops([...rideStops])
         .sort((a, b) => a.stop_order - b.stop_order)
         .map((s) => ({
           kind: 'published' as const,
           lat: s.lat,
           lng: s.lng,
-          title: s.label?.trim() || 'Parada del recorrido publicado',
+          title: s.label?.trim() || 'Punto de tu ruta publicada',
           rideStopId: s.id,
           stopOrder: s.stop_order,
         }));
@@ -1083,6 +1068,7 @@ export function RideDetailScreen() {
         lng: s.lng,
         label: s.label,
         stop_order: s.stop_order,
+        is_base_stop: s.is_base_stop,
       })),
       bookings: driverRideBookings.map((b) => ({
         id: b.id,
@@ -1329,15 +1315,10 @@ export function RideDetailScreen() {
     const avgCitySpeedKmh = 28;
     return Math.max(1, Math.round((meters / 1000 / avgCitySpeedKmh) * 60));
   })();
-  /** Índice en `rideStops` (ordenado por stop_order). Si ≥ length, ya pasaron todas las paradas (finalizar viaje). */
-  const rawStopIdx = Number(ride.current_stop_index ?? 0);
-  const rideLen = rideStops.length;
-  const hasValidCurrentStop = rideLen > 0 && Number.isFinite(rawStopIdx) && rawStopIdx >= 0 && rawStopIdx < rideLen;
-  const passedLastStop = rideLen > 0 && Number.isFinite(rawStopIdx) && rawStopIdx >= rideLen;
-  const canCompleteByStops = rideLen === 0 ? true : passedLastStop;
-  const currentNavStop = hasValidCurrentStop ? rideStops[rawStopIdx] : undefined;
-  const currentStopOrder = currentNavStop != null ? Number(currentNavStop.stop_order) : 0;
-  const stopIdxForActualBadge = hasValidCurrentStop ? rawStopIdx : -1;
+  const allVisitsDone =
+    mapVisitOrderRows.length > 0 && mapVisitProgressList.every((p) => p === 'done');
+  const canCompleteByStops = mapVisitOrderRows.length === 0 || allVisitsDone;
+  const hasActiveVisit = currentVisitIndex >= 0;
 
   const canStart = isOwn && (status === 'published' || status === 'booked');
   const canComplete = isOwn && status === 'en_route' && canCompleteByStops && !awaitingStop;
@@ -1461,10 +1442,18 @@ export function RideDetailScreen() {
       ];
       const stopOrder =
         nearestPublishedStopOrder(
-          rideStops.map((s) => ({ id: s.id, lat: s.lat, lng: s.lng, stop_order: s.stop_order })),
+          rideStops.map((s) => ({
+            id: s.id,
+            lat: s.lat,
+            lng: s.lng,
+            stop_order: s.stop_order,
+            is_base_stop: s.is_base_stop,
+          })),
           arriveAnchor.lat,
           arriveAnchor.lng
-        ) ?? currentStopOrder;
+        ) ??
+        currentVisitRow.stopOrder ??
+        0;
 
       const arrive = await arriveAtStop(rideId, {
         stopOrder,
@@ -1662,93 +1651,40 @@ export function RideDetailScreen() {
                     );
                   })
                 : null}
-              <TouchableOpacity
-                style={styles.collapsibleHit}
-                onPress={() => setDriverPublishedStopsExpanded((v) => !v)}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  driverPublishedStopsExpanded
-                    ? 'Ocultar paradas cargadas al publicar'
-                    : 'Mostrar paradas cargadas al publicar'
-                }
-              >
-                <Text style={styles.collapsibleHitText}>
-                  {driverPublishedStopsExpanded
-                    ? 'Ocultar paradas que cargué al publicar'
-                    : 'Ver paradas que cargué al publicar'}
+            </>
+          ) : null}
+          {isOwn && status === 'en_route' && hasActiveVisit && currentVisitRow ? (
+            <>
+              <Text style={styles.sectionLabel}>Navegación</Text>
+              {awaitingStop ? (
+                <Text style={styles.awaitingBanner}>
+                  Pendiente: confirmá subidas/bajadas y cobro en este punto para poder avanzar.
                 </Text>
-              </TouchableOpacity>
-              {driverPublishedStopsExpanded ? (
-                <View style={styles.collapsibleBox}>
-                  {rideStops.map((s, i) => {
-                    const pubProgress = publishedStopRowProgress(
-                      s,
-                      status,
-                      hasValidCurrentStop,
-                      stopIdxForActualBadge,
-                      i
-                    );
-                    return (
-                      <View
-                        key={s.id}
-                        style={[
-                          styles.stopRowWrap,
-                          pubProgress === 'done' && styles.stopRowWrapDone,
-                          pubProgress === 'current' && styles.stopRowWrapCurrent,
-                        ]}
-                      >
-                        <View style={styles.stopRow}>
-                          <Text style={styles.stopOrder}>{i + 1}.</Text>
-                          <Text style={[styles.stopLabel, styles.stopLabelFlex]}>
-                            {s.label?.trim() || `Parada ${i + 1}`}
-                          </Text>
-                          {pubProgress === 'current' ? <Text style={styles.stopCurrentBadge}>En camino</Text> : null}
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
+              ) : null}
+              {!awaitingStop ? (
+                <TouchableOpacity style={[styles.navBtn, styles.arriveBtn]} onPress={() => void openArriveModal()}>
+                  <Text style={styles.navBtnText}>Llegué</Text>
+                </TouchableOpacity>
+              ) : null}
+              {orderedNavigationTarget &&
+              Number.isFinite(orderedNavigationTarget.lat) &&
+              Number.isFinite(orderedNavigationTarget.lng) ? (
+                <TouchableOpacity
+                  style={styles.navBtn}
+                  onPress={() => {
+                    void openExternalNavigation(orderedNavigationTarget.lat, orderedNavigationTarget.lng);
+                  }}
+                  disabled={awaitingStop}
+                >
+                  <Text style={styles.navBtnText}>Navegar al punto actual</Text>
+                </TouchableOpacity>
               ) : null}
             </>
           ) : null}
-          {isOwn && status === 'en_route' && currentVisitRow ? (
-            <>
-              <Text style={styles.sectionLabel}>Navegación</Text>
-              {!hasValidCurrentStop ? (
-                <Text style={styles.navHintMuted}>
-                  Ya no quedan paradas pendientes en el recorrido. Usá “Finalizar viaje” cuando corresponda.
-                </Text>
-              ) : (
-                <>
-                  {awaitingStop ? (
-                    <Text style={styles.awaitingBanner}>
-                      Pendiente: confirmá subidas/bajadas y cobro en esta parada para poder avanzar.
-                    </Text>
-                  ) : null}
-                  {!awaitingStop ? (
-                    <TouchableOpacity style={[styles.navBtn, styles.arriveBtn]} onPress={() => void openArriveModal()}>
-                      <Text style={styles.navBtnText}>Llegué</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                  {orderedNavigationTarget &&
-                  Number.isFinite(orderedNavigationTarget.lat) &&
-                  Number.isFinite(orderedNavigationTarget.lng) ? (
-                    <TouchableOpacity
-                      style={styles.navBtn}
-                      onPress={() => {
-                        void openExternalNavigation(
-                          orderedNavigationTarget.lat,
-                          orderedNavigationTarget.lng
-                        );
-                      }}
-                      disabled={awaitingStop}
-                    >
-                      <Text style={styles.navBtnText}>Navegar a la parada actual</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </>
-              )}
-            </>
+          {isOwn && status === 'en_route' && !hasActiveVisit && mapVisitOrderRows.length > 0 ? (
+            <Text style={styles.navHintMuted}>
+              Ya no quedan puntos pendientes en el recorrido. Usá “Finalizar viaje” cuando corresponda.
+            </Text>
           ) : null}
         </>
       ) : (
@@ -2032,7 +1968,7 @@ export function RideDetailScreen() {
           ) : null}
           {isOwn && status === 'en_route' && !canComplete ? (
             <Text style={styles.hint}>
-              “Finalizar viaje” se habilita cuando confirmes la última parada o destino del recorrido.
+              “Finalizar viaje” se habilita cuando confirmes el último punto del recorrido (subidas, bajadas o destino).
             </Text>
           ) : null}
           {canEdit ? (

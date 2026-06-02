@@ -1,5 +1,6 @@
 /**
- * Configuración del motor de ruteo (API compatible con OSRM `route/v1/driving/...`).
+ * Configuración OSRM legacy (admin / sync de corredores). **No** usa la app móvil ni reservas:
+ * `/api/route/polyline` y `/api/route/segment-stats` usan Google Routes (`google-routes-polyline.ts`).
  *
  * Causa raíz de fallos en producción: `https://router.project-osrm.org` es un **servicio de demostración**
  * sin SLA, colas, 504 y throttling impredecibles. No es arquitectura válida para una app real.

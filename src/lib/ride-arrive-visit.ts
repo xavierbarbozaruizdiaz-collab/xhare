@@ -1,6 +1,7 @@
 import { distanceMeters, getPositionAlongPolyline } from '@/lib/geo';
 import type { Point } from '@/types';
 import { nearestRideStopIdForBookingPoint, type RideStopForBookingLink } from '@/lib/booking-stop-link';
+import { isOperationalDriverStop } from '@/lib/rideStopKinds';
 
 /** Distancia máxima para habilitar / validar “Llegué” respecto al punto visitado. */
 export const ARRIVE_GATE_M = 70;
@@ -79,11 +80,12 @@ export function bookingDropoffPoint(b: BookingGeoLite): Point | null {
 }
 
 export function nearestPublishedStopOrder(
-  stops: Array<RideStopForBookingLink & { stop_order: number }>,
+  stops: Array<RideStopForBookingLink & { stop_order: number; is_base_stop?: boolean | null }>,
   lat: number,
   lng: number
 ): number | null {
-  const id = nearestRideStopIdForBookingPoint(stops, lat, lng);
+  const operational = stops.filter(isOperationalDriverStop);
+  const id = nearestRideStopIdForBookingPoint(operational, lat, lng);
   if (!id) return null;
   const row = stops.find((s) => s.id === id);
   return row != null && Number.isFinite(row.stop_order) ? row.stop_order : null;

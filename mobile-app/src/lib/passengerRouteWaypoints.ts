@@ -1,6 +1,6 @@
 /**
- * Waypoints OSRM entre subida y bajada del pasajero: paradas extra del pasajero + paradas intermedias
- * del conductor que caen en ese tramo de la ruta publicada (ordenadas por progreso en la polyline).
+ * Waypoints para Google Routes (vía `/api/route/polyline`) entre subida y bajada del pasajero:
+ * paradas extra del pasajero + ajustes de ruta del conductor en ese tramo (is_base_stop false).
  */
 import {
   distanceMeters,
@@ -9,10 +9,16 @@ import {
   slicePolylineBetweenT,
   type Point,
 } from './geo';
+import { filterRouteAdjustmentStops } from './rideStopKinds';
 
-export type DriverStopForWaypoint = { lat: number; lng: number; stop_order?: number };
+export type DriverStopForWaypoint = {
+  lat: number;
+  lng: number;
+  stop_order?: number;
+  is_base_stop?: boolean | null;
+};
 
-/** Paradas del conductor que no son origen ni destino del viaje, entre pickup y dropoff sobre la base. */
+/** Ajustes de ruta del conductor (is_base_stop false) entre pickup y dropoff sobre la base. */
 export function driverIntermediateStopsBetween(
   baseRoute: Point[],
   pickup: Point,
@@ -21,8 +27,8 @@ export function driverIntermediateStopsBetween(
 ): Point[] {
   if (baseRoute.length < 2) return [];
   const sorted = [...driverStops].sort((a, b) => (a.stop_order ?? 0) - (b.stop_order ?? 0));
-  if (sorted.length < 3) return [];
-  const intermediates = sorted.slice(1, -1);
+  const intermediates = filterRouteAdjustmentStops(sorted);
+  if (intermediates.length === 0) return [];
   const tPu = getPositionAlongPolyline(pickup, baseRoute);
   const tDo = getPositionAlongPolyline(dropoff, baseRoute);
   const lo = Math.min(tPu, tDo);
@@ -47,7 +53,7 @@ const AVOID_OVERLAP_AB_M = 45;
  * Subidas/bajadas de otros pasajeros en el tramo A–B.
  * Incluye puntos con progreso `t` estrictamente entre A y B, y también los que están
  * **desplazados de la línea** (calle lateral, acceso) si quedan cerca del subtramo publicado entre A y B:
- * sin eso OSRM solo seguiría la avenida y “flotarían” los pins grises.
+ * sin eso la ruta por calles solo seguiría la avenida y “flotarían” los pins grises.
  */
 export function otherPassengerWaypointsBetween(
   baseRoute: Point[],
@@ -88,8 +94,8 @@ export function otherPassengerWaypointsBetween(
   return out;
 }
 
-/** Une extras del pasajero, paradas del conductor y puntos de otros pasajeros en el tramo (A,B), por t en la base. */
-export function mergeOsrmWaypointsBetween(
+/** Une extras del pasajero, ajustes del conductor y otros pasajeros en el tramo (A,B), por t en la base. */
+export function mergeDrivingWaypointsBetween(
   baseRoute: Point[],
   pickup: Point,
   dropoff: Point,
@@ -125,7 +131,10 @@ export function mergeOsrmWaypointsBetween(
   return out;
 }
 
-/** Paradas intermedias del conductor entre dos progresos t en la polyline base (origen/destino del viaje excluidos). */
+/** @deprecated Usar mergeDrivingWaypointsBetween */
+export const mergeOsrmWaypointsBetween = mergeDrivingWaypointsBetween;
+
+/** Ajustes de ruta del conductor entre dos progresos t en la polyline base. */
 export function driverIntermediateStopsBetweenT(
   baseRoute: Point[],
   tLo: number,
@@ -136,8 +145,8 @@ export function driverIntermediateStopsBetweenT(
   const lo = Math.min(tLo, tHi);
   const hi = Math.max(tLo, tHi);
   const sorted = [...driverStops].sort((a, b) => (a.stop_order ?? 0) - (b.stop_order ?? 0));
-  if (sorted.length < 3) return [];
-  const intermediates = sorted.slice(1, -1);
+  const intermediates = filterRouteAdjustmentStops(sorted);
+  if (intermediates.length === 0) return [];
   return intermediates
     .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng))
     .map((s) => {

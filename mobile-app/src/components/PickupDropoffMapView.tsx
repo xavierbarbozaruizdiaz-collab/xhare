@@ -36,7 +36,13 @@ export type MapPoint = Point | null;
 
 export type ExtraStopPoint = { lat: number; lng: number; label?: string | null; order: number };
 
-export type DriverStopMarker = { lat: number; lng: number; label?: string | null; stop_order?: number };
+export type DriverStopMarker = {
+  lat: number;
+  lng: number;
+  label?: string | null;
+  stop_order?: number;
+  is_base_stop?: boolean | null;
+};
 
 type Props = {
   baseRoute: Point[];

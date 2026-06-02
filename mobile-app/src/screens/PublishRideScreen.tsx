@@ -47,7 +47,7 @@ import {
 } from '../lib/passengerFavorites';
 import { addDaysToYmd } from '../lib/bookingLead';
 
-/** Solo timing interno: reduce ráfagas a OSRM al ajustar paradas; imperceptible en uso normal. */
+/** Debounce al recalcular ruta por calles al mover ajustes de ruta. */
 const PUBLISH_ROUTE_DEBOUNCE_MS = 220;
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'PublishRide'>;
@@ -99,7 +99,7 @@ function regionForPoints(points: Point[]) {
   };
 }
 
-/** Región del modal: solo origen, destino y paradas (no todos los vértices OSRM → evita zoom a “planeta”). */
+/** Región del modal: origen, destino y ajustes (no todos los vértices de la polyline). */
 function regionForPublishFocus(
   origin: Point | null,
   destination: Point | null,
@@ -900,7 +900,7 @@ export function PublishRideScreen() {
 
   const openMapPicker = (mode: PublishMapMode) => {
     if (isGroupedPublishFlow && mode === 'waypoint') {
-      Alert.alert('Paradas', 'En publicación desde ruta con demanda no se pueden agregar paradas manuales.');
+      Alert.alert('Ajustes de ruta', 'En publicación desde ruta con demanda no se pueden agregar ajustes de ruta manuales.');
       return;
     }
     if (mode === 'waypoint' && (!origin || !destination)) {
@@ -1572,7 +1572,7 @@ export function PublishRideScreen() {
       ) : null}
       {waypoints.length > 0 && !isGroupedPublishFlow ? (
         <TouchableOpacity onPress={() => setWaypoints([])}>
-          <Text style={styles.clearWp}>Quitar paradas intermedias</Text>
+          <Text style={styles.clearWp}>Quitar ajustes de ruta</Text>
         </TouchableOpacity>
       ) : null}
 
@@ -1606,7 +1606,7 @@ export function PublishRideScreen() {
             <Marker
               key={`wp-${w.lat}-${w.lng}-${i}`}
               coordinate={{ latitude: w.lat, longitude: w.lng }}
-              title={`Parada ${i + 1}`}
+              title={`Ajuste ${i + 1}`}
               pinColor="#2563eb"
             />
           ))}
@@ -1677,10 +1677,10 @@ export function PublishRideScreen() {
 
       {waypoints.length > 0 && !isGroupedPublishFlow ? (
         <View style={styles.wpFormSection}>
-          <Text style={styles.label}>Paradas intermedias</Text>
+          <Text style={styles.label}>Ajustes de ruta</Text>
           {waypoints.map((w, i) => (
             <View key={`wp-form-${w.lat}-${w.lng}-${i}`} style={styles.wpFormBlock}>
-              <Text style={styles.wpFormSubLabel}>Parada {i + 1}</Text>
+              <Text style={styles.wpFormSubLabel}>Ajuste {i + 1}</Text>
               <TextInput
                 style={[styles.input, styles.wpFormInputReadonly]}
                 value={w.label ?? `${w.lat.toFixed(5)}, ${w.lng.toFixed(5)}`}

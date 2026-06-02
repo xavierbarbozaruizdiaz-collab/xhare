@@ -15,7 +15,7 @@ const MapComponent = dynamic(() => import('@/components/MapComponent'), {
 
 /** Duración por defecto cuando la API no devuelve duración (fallback fijo) */
 function estimateDurationFromPolyline(_points: Array<{ lat: number; lng: number }>): number {
-  // Confiamos en OSRM para la duración; este fallback solo evita crashear la UI.
+  // Duración desde Google Routes vía /api/route/polyline; fallback solo evita crashear la UI.
   return 60;
 }
 
@@ -679,7 +679,7 @@ export default function PublishRidePage() {
         <div className="mt-4">
           <p className="text-sm text-gray-600 mb-2">
             {tripRequestIds.length > 0
-              ? 'Círculos grises = subidas de pasajeros (solicitudes). Círculos gris azulado = bajadas. Marcá tu origen (recogida) y destino; la ruta se actualiza con OSRM.'
+              ? 'Círculos grises = subidas de pasajeros (solicitudes). Círculos gris azulado = bajadas. Marcá tu origen (recogida) y destino; la ruta se actualiza por calles (Google Routes).'
               : 'Paradas intermedias para marcar el recorrido. La ruta se actualizará también cuando aceptes pasajeros (máx. 1 km de desvío).'}
           </p>
           <div className="h-96 border rounded-lg mb-2 relative">

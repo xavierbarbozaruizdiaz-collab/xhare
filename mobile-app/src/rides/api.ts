@@ -495,6 +495,8 @@ export type RideStopForReserve = {
   lng: number;
   label: string | null;
   stop_order: number;
+  /** true = origen/destino publicados; false = ajuste de ruta (solo trazado). */
+  is_base_stop?: boolean | null;
   /** Momento en que se confirmó “Llegué” en esa parada publicada (si aplica). */
   arrived_at?: string | null;
 };
@@ -578,7 +580,7 @@ export async function fetchRideForReserve(rideId: string): Promise<{
       driver_lat, driver_lng, driver_location_updated_at,
       current_stop_index, awaiting_stop_confirmation,
       driver:profiles!rides_driver_id_fkey(id, full_name, avatar_url, vehicle_photo_url, rating_average, rating_count),
-      ride_stops(id, lat, lng, label, stop_order, arrived_at)
+      ride_stops(id, lat, lng, label, stop_order, arrived_at, is_base_stop)
     `)
     .eq('id', rideId)
     .maybeSingle();
@@ -596,13 +598,15 @@ export async function fetchRideForReserve(rideId: string): Promise<{
         label: s.label != null ? String(s.label) : null,
         stop_order: Number(s.stop_order ?? 0),
         arrived_at: s.arrived_at != null ? String(s.arrived_at) : null,
+        is_base_stop:
+          s.is_base_stop === true ? true : s.is_base_stop === false ? false : null,
       }))
       .sort((a, b) => a.stop_order - b.stop_order);
   }
   if (stops.length === 0) {
     const { data: stopsData } = await supabase
       .from('ride_stops')
-      .select('id, lat, lng, label, stop_order, arrived_at')
+      .select('id, lat, lng, label, stop_order, arrived_at, is_base_stop')
       .eq('ride_id', rideId)
       .order('stop_order', { ascending: true });
     if (stopsData?.length) {
@@ -615,6 +619,8 @@ export async function fetchRideForReserve(rideId: string): Promise<{
           label: s.label != null ? String(s.label) : null,
           stop_order: Number(s.stop_order ?? 0),
           arrived_at: s.arrived_at != null ? String(s.arrived_at) : null,
+          is_base_stop:
+            s.is_base_stop === true ? true : s.is_base_stop === false ? false : null,
         }))
         .sort((a, b) => a.stop_order - b.stop_order);
     }

@@ -16,6 +16,7 @@ import {
   primaryPickupBookingsForVisit,
   type ArriveVisitKind,
 } from '@/lib/ride-arrive-visit';
+import { isRouteAdjustmentStop, nextOperationalStopArrayIndex } from '@/lib/rideStopKinds';
 
 const passengerActionSchema = z.object({
   id: z.string().uuid(),
@@ -159,18 +160,20 @@ export async function POST(
 
     const { data: stops } = await service
       .from('ride_stops')
-      .select('id, stop_order, lat, lng, label')
+      .select('id, stop_order, lat, lng, label, is_base_stop')
       .eq('ride_id', rideId)
       .order('stop_order', { ascending: true });
 
     const sortedStops = Array.isArray(stops) ? stops : [];
-    const linkStops: Array<RideStopForBookingLink & { stop_order: number }> = sortedStops
+    const linkStops: Array<RideStopForBookingLink & { stop_order: number; is_base_stop?: boolean | null }> =
+      sortedStops
       .filter((s: { id: unknown; lat: unknown; lng: unknown }) => s.id != null)
-      .map((s: { id: unknown; lat: unknown; lng: unknown; stop_order: unknown }) => ({
+      .map((s: { id: unknown; lat: unknown; lng: unknown; stop_order: unknown; is_base_stop?: unknown }) => ({
         id: String(s.id),
         lat: Number(s.lat),
         lng: Number(s.lng),
         stop_order: Number(s.stop_order),
+        is_base_stop: s.is_base_stop === true ? true : s.is_base_stop === false ? false : null,
       }))
       .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng) && Number.isFinite(s.stop_order));
 
@@ -217,6 +220,14 @@ export async function POST(
     }));
 
     const vk = visitKind as ArriveVisitKind;
+
+    if (vk === 'published' && isRouteAdjustmentStop(stopRow as { is_base_stop?: boolean | null })) {
+      return NextResponse.json(
+        { error: 'Los ajustes de ruta no son puntos de llegada. Usá el siguiente punto del recorrido.' },
+        { status: 400 }
+      );
+    }
+
     const anchor = { lat: anchorLat, lng: anchorLng };
     const driverPoint =
       typeof driverLat === 'number' &&
@@ -353,7 +364,11 @@ export async function POST(
     let nextStop: (typeof sortedStops)[0] | null = null;
 
     if (vk === 'published') {
-      nextStopIndex = currentIdx >= 0 ? currentIdx + 1 : (ride.current_stop_index ?? 0) + 1;
+      const fromIdx = currentIdx >= 0 ? currentIdx : Math.max(0, (ride.current_stop_index ?? 0) - 1);
+      nextStopIndex = nextOperationalStopArrayIndex(
+        sortedStops as Array<{ is_base_stop?: boolean | null }>,
+        fromIdx
+      );
       nextStop = sortedStops[nextStopIndex] ?? null;
     }
 

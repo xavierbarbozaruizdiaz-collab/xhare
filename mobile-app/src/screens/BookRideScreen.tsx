@@ -1,6 +1,6 @@
 /**
  * Pasajero: reservar sobre la ruta publicada.
- * Gris: OSRM conductor + subidas/bajadas ya reservadas (una polyline). Verde: solo tramo del pasajero actual (A/B + extras + paradas del conductor en ese tramo).
+ * Gris: ruta publicada + reservas (Google Routes). Verde: tramo del pasajero (A/B + extras + ajustes de ruta en ese tramo).
  */
 import { appBrand } from '../ui/theme/brand';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -41,7 +41,7 @@ import { env } from '../core/env';
 import type { MainStackParamList } from '../navigation/types';
 import { buildMasterBookRidePolyline } from '../lib/buildMasterBookRidePolyline';
 import { buildPassengerMergedRoute, type PassengerMergedSegments } from '../lib/passengerMergedRoute';
-import { driverIntermediateStopsBetween, mergeOsrmWaypointsBetween } from '../lib/passengerRouteWaypoints';
+import { driverIntermediateStopsBetween, mergeDrivingWaypointsBetween } from '../lib/passengerRouteWaypoints';
 import { fetchPassengerPricingPolylineVisible } from '../backend/passengerUiSettings';
 
 type Nav = NativeStackNavigationProp<MainStackParamList, 'BookRide'>;
@@ -100,10 +100,10 @@ export function BookRideScreen() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [effectivePricing, setEffectivePricing] = useState<EffectivePricing>(FALLBACK_PRICING);
   const [existingBooking, setExistingBooking] = useState(false);
-  /** Ruta publicada del conductor (solo referencia interna + orden para OSRM maestro). */
+  /** Ruta publicada del conductor (referencia + orden para polyline gris). */
   const [resolvedRoute, setResolvedRoute] = useState<Point[]>([]);
   const [routeResolving, setRouteResolving] = useState(false);
-  /** Polilínea gris del mapa: conductor + pasajeros ya reservados (OSRM) o igual a `resolvedRoute` si no hay otros. */
+  /** Polilínea gris: conductor + reservas existentes o `resolvedRoute` si no hay otros. */
   const [mapDisplayRoute, setMapDisplayRoute] = useState<Point[]>([]);
   const [masterGreyResolving, setMasterGreyResolving] = useState(false);
   const [mergedPassengerRoute, setMergedPassengerRoute] = useState<PassengerMergedSegments | null>(null);
@@ -112,7 +112,7 @@ export function BookRideScreen() {
 
   const rideRef = useRef<Record<string, unknown> | null>(null);
   const driverStopsRef = useRef(driverStops);
-  /** Mismo A/B y misma poly base: permite retener solo si el intento OSRM es para los **mismos** waypoints (no dejar colado un merge sin puntos de otros). */
+  /** Mismo A/B y misma poly base: retener merge solo si los waypoints coinciden. */
   const lastSuccessfulMergeStableKeyRef = useRef<string>('');
   const lastSuccessfulWpsKeyRef = useRef<string>('');
   rideRef.current = ride;
@@ -199,12 +199,12 @@ export function BookRideScreen() {
     [extraStops]
   );
 
-  /** OSRM verde en mapa: mantiene contexto del conductor + extras del pasajero. */
+  /** Ruta verde en mapa: tramo del pasajero con ajustes de ruta del conductor en A–B. */
   const waypointsBetween = useMemo(() => {
     if (!pickup || !dropoff || mapDisplayRoute.length < 2) return [];
     const extras = sortExtrasBetween(pickup, dropoff, extraStops, mapDisplayRoute);
     const drv = driverIntermediateStopsBetween(mapDisplayRoute, pickup, dropoff, driverStops);
-    return mergeOsrmWaypointsBetween(mapDisplayRoute, pickup, dropoff, extras, drv, []);
+    return mergeDrivingWaypointsBetween(mapDisplayRoute, pickup, dropoff, extras, drv, []);
   }, [
     pickup?.lat,
     pickup?.lng,
@@ -295,6 +295,7 @@ export function BookRideScreen() {
           lng: s.lng,
           label: s.label,
           stop_order: s.stop_order,
+          is_base_stop: s.is_base_stop,
         }))
       );
 
@@ -745,7 +746,7 @@ export function BookRideScreen() {
               <Text style={styles.sectionTitle}>Tu tramo en la ruta</Text>
               {!usesDriverSeatPrice && !env.apiBaseUrl?.trim() ? (
                 <Text style={styles.warnBoxText}>
-                  Configurá EXPO_PUBLIC_API_BASE_URL para calcular el precio con OSRM.
+                  Configurá EXPO_PUBLIC_API_BASE_URL para calcular el precio del tramo.
                 </Text>
               ) : null}
               {usesDriverSeatPrice ? (

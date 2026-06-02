@@ -231,11 +231,14 @@ export default function RideDetailClient() {
     [extraPassengerStops]
   );
 
-  // Paradas intermedias que marcó el conductor (origen y destino ya están en basePolyline)
+  // Ajustes de ruta al publicar (is_base_stop false); origen/destino ya están en basePolyline
   const driverIntermediateStops = useMemo(() => {
-    if (!ride?.ride_stops || ride.ride_stops.length <= 2) return [];
+    if (!ride?.ride_stops?.length) return [];
     const sorted = [...ride.ride_stops].sort((a: any, b: any) => (a.stop_order ?? 0) - (b.stop_order ?? 0));
-    return sorted.slice(1, -1).map((s: any) => ({ lat: s.lat, lng: s.lng })).filter((p: any) => p.lat != null && p.lng != null);
+    return sorted
+      .filter((s: any) => s.is_base_stop === false)
+      .map((s: any) => ({ lat: s.lat, lng: s.lng }))
+      .filter((p: any) => p.lat != null && p.lng != null);
   }, [ride]);
 
   const firstNavigationTarget = useMemo(() => {
