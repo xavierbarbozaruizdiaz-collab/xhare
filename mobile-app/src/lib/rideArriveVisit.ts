@@ -61,6 +61,15 @@ export function dropoffDone(events: BoardingEventLite[], bookingId: string): boo
   return hasBoardingEvent(events, bookingId, 'dropped_off');
 }
 
+export function boardedBookingsPendingDropoff(
+  bookings: BookingGeoLite[],
+  events: BoardingEventLite[]
+): BookingGeoLite[] {
+  return bookings.filter(
+    (b) => b.status !== 'cancelled' && isBoarded(events, b.id) && !dropoffDone(events, b.id)
+  );
+}
+
 export function bookingPickupPoint(b: BookingGeoLite): Point | null {
   const lat = Number(b.pickup_lat);
   const lng = Number(b.pickup_lng);

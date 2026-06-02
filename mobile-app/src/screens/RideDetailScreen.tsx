@@ -48,6 +48,7 @@ import {
   confirmRideBookingPayment,
   arriveAtStop,
   ratePassenger,
+  registerPassengerDropoff,
   setRideAwaitingStopConfirmation,
 } from '../backend/api';
 import {
@@ -59,6 +60,7 @@ import {
   ARRIVE_GATE_M,
   ARRIVE_NEAR_BUS_M,
   driverNearArriveAnchor,
+  boardedBookingsPendingDropoff,
   dropoffBookingsForArriveModal,
   extraPickupBookingsNearBus,
   nearestPublishedStopOrder,
@@ -453,6 +455,8 @@ export function RideDetailScreen() {
   const [submittingArrive, setSubmittingArrive] = useState(false);
   /** Lista orden mapa (muchos ítems): colapsada por defecto. */
   const [mapRouteListExpanded, setMapRouteListExpanded] = useState(false);
+  const [passengersOnBusExpanded, setPassengersOnBusExpanded] = useState(true);
+  const [manualDropoffBookingId, setManualDropoffBookingId] = useState<string | null>(null);
   const [boardingEvents, setBoardingEvents] = useState<BoardingEventRow[]>([]);
   const [passengerRatingsGiven, setPassengerRatingsGiven] = useState<Set<string>>(new Set());
   const [ratePassengerModalOpen, setRatePassengerModalOpen] = useState(false);
@@ -811,6 +815,43 @@ export function RideDetailScreen() {
       setRatePassengerModalOpen(true);
     },
     [rideId]
+  );
+
+  const submitManualDropoff = useCallback(
+    async (booking: DriverBookingStop) => {
+      if (manualDropoffBookingId) return;
+      setManualDropoffBookingId(booking.id);
+      try {
+        const res = await registerPassengerDropoff(rideId, booking.id);
+        if (!res.ok) {
+          Alert.alert('No se pudo registrar', res.error ?? 'Intentá de nuevo.');
+          return;
+        }
+        rideVisualSigRef.current = '';
+        await load({ quiet: true });
+        await refetchDriverBookingPins();
+        await promptRatePassengerAfterDrop([booking]);
+        Alert.alert('Listo', 'Bajada registrada.');
+      } finally {
+        setManualDropoffBookingId(null);
+      }
+    },
+    [manualDropoffBookingId, rideId, load, refetchDriverBookingPins, promptRatePassengerAfterDrop]
+  );
+
+  const confirmManualDropoff = useCallback(
+    (booking: DriverBookingStop) => {
+      const label =
+        formatBookingTicketCode(booking.booking_code) ||
+        booking.dropoff_label?.trim() ||
+        booking.pickup_label?.trim() ||
+        'este pasajero';
+      Alert.alert('Confirmar bajada', `¿${label} bajó del minibús?`, [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Bajó', onPress: () => void submitManualDropoff(booking) },
+      ]);
+    },
+    [submitManualDropoff]
   );
 
   const submitRatePassenger = useCallback(async () => {
@@ -1219,6 +1260,21 @@ export function RideDetailScreen() {
     visitBookingId,
     arriveAnchor,
   ]);
+
+  const passengersOnBus = useMemo((): DriverBookingStop[] => {
+    const pending = boardedBookingsPendingDropoff(driverRideBookings, boardingEvents);
+    const base = resolvedRideRoute.points;
+    if (base.length < 2) return pending as DriverBookingStop[];
+    return [...pending].sort((a, b) => {
+      const pa = bookingDropoffPoint(a as DriverBookingStop);
+      const pb = bookingDropoffPoint(b as DriverBookingStop);
+      if (!pa || !pb) return 0;
+      const ta = getPositionAlongPolyline(pa, base);
+      const tb = getPositionAlongPolyline(pb, base);
+      if (Number.isFinite(ta) && Number.isFinite(tb)) return ta - tb;
+      return 0;
+    }) as DriverBookingStop[];
+  }, [driverRideBookings, boardingEvents, resolvedRideRoute.points]);
 
   const arriveModalHasWork =
     primaryArrivePickups.length > 0 ||
@@ -1646,6 +1702,51 @@ export function RideDetailScreen() {
                             ) : null}
                           </View>
                           {progress === 'current' ? <Text style={styles.stopCurrentBadge}>En camino</Text> : null}
+                        </View>
+                      </View>
+                    );
+                  })
+                : null}
+            </>
+          ) : null}
+          {driverUiEnRoute && passengersOnBus.length > 0 ? (
+            <>
+              <Text style={styles.sectionLabel}>Pasajeros a bordo</Text>
+              <Text style={styles.bodyMuted}>
+                Marcá la bajada cuando quieras; no hace falta estar en el punto de bajada del mapa.
+              </Text>
+              <TouchableOpacity
+                style={styles.collapsibleHit}
+                onPress={() => setPassengersOnBusExpanded((v) => !v)}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  passengersOnBusExpanded
+                    ? 'Ocultar pasajeros a bordo'
+                    : `Ver pasajeros a bordo, ${passengersOnBus.length}`
+                }
+              >
+                <Text style={styles.collapsibleHitText}>
+                  {passengersOnBusExpanded
+                    ? 'Ocultar pasajeros a bordo'
+                    : `Ver pasajeros a bordo (${passengersOnBus.length})`}
+                </Text>
+              </TouchableOpacity>
+              {passengersOnBusExpanded
+                ? passengersOnBus.map((b) => {
+                    const busy = manualDropoffBookingId === b.id;
+                    return (
+                      <View key={b.id} style={styles.stopRowWrap}>
+                        <View style={styles.arriveRow}>
+                          <ArrivePassengerRowHeader kind="dropoff" booking={b} ticketEmphasis />
+                          <View style={styles.arriveActions}>
+                            <TouchableOpacity
+                              style={styles.arriveChip}
+                              disabled={busy}
+                              onPress={() => confirmManualDropoff(b)}
+                            >
+                              <Text style={styles.arriveChipText}>{busy ? 'Guardando…' : 'Bajó'}</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       </View>
                     );

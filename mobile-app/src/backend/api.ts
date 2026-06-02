@@ -250,6 +250,14 @@ export type ArriveVisitPayload = {
   driverLng?: number;
 };
 
+/** Bajada manual: pasajero ya subió; sin exigir proximidad al punto de bajada. */
+export async function registerPassengerDropoff(rideId: string, bookingId: string) {
+  const body: Record<string, unknown> = { bookingId };
+  const token = await resolveApiAccessToken({ forceRefresh: true });
+  if (token) body.access_token = token;
+  return apiPost(`/api/rides/${rideId}/dropoff-passenger`, body);
+}
+
 export async function arriveAtStop(rideId: string, payload: ArriveVisitPayload) {
   const body: Record<string, unknown> = {
     stopOrder: payload.stopOrder,
