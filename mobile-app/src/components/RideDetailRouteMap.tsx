@@ -5,7 +5,16 @@
  */
 import { appBrand } from '../ui/theme/brand';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Platform, Animated } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  Platform,
+  Animated,
+  Image,
+  type ImageStyle,
+} from 'react-native';
 import MapView, { Polyline, Marker } from 'react-native-maps';
 import { androidMapProvider } from '../lib/androidMapProvider';
 import { env } from '../core/env';
@@ -61,6 +70,24 @@ const GREEN = appBrand.colors.primary;
 const SLATE = '#64748b';
 const PASSENGER_AB = '#2563eb';
 const PASSENGER_EXTRA = '#0891b2';
+
+/** Tamaño fijo en pantalla: el prop `image` del Marker escala mal al alejar en Android/Google Maps. */
+const DRIVER_BUS_MARKER_PX = 40;
+const DRIVER_BUS_IMAGE = require('../../assets/driver-minibus-map-2x.png');
+
+function DriverMinibusMapMarker({ flipX }: { flipX?: boolean }) {
+  const flipStyle: ImageStyle | undefined = flipX ? { transform: [{ scaleX: -1 }] } : undefined;
+  return (
+    <View style={styles.driverBusMarkerSlot} collapsable={false}>
+      <Image
+        source={DRIVER_BUS_IMAGE}
+        style={[styles.driverBusMarkerImage, flipStyle]}
+        resizeMode="contain"
+        fadeDuration={0}
+      />
+    </View>
+  );
+}
 
 export type PassengerBookingMapGeo = {
   pickup: Point;
@@ -739,10 +766,10 @@ export function RideDetailRouteMap({
               tracksViewChanges={false}
               zIndex={101}
               title="Conductor en camino"
-              image={require('../../assets/driver-minibus-map-2x.png')}
-              rotation={driverFacingScaleX < 0 ? 180 : 0}
-              flat={false}
-            />
+              style={styles.driverBusMarkerNative}
+            >
+              <DriverMinibusMapMarker flipX={driverFacingScaleX < 0} />
+            </Marker>
           ) : null}
         </MapView>
         {showRouteLoadingBadge ? (
@@ -894,5 +921,20 @@ const styles = StyleSheet.create({
       },
       android: { elevation: 5 },
     }),
+  },
+  /** Android: el Marker nativo fija el “lienzo” del hijo; sin esto el bitmap crece al alejar. */
+  driverBusMarkerNative: {
+    width: DRIVER_BUS_MARKER_PX,
+    height: DRIVER_BUS_MARKER_PX,
+  },
+  driverBusMarkerSlot: {
+    width: DRIVER_BUS_MARKER_PX,
+    height: DRIVER_BUS_MARKER_PX,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  driverBusMarkerImage: {
+    width: DRIVER_BUS_MARKER_PX,
+    height: DRIVER_BUS_MARKER_PX,
   },
 });
