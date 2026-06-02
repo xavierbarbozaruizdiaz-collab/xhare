@@ -2,7 +2,7 @@
  * Detalle de viaje: pasajero ve conductor y puede reservar; conductor ve resumen tipo publicación e Iniciar/Finalizar viaje.
  */
 import { appBrand } from '../ui/theme/brand';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -42,6 +42,7 @@ import {
 } from '../lib/buildMasterBookRidePolyline';
 import { filterOperationalDriverStops } from '../lib/rideStopKinds';
 import { RideDetailRouteMap, type PassengerBookingMapGeo } from '../components/RideDetailRouteMap';
+import { DriverEnRouteTripView } from '../components/DriverEnRouteTripView';
 import { distanceMeters, getPositionAlongPolyline, type Point } from '../lib/geo';
 import { getSharedTripTrackingUrl } from '../lib/publicWeb';
 import {
@@ -1419,6 +1420,33 @@ export function RideDetailScreen() {
   const canEdit =
     isOwn && status !== 'en_route' && status !== 'completed' && status !== 'cancelled';
 
+  const driverCanPressLlegue = useMemo(() => {
+    if (!driverUiEnRoute || !hasActiveVisit || awaitingStop || !orderedNavigationTarget) return false;
+    const pt = driverLocationForMap ?? driverLiveLocalGps;
+    if (!pt) return false;
+    return driverNearArriveAnchor(
+      pt.lat,
+      pt.lng,
+      orderedNavigationTarget.lat,
+      orderedNavigationTarget.lng,
+      ARRIVE_GATE_M
+    );
+  }, [
+    driverUiEnRoute,
+    hasActiveVisit,
+    awaitingStop,
+    orderedNavigationTarget,
+    driverLocationForMap,
+    driverLiveLocalGps,
+  ]);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: !driverUiEnRoute,
+      title: 'Detalle del viaje',
+    });
+  }, [navigation, driverUiEnRoute]);
+
   const openExternalNavigation = async (lat: number, lng: number) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       Alert.alert('Navegación', 'No hay una ubicación válida para abrir el mapa.');
@@ -1603,6 +1631,48 @@ export function RideDetailScreen() {
 
   return (
     <View style={styles.flexFill}>
+      {driverUiEnRoute ? (
+        <DriverEnRouteTripView
+          onBack={() => navigation.goBack()}
+          mapNode={
+            <RideDetailRouteMap
+              ride={ride}
+              rideStops={rideStops}
+              resolvedRoute={resolvedRideRoute}
+              resolvedRouteLoading={resolvedRideRoute.loading}
+              otherBookingsGeo={driverBookingPins}
+              driverLocation={driverLocationForMap}
+              driverEnRouteNavFocus={orderedNavigationTarget}
+              hidePolylineSourceNote
+              driverEnRouteVisual
+              fillHeight
+            />
+          }
+          visitRows={mapVisitOrderRows}
+          visitProgress={mapVisitProgressList}
+          revenue={driverBookingRevenue}
+          publishedStops={rideStops}
+          passengersOnBus={passengersOnBus}
+          onConfirmDropoff={confirmManualDropoff}
+          manualDropoffBookingId={manualDropoffBookingId}
+          canPressLlegue={driverCanPressLlegue}
+          awaitingStop={awaitingStop}
+          onLlegue={() => void openArriveModal()}
+          canNavigate={Boolean(
+            orderedNavigationTarget &&
+              Number.isFinite(orderedNavigationTarget.lat) &&
+              Number.isFinite(orderedNavigationTarget.lng)
+          )}
+          onNavegar={() => {
+            if (!orderedNavigationTarget) return;
+            void openExternalNavigation(orderedNavigationTarget.lat, orderedNavigationTarget.lng);
+          }}
+          canComplete={canComplete}
+          completing={statusUpdating}
+          onComplete={() => runStatusUpdate('completed')}
+          arriveGateM={ARRIVE_GATE_M}
+        />
+      ) : (
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
@@ -2184,6 +2254,7 @@ export function RideDetailScreen() {
         <Text style={styles.secondaryText}>Volver</Text>
       </TouchableOpacity>
     </ScrollView>
+      )}
 
       <Modal visible={arriveModalOpen} transparent animationType="fade">
         <View style={styles.modalOverlay}>

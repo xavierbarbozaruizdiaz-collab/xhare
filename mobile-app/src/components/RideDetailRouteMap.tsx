@@ -12,10 +12,9 @@ import {
   ActivityIndicator,
   Platform,
   Animated,
-  Image,
-  type ImageStyle,
 } from 'react-native';
 import MapView, { Polyline, Marker } from 'react-native-maps';
+import { Ionicons } from '@expo/vector-icons';
 import { androidMapProvider } from '../lib/androidMapProvider';
 import { env } from '../core/env';
 import { type Point } from '../lib/geo';
@@ -70,21 +69,32 @@ const GREEN = appBrand.colors.primary;
 const SLATE = '#64748b';
 const PASSENGER_AB = '#2563eb';
 const PASSENGER_EXTRA = '#0891b2';
+const DRIVER_MAP_PRIMARY = '#1a5c38';
+const DRIVER_NEXT_STOP_ORANGE = '#ff6b35';
 
 /** Tamaño fijo en pantalla: el prop `image` del Marker escala mal al alejar en Android/Google Maps. */
 const DRIVER_BUS_MARKER_PX = 40;
-const DRIVER_BUS_IMAGE = require('../../assets/driver-minibus-map-2x.png');
-
 function DriverMinibusMapMarker({ flipX }: { flipX?: boolean }) {
-  const flipStyle: ImageStyle | undefined = flipX ? { transform: [{ scaleX: -1 }] } : undefined;
   return (
-    <View style={styles.driverBusMarkerSlot} collapsable={false}>
-      <Image
-        source={DRIVER_BUS_IMAGE}
-        style={[styles.driverBusMarkerImage, flipStyle]}
-        resizeMode="contain"
-        fadeDuration={0}
-      />
+    <View
+      style={[styles.driverBusMarkerSlot, flipX ? { transform: [{ scaleX: -1 }] } : null]}
+      collapsable={false}
+    >
+      <View style={styles.driverBusMarkerCircle}>
+        <Ionicons name="bus" size={20} color="#fff" />
+      </View>
+    </View>
+  );
+}
+
+/** Próximo punto del recorrido (conductor en ruta). */
+function DriverNextStopNavMarker() {
+  return (
+    <View style={styles.nextStopWrap} collapsable={false}>
+      <View style={styles.nextStopPill}>
+        <Text style={styles.nextStopPillText}>PRÓXIMA PARADA</Text>
+      </View>
+      <View style={styles.nextStopPin} />
     </View>
   );
 }
@@ -115,6 +125,10 @@ type Props = {
   driverEnRouteNavFocus?: Point | null;
   /** Conductor con viaje iniciado: oculta la leyenda tipo “Recorrido por calles…” bajo el mapa. */
   hidePolylineSourceNote?: boolean;
+  /** Mapa a pantalla parcial: sin título, ruta verde punteada, pin “PRÓXIMA PARADA”. */
+  driverEnRouteVisual?: boolean;
+  /** Ocupa el contenedor padre (altura flexible). */
+  fillHeight?: boolean;
 };
 
 function regionForPoints(pts: Point[]) {
@@ -162,6 +176,8 @@ export function RideDetailRouteMap({
   driverLocation = null,
   driverEnRouteNavFocus = null,
   hidePolylineSourceNote = false,
+  driverEnRouteVisual = false,
+  fillHeight = false,
 }: Props) {
   const polyline = resolvedRoute.points;
   const note = useMemo(() => {
@@ -593,10 +609,20 @@ export function RideDetailRouteMap({
     );
   }
 
+  const routeStrokeColor = driverEnRouteVisual ? DRIVER_MAP_PRIMARY : baseLineColor;
+  const routeStrokeWidth = driverEnRouteVisual ? 4 : baseLineWidth;
+  const routeDash = driverEnRouteVisual ? ([8, 6] as number[]) : undefined;
+
   return (
-    <View style={styles.block}>
-      <Text style={styles.sectionLabel}>Mapa del recorrido</Text>
-      <View style={[styles.mapShell, { height }]} collapsable={Platform.OS === 'android' ? false : undefined}>
+    <View style={[styles.block, fillHeight && styles.blockFill]}>
+      {driverEnRouteVisual ? null : <Text style={styles.sectionLabel}>Mapa del recorrido</Text>}
+      <View
+        style={[
+          styles.mapShell,
+          fillHeight ? styles.mapShellFill : { height },
+        ]}
+        collapsable={Platform.OS === 'android' ? false : undefined}
+      >
         <MapView
           key={mapViewKey}
           ref={mapRef}
@@ -620,8 +646,9 @@ export function RideDetailRouteMap({
           {displayBaseCoords.length >= 2 ? (
             <Polyline
               coordinates={displayBaseCoords}
-              strokeColor={baseLineColor}
-              strokeWidth={baseLineWidth}
+              strokeColor={routeStrokeColor}
+              strokeWidth={routeStrokeWidth}
+              lineDashPattern={routeDash}
               lineCap="round"
               lineJoin="round"
               zIndex={1}
@@ -752,11 +779,11 @@ export function RideDetailRouteMap({
           {driverEnRouteNavFocus && isPlausibleGps(driverEnRouteNavFocus) ? (
             <Marker
               coordinate={{ latitude: driverEnRouteNavFocus.lat, longitude: driverEnRouteNavFocus.lng }}
-              anchor={{ x: 0.5, y: 0.5 }}
+              anchor={{ x: 0.5, y: 0.85 }}
               zIndex={130}
-              tracksViewChanges
+              tracksViewChanges={false}
             >
-              <PulsingNextNavMarker />
+              {driverEnRouteVisual ? <DriverNextStopNavMarker /> : <PulsingNextNavMarker />}
             </Marker>
           ) : null}
           {driverMarkerFallbackPoint ? (
@@ -812,6 +839,8 @@ export function RideDetailRouteMap({
 
 const styles = StyleSheet.create({
   block: { marginBottom: 8 },
+  blockFill: { flex: 1, marginBottom: 0 },
+  mapShellFill: { flex: 1, minHeight: 120 },
   sectionLabel: {
     fontSize: 11,
     color: '#6b7280',
@@ -933,8 +962,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  driverBusMarkerImage: {
+  driverBusMarkerCircle: {
     width: DRIVER_BUS_MARKER_PX,
     height: DRIVER_BUS_MARKER_PX,
+    borderRadius: DRIVER_BUS_MARKER_PX / 2,
+    backgroundColor: DRIVER_MAP_PRIMARY,
+    borderWidth: 3,
+    borderColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 2 },
+      },
+      android: { elevation: 5 },
+    }),
+  },
+  nextStopWrap: { alignItems: 'center' },
+  nextStopPill: {
+    backgroundColor: DRIVER_NEXT_STOP_ORANGE,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  nextStopPillText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
+  nextStopPin: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: DRIVER_NEXT_STOP_ORANGE,
+    borderWidth: 3,
+    borderColor: '#fff',
   },
 });
