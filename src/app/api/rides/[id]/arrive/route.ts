@@ -250,28 +250,6 @@ export async function POST(
     const primaryPickupIds = new Set(primaryPickups.map((b) => b.id));
     const primaryDropoffIds = new Set(primaryDropoffs.map((b) => b.id));
 
-    if (vk === 'pickup' && visitBookingId && primaryPickups.length > 0) {
-      const ok = passengers.some(
-        (p) => p.id === visitBookingId && (p.action === 'boarded' || p.action === 'no_show')
-      );
-      if (!ok) {
-        return NextResponse.json(
-          { error: 'Registrá si el pasajero subió o no subió en este punto.' },
-          { status: 400 }
-        );
-      }
-    }
-
-    if (vk === 'dropoff' && visitBookingId && primaryDropoffs.length > 0) {
-      const ok = passengers.some((p) => p.id === visitBookingId && p.action === 'dropped_off');
-      if (!ok) {
-        return NextResponse.json(
-          { error: 'Confirmá la bajada del pasajero en este punto.' },
-          { status: 400 }
-        );
-      }
-    }
-
     for (const p of passengers) {
       if (
         !canRegisterPassengerAction(
@@ -355,6 +333,40 @@ export async function POST(
           { error: 'No se pudo registrar uno de los eventos de abordaje.' },
           { status: 400 }
         );
+      }
+    }
+
+    const visitActed = visitBookingId
+      ? passengers.some((p) => p.id === visitBookingId)
+      : false;
+    if (
+      visitBookingId &&
+      !visitActed &&
+      (vk === 'pickup' || vk === 'dropoff') &&
+      validBookingIds.has(visitBookingId)
+    ) {
+      const b = bookingsForRide.find((x) => x.id === visitBookingId);
+      const mayAckPickup =
+        vk === 'pickup' && b && !pickupDecisionDone(existingEvents, visitBookingId);
+      const mayAckDropoff =
+        vk === 'dropoff' &&
+        b &&
+        isBoarded(existingEvents, visitBookingId) &&
+        !dropoffDone(existingEvents, visitBookingId);
+      if (mayAckPickup || mayAckDropoff) {
+        const { error: ackErr } = await service.from('ride_boarding_events').insert({
+          ride_id: rideId,
+          booking_id: visitBookingId,
+          stop_index: eventStopIndex,
+          event_type: 'stop_visited',
+        });
+        if (ackErr && ackErr.code !== '23505') {
+          console.error('[arrive] stop_visited insert error:', ackErr.message);
+          return NextResponse.json(
+            { error: 'No se pudo registrar el paso por este punto.' },
+            { status: 400 }
+          );
+        }
       }
     }
 

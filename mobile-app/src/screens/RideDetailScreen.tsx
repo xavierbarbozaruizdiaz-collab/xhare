@@ -215,12 +215,16 @@ function visitRowIsDone(
     return boardingEvents.some(
       (e) =>
         String(e.booking_id) === row.bookingId &&
-        (e.event_type === 'boarded' || e.event_type === 'no_show')
+        (e.event_type === 'boarded' ||
+          e.event_type === 'no_show' ||
+          e.event_type === 'stop_visited')
     );
   }
   if (row.kind === 'dropoff' && row.bookingId) {
     return boardingEvents.some(
-      (e) => String(e.booking_id) === row.bookingId && e.event_type === 'dropped_off'
+      (e) =>
+        String(e.booking_id) === row.bookingId &&
+        (e.event_type === 'dropped_off' || e.event_type === 'stop_visited')
     );
   }
   if (row.kind === 'published' && row.rideStopId) {
@@ -1276,30 +1280,11 @@ export function RideDetailScreen() {
     }) as DriverBookingStop[];
   }, [driverRideBookings, boardingEvents, resolvedRideRoute.points]);
 
-  const arriveModalHasWork =
+  const arriveModalHasPassengers =
     primaryArrivePickups.length > 0 ||
     primaryArriveDropoffs.length > 0 ||
     extraArrivePickups.length > 0 ||
     dropoffArriveList.length > 0;
-
-  const allArriveDecisionsSet = useMemo(() => {
-    if (!arriveModalHasWork) return true;
-    const pickupRows = [...primaryArrivePickups, ...extraArrivePickups];
-    const pickupsOk = pickupRows.every((b) => {
-      const v = arriveDecisions[`pickup:${b.id}`];
-      return v === 'boarded' || v === 'no_show';
-    });
-    const dropRows = [...primaryArriveDropoffs, ...dropoffArriveList];
-    const dropsOk = dropRows.every((b) => arriveDecisions[`dropoff:${b.id}`] === 'dropped_off');
-    return pickupsOk && dropsOk;
-  }, [
-    arriveModalHasWork,
-    primaryArrivePickups,
-    extraArrivePickups,
-    primaryArriveDropoffs,
-    dropoffArriveList,
-    arriveDecisions,
-  ]);
 
   if (loading) {
     return (
@@ -1462,7 +1447,7 @@ export function RideDetailScreen() {
   };
 
   const submitArriveModal = async () => {
-    if (!allArriveDecisionsSet || !arriveAnchor || !currentVisitRow || submittingArrive) return;
+    if (!arriveAnchor || !currentVisitRow || submittingArrive) return;
     setSubmittingArrive(true);
     try {
       const perm = await requestLocationPermission();
@@ -1486,16 +1471,18 @@ export function RideDetailScreen() {
       }
       const pickupRows = [...primaryArrivePickups, ...extraArrivePickups];
       const dropRows = [...primaryArriveDropoffs, ...dropoffArriveList];
-      const passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }> = [
-        ...pickupRows.map((b) => ({
-          id: b.id,
-          action: (arriveDecisions[`pickup:${b.id}`] ?? 'boarded') as 'boarded' | 'no_show' | 'dropped_off',
-        })),
-        ...dropRows.map((b) => ({
-          id: b.id,
-          action: 'dropped_off' as const,
-        })),
-      ];
+      const passengers: Array<{ id: string; action: 'boarded' | 'no_show' | 'dropped_off' }> = [];
+      for (const b of pickupRows) {
+        const v = arriveDecisions[`pickup:${b.id}`];
+        if (v === 'boarded' || v === 'no_show') {
+          passengers.push({ id: b.id, action: v });
+        }
+      }
+      for (const b of dropRows) {
+        if (arriveDecisions[`dropoff:${b.id}`] === 'dropped_off') {
+          passengers.push({ id: b.id, action: 'dropped_off' });
+        }
+      }
       const stopOrder =
         nearestPublishedStopOrder(
           rideStops.map((s) => ({
@@ -1535,6 +1522,9 @@ export function RideDetailScreen() {
       if (typeof nextIdx === 'number' && Number.isFinite(nextIdx)) {
         setRide((r) => (r ? { ...r, current_stop_index: nextIdx } : r));
       }
+      const droppedExplicit = dropRows.filter(
+        (b) => arriveDecisions[`dropoff:${b.id}`] === 'dropped_off'
+      );
       for (const b of pickupRows) {
         if (arriveDecisions[`pickup:${b.id}`] === 'boarded') {
           const paid = await confirmRideBookingPayment(rideId, b.id);
@@ -1551,7 +1541,7 @@ export function RideDetailScreen() {
       rideVisualSigRef.current = '';
       await load({ quiet: true });
       await refetchDriverBookingPins();
-      await promptRatePassengerAfterDrop(dropRows);
+      await promptRatePassengerAfterDrop(droppedExplicit);
       Alert.alert('Listo', 'Punto confirmado.');
     } finally {
       setSubmittingArrive(false);
@@ -1759,7 +1749,7 @@ export function RideDetailScreen() {
               <Text style={styles.sectionLabel}>Navegación</Text>
               {awaitingStop ? (
                 <Text style={styles.awaitingBanner}>
-                  Pendiente: confirmá subidas/bajadas y cobro en este punto para poder avanzar.
+                  Opcional: registrá subidas o bajadas si corresponde. Confirmá para seguir el recorrido.
                 </Text>
               ) : null}
               {!awaitingStop ? (
@@ -2095,8 +2085,13 @@ export function RideDetailScreen() {
               <Text style={styles.arriveSubtitle}>{currentVisitRow.subtitle}</Text>
             ) : null}
             <ScrollView style={styles.arriveBody}>
+              {arriveModalHasPassengers ? (
+                <Text style={styles.arriveSectionHint}>
+                  Quienes aparecen acá están cerca del punto o del minibús. Marcar subida/bajada es opcional.
+                </Text>
+              ) : null}
               {(primaryArrivePickups.length > 0 || primaryArriveDropoffs.length > 0) && (
-                <Text style={styles.arriveSectionLabel}>Este punto</Text>
+                <Text style={styles.arriveSectionLabel}>Este punto (opcional)</Text>
               )}
               {primaryArrivePickups.map((b) => (
                 <View key={`p:${b.id}`} style={styles.arriveRow}>
@@ -2151,7 +2146,7 @@ export function RideDetailScreen() {
                 onPress={() => setArriveExtraExpanded((v) => !v)}
               >
                 <Text style={styles.arriveExpandText}>
-                  {arriveExtraExpanded ? '▼' : '▶'} Subió (cerca del minibús, ≤{ARRIVE_NEAR_BUS_M} m)
+                  {arriveExtraExpanded ? '▼' : '▶'} Subió cerca del minibús (opcional, ≤{ARRIVE_NEAR_BUS_M} m)
                   {extraArrivePickups.length > 0 ? ` · ${extraArrivePickups.length}` : ''}
                 </Text>
               </TouchableOpacity>
@@ -2193,7 +2188,7 @@ export function RideDetailScreen() {
                   onPress={() => setArriveDropExpanded((v) => !v)}
                 >
                   <Text style={styles.arriveExpandText}>
-                    {arriveDropExpanded ? '▼' : '▶'} Bajar (orden de bajada en el recorrido)
+                    {arriveDropExpanded ? '▼' : '▶'} Bajar en el recorrido (opcional)
                     {dropoffArriveList.length > 0 ? ` · ${dropoffArriveList.length}` : ''}
                   </Text>
                 </TouchableOpacity>
@@ -2220,36 +2215,24 @@ export function RideDetailScreen() {
                 : null}
             </ScrollView>
             <View style={styles.arriveFooter}>
-              {!arriveModalHasWork ? (
-                <TouchableOpacity
-                  style={[styles.arriveConfirm, submittingArrive && styles.btnDisabled]}
-                  disabled={submittingArrive}
-                  onPress={() => void submitArriveModal()}
-                >
-                  <Text style={styles.arriveConfirmText}>
-                    {submittingArrive ? 'Guardando…' : 'Continuar viaje'}
-                  </Text>
-                </TouchableOpacity>
-              ) : (
-                <>
-                  <TouchableOpacity
-                    style={styles.arriveCancel}
-                    onPress={() => {
-                      setArriveModalOpen(false);
-                      void setRideAwaitingStopConfirmation(rideId, false);
-                    }}
-                  >
-                    <Text style={styles.arriveCancelText}>Cancelar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.arriveConfirm, (!allArriveDecisionsSet || submittingArrive) && styles.btnDisabled]}
-                    disabled={!allArriveDecisionsSet || submittingArrive}
-                    onPress={() => void submitArriveModal()}
-                  >
-                    <Text style={styles.arriveConfirmText}>{submittingArrive ? 'Guardando…' : 'Confirmar'}</Text>
-                  </TouchableOpacity>
-                </>
-              )}
+              <TouchableOpacity
+                style={styles.arriveCancel}
+                onPress={() => {
+                  setArriveModalOpen(false);
+                  void setRideAwaitingStopConfirmation(rideId, false);
+                }}
+              >
+                <Text style={styles.arriveCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.arriveConfirm, submittingArrive && styles.btnDisabled]}
+                disabled={submittingArrive}
+                onPress={() => void submitArriveModal()}
+              >
+                <Text style={styles.arriveConfirmText}>
+                  {submittingArrive ? 'Guardando…' : arriveModalHasPassengers ? 'Confirmar y seguir' : 'Continuar viaje'}
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -2482,6 +2465,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginTop: 4,
     marginBottom: 8,
+  },
+  arriveSectionHint: {
+    fontSize: 13,
+    color: '#6b7280',
+    marginBottom: 10,
+    lineHeight: 18,
   },
   arriveExpandHit: {
     marginTop: 12,

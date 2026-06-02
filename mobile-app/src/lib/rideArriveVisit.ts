@@ -42,7 +42,7 @@ export function driverNearArriveAnchor(
 export function hasBoardingEvent(
   events: BoardingEventLite[],
   bookingId: string,
-  type: 'boarded' | 'no_show' | 'dropped_off'
+  type: 'boarded' | 'no_show' | 'dropped_off' | 'stop_visited'
 ): boolean {
   return events.some((e) => String(e.booking_id) === bookingId && e.event_type === type);
 }
@@ -59,6 +59,18 @@ export function pickupDecisionDone(events: BoardingEventLite[], bookingId: strin
 
 export function dropoffDone(events: BoardingEventLite[], bookingId: string): boolean {
   return hasBoardingEvent(events, bookingId, 'dropped_off');
+}
+
+export function stopVisitAcknowledged(events: BoardingEventLite[], bookingId: string): boolean {
+  return hasBoardingEvent(events, bookingId, 'stop_visited');
+}
+
+export function pickupVisitDone(events: BoardingEventLite[], bookingId: string): boolean {
+  return pickupDecisionDone(events, bookingId) || stopVisitAcknowledged(events, bookingId);
+}
+
+export function dropoffVisitDone(events: BoardingEventLite[], bookingId: string): boolean {
+  return dropoffDone(events, bookingId) || stopVisitAcknowledged(events, bookingId);
 }
 
 export function boardedBookingsPendingDropoff(
