@@ -1509,61 +1509,16 @@ export function RideDetailScreen() {
     };
   }, [session?.id, ride, rideId]);
 
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="appBrand.colors.primary" />
-      </View>
-    );
-  }
-
-  if (error || !ride) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>{error ?? 'No disponible'}</Text>
-        <TouchableOpacity style={styles.btn} onPress={() => navigation.goBack()}>
-          <Text style={styles.btnText}>Volver</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  const driver = ride.driver as {
-    full_name?: string;
-    rating_average?: number;
-    rating_count?: number;
-    avatar_url?: string | null;
-    vehicle_photo_url?: string | null;
-  } | null;
-  const isOwn = Boolean(session?.id && ride.driver_id === session.id);
-  const driverRatingLabel = driver
-    ? formatProfileRatingLabel(driver.rating_average, driver.rating_count)
-    : null;
-  const available = Math.max(0, Number(ride.available_seats ?? 0));
-  const totalSeats = Math.max(0, Number(ride.total_seats ?? 0));
-  const status = String(ride.status ?? '');
-  /** Conductor con viaje en curso: UI más compacta (mapa + acciones; sin textos repetidos de publicación). */
+  /** Siempre antes de returns tempranos (Rules of Hooks). */
+  const isOwn = Boolean(session?.id && ride && String(ride.driver_id) === String(session.id));
+  const status = String(ride?.status ?? '');
   const driverUiEnRoute = isOwn && status === 'en_route';
   const passengerUiActive = Boolean(!isOwn && passengerBooking && !passengerTripEnded);
-  const depIso = ride.departure_time ? String(ride.departure_time) : '';
-  const priceSeat = Number(ride.price_per_seat ?? 0);
-  const description = ride.description != null ? String(ride.description).trim() : '';
-  const routeNameLine = ride.route_name != null ? String(ride.route_name).trim() : '';
-  const durMin = Number(ride.estimated_duration_minutes ?? 0);
-  const flexible = Boolean(ride.flexible_departure);
-  const maxDevKm = Number(ride.max_deviation_km ?? 0);
-  const vehicleInfo = ride.vehicle_info as { model?: string; year?: number } | null | undefined;
-  const vehicleLine =
-    vehicleInfo && (String(vehicleInfo.model ?? '').trim() || vehicleInfo.year != null)
-      ? [String(vehicleInfo.model ?? '').trim(), vehicleInfo.year != null ? String(vehicleInfo.year) : '']
-          .filter(Boolean)
-          .join(' · ')
-      : '';
-  const stCfg = rideStatusConfig(status);
+  const awaitingStop = Boolean(ride?.awaiting_stop_confirmation);
+  const hasActiveVisit = currentVisitIndex >= 0;
 
-  const awaitingStop = Boolean(ride.awaiting_stop_confirmation);
-  const passengerEtaToPickupMin = (() => {
-    if (isOwn || status !== 'en_route') return null;
+  const passengerEtaToPickupMin = useMemo(() => {
+    if (!ride || isOwn || status !== 'en_route') return null;
     if (!driverLocationForMap || !passengerPickupPoint) return null;
     const routePoints = resolvedRideRoute.points;
     const routeLen = polylineLengthMeters(routePoints);
@@ -1576,10 +1531,17 @@ export function RideDetailScreen() {
       }
     }
     if (!Number.isFinite(meters) || meters <= 0) return null;
-    // ETA aproximado para mostrar progreso en vivo sin bloquear UI.
     const avgCitySpeedKmh = 28;
     return Math.max(1, Math.round((meters / 1000 / avgCitySpeedKmh) * 60));
-  })();
+  }, [
+    ride,
+    isOwn,
+    status,
+    driverLocationForMap,
+    passengerPickupPoint,
+    resolvedRideRoute.points,
+  ]);
+
   const passengerBoarded = useMemo(() => {
     if (!passengerBooking) return false;
     const bid = passengerBooking.id;
@@ -1587,20 +1549,11 @@ export function RideDetailScreen() {
       (e) => String(e.booking_id) === bid && String(e.event_type) === 'boarded'
     );
   }, [passengerBooking, boardingEvents]);
+
   const passengerEtaForBadge = useMemo(() => {
     if (!passengerUiActive || passengerBoarded || status !== 'en_route') return null;
     return passengerEtaToPickupMin;
   }, [passengerUiActive, passengerBoarded, status, passengerEtaToPickupMin]);
-  const allVisitsDone =
-    mapVisitOrderRows.length > 0 && mapVisitProgressList.every((p) => p === 'done');
-  const canCompleteByStops = mapVisitOrderRows.length === 0 || allVisitsDone;
-  const hasActiveVisit = currentVisitIndex >= 0;
-
-  const canStart = isOwn && (status === 'published' || status === 'booked');
-  const canComplete = isOwn && status === 'en_route' && canCompleteByStops && !awaitingStop;
-  const canCancel = isOwn && (status === 'published' || status === 'booked' || status === 'draft');
-  const canEdit =
-    isOwn && status !== 'en_route' && status !== 'completed' && status !== 'cancelled';
 
   const driverCanPressLlegue = useMemo(() => {
     if (!driverUiEnRoute || !hasActiveVisit || awaitingStop || !orderedNavigationTarget) return false;
@@ -1628,6 +1581,63 @@ export function RideDetailScreen() {
       title: 'Detalle del viaje',
     });
   }, [navigation, driverUiEnRoute, passengerUiActive]);
+
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="appBrand.colors.primary" />
+      </View>
+    );
+  }
+
+  if (error || !ride) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>{error ?? 'No disponible'}</Text>
+        <TouchableOpacity style={styles.btn} onPress={() => navigation.goBack()}>
+          <Text style={styles.btnText}>Volver</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const driver = ride.driver as {
+    full_name?: string;
+    rating_average?: number;
+    rating_count?: number;
+    avatar_url?: string | null;
+    vehicle_photo_url?: string | null;
+  } | null;
+  const driverRatingLabel = driver
+    ? formatProfileRatingLabel(driver.rating_average, driver.rating_count)
+    : null;
+  const available = Math.max(0, Number(ride.available_seats ?? 0));
+  const totalSeats = Math.max(0, Number(ride.total_seats ?? 0));
+  const depIso = ride.departure_time ? String(ride.departure_time) : '';
+  const priceSeat = Number(ride.price_per_seat ?? 0);
+  const description = ride.description != null ? String(ride.description).trim() : '';
+  const routeNameLine = ride.route_name != null ? String(ride.route_name).trim() : '';
+  const durMin = Number(ride.estimated_duration_minutes ?? 0);
+  const flexible = Boolean(ride.flexible_departure);
+  const maxDevKm = Number(ride.max_deviation_km ?? 0);
+  const vehicleInfo = ride.vehicle_info as { model?: string; year?: number } | null | undefined;
+  const vehicleLine =
+    vehicleInfo && (String(vehicleInfo.model ?? '').trim() || vehicleInfo.year != null)
+      ? [String(vehicleInfo.model ?? '').trim(), vehicleInfo.year != null ? String(vehicleInfo.year) : '']
+          .filter(Boolean)
+          .join(' · ')
+      : '';
+  const stCfg = rideStatusConfig(status);
+
+  const allVisitsDone =
+    mapVisitOrderRows.length > 0 && mapVisitProgressList.every((p) => p === 'done');
+  const canCompleteByStops = mapVisitOrderRows.length === 0 || allVisitsDone;
+
+  const canStart = isOwn && (status === 'published' || status === 'booked');
+  const canComplete = isOwn && status === 'en_route' && canCompleteByStops && !awaitingStop;
+  const canCancel = isOwn && (status === 'published' || status === 'booked' || status === 'draft');
+  const canEdit =
+    isOwn && status !== 'en_route' && status !== 'completed' && status !== 'cancelled';
 
   const openExternalNavigation = async (lat: number, lng: number) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
