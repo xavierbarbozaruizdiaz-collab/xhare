@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
+import { useAdminAuth } from '../AdminAuthContext';
 import {
   fetchActiveDriverDebtLimitDefault,
   normalizeDriverDebtLimit,
@@ -76,6 +77,7 @@ const DOC_TYPE_LABEL: Record<DriverDocumentType, string> = {
 };
 
 export default function AdminDriversPage() {
+  const { accessToken, ready, isAdmin, refetch } = useAdminAuth();
   const [pending, setPending] = useState<Profile[]>([]);
   const [approved, setApproved] = useState<Array<Profile & { account?: DriverAccount | null }>>([]);
   const [loading, setLoading] = useState(true);
@@ -88,6 +90,8 @@ export default function AdminDriversPage() {
   const [docsQuery, setDocsQuery] = useState('');
   const [expandedDriverDocs, setExpandedDriverDocs] = useState<Record<string, boolean>>({});
   const [defaultDebtLimitPyg, setDefaultDebtLimitPyg] = useState(50000);
+  const [emailById, setEmailById] = useState<Record<string, string | null>>({});
+  const requestedEmailIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     loadPending();
@@ -95,6 +99,42 @@ export default function AdminDriversPage() {
     loadDriverDocs();
     void fetchActiveDriverDebtLimitDefault().then(setDefaultDebtLimitPyg);
   }, []);
+
+  // El email vive en auth.users (no en profiles); se obtiene vía API admin con service role.
+  useEffect(() => {
+    if (!ready || !isAdmin) return;
+    const ids = [...pending, ...approved]
+      .map((p) => p.id)
+      .filter((id) => !requestedEmailIdsRef.current.has(id));
+    if (ids.length === 0) return;
+    ids.forEach((id) => requestedEmailIdsRef.current.add(id));
+
+    void (async () => {
+      let token = accessToken;
+      if (!token) token = await refetch();
+      if (!token) return;
+      const doFetch = (bearer: string) =>
+        fetch('/api/admin/user-emails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` },
+          body: JSON.stringify({ ids }),
+        });
+      let res = await doFetch(token);
+      if (res.status === 401) {
+        const refreshed = await refetch();
+        if (refreshed) res = await doFetch(refreshed);
+      }
+      if (!res.ok) {
+        // Permitir reintento en el próximo render si falló la carga.
+        ids.forEach((id) => requestedEmailIdsRef.current.delete(id));
+        return;
+      }
+      const json = (await res.json().catch(() => ({}))) as { emails?: Record<string, string | null> };
+      if (json.emails) {
+        setEmailById((prev) => ({ ...prev, ...json.emails }));
+      }
+    })();
+  }, [ready, isAdmin, accessToken, refetch, pending, approved]);
 
   async function loadDriverDocs() {
     const { data } = await supabase
@@ -556,6 +596,7 @@ export default function AdminDriversPage() {
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-gray-900">{p.full_name || 'Sin nombre'}</p>
                 <p className="text-sm text-gray-600">{p.phone || 'Sin teléfono'}</p>
+                <p className="text-sm text-gray-600">{emailById[p.id] || 'Sin correo'}</p>
                 {(p.address || p.city) && (
                   <p className="text-sm text-gray-500 mt-1">
                     {[p.address, p.city].filter(Boolean).join(', ') || 'Sin domicilio'}
@@ -622,6 +663,11 @@ export default function AdminDriversPage() {
                         <span>{d.full_name || d.id.slice(0, 8)}</span>
                         {vehicleDataSummary(d) ? (
                           <p className="text-xs text-gray-500 mt-0.5">{vehicleDataSummary(d)}</p>
+                        ) : null}
+                        {(d.phone || emailById[d.id]) ? (
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            {[d.phone, emailById[d.id]].filter(Boolean).join(' · ')}
+                          </p>
                         ) : null}
                       </div>
                     </div>
