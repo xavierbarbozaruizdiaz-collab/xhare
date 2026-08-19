@@ -2,12 +2,13 @@
  * Root: Auth stack (Login) vs Main stack (Tabs + RideDetail, BookRide, PublishRide).
  * Deep links: xhare://ride/{rideId} → RideDetail, xhare://chat/{conversationId} → Chat.
  */
-import React, { useEffect, useRef } from 'react';
-import { View } from 'react-native';
-import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, View, type AppStateStatus } from 'react-native';
+import { NavigationContainer, useFocusEffect, useNavigationContainerRef } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createBottomTabNavigator, BottomTabBar } from '@react-navigation/bottom-tabs';
+import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { getAppFlavor } from '../core/flavor';
 import { appBrand } from '../ui/theme/brand';
@@ -15,6 +16,8 @@ import { useAuth } from '../auth/AuthContext';
 import { LoadingScreen } from '../ui/LoadingScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { HomeScreen } from '../screens/HomeScreen';
+import { SavedRoutesScreen } from '../screens/SavedRoutesScreen';
+import { GananciasScreen } from '../screens/GananciasScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { PassengerScreen } from '../screens/PassengerScreen';
 import { RideDetailScreen } from '../screens/RideDetailScreen';
@@ -39,6 +42,7 @@ import { SaveTripRequestScreen } from '../screens/SaveTripRequestScreen';
 import { LegalAcceptanceScreen } from '../screens/LegalAcceptanceScreen';
 import { PassengerRateDriverGate } from '../components/PassengerRateDriverGate';
 import { ActiveRideResumeGate } from '../components/ActiveRideResumeGate';
+import { fetchPassengerNavTabsVisible } from '../backend/passengerUiSettings';
 import type { RootStackParamList } from './types';
 import type { MainStackParamList } from './types';
 import type { MainTabParamList } from './types';
@@ -49,14 +53,64 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
 
 const TAB_ICONS: Record<string, { active: string; inactive: string }> = {
   Home: { active: 'home', inactive: 'home-outline' },
-  Passenger: { active: 'people', inactive: 'people-outline' },
+  SavedRoutes: { active: 'star', inactive: 'star-outline' },
+  Ganancias: { active: 'wallet', inactive: 'wallet-outline' },
+  Passenger: { active: 'compass', inactive: 'compass-outline' },
   Settings: { active: 'settings', inactive: 'settings-outline' },
 };
 
+const HIDDEN_TAB_ITEM_STYLE = { display: 'none' as const, width: 0, height: 0, overflow: 'hidden' as const };
+
+function PassengerTabBar({
+  rutasVisible,
+  explorarVisible,
+  ...barProps
+}: BottomTabBarProps & { rutasVisible: boolean; explorarVisible: boolean }) {
+  const current = barProps.state.routes[barProps.state.index]?.name;
+  useEffect(() => {
+    if ((!rutasVisible && current === 'SavedRoutes') || (!explorarVisible && current === 'Passenger')) {
+      barProps.navigation.navigate('Home');
+    }
+  }, [rutasVisible, explorarVisible, current, barProps.navigation]);
+  return <BottomTabBar {...barProps} />;
+}
+
 function MainTabs() {
   const flavor = getAppFlavor();
+  const [rutasVisible, setRutasVisible] = useState(false);
+  const [explorarVisible, setExplorarVisible] = useState(false);
+
+  const refreshPassengerTabs = useCallback(() => {
+    if (flavor !== 'passenger') return;
+    void fetchPassengerNavTabsVisible().then((next) => {
+      setRutasVisible(next.rutas);
+      setExplorarVisible(next.explorar);
+    });
+  }, [flavor]);
+
+  useEffect(() => {
+    refreshPassengerTabs();
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (next === 'active') refreshPassengerTabs();
+    });
+    return () => sub.remove();
+  }, [refreshPassengerTabs]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshPassengerTabs();
+    }, [refreshPassengerTabs])
+  );
+
   return (
     <Tab.Navigator
+      tabBar={
+        flavor === 'passenger'
+          ? (props) => (
+              <PassengerTabBar {...props} rutasVisible={rutasVisible} explorarVisible={explorarVisible} />
+            )
+          : (props) => <BottomTabBar {...props} />
+      }
       screenOptions={({ route }) => ({
         headerShown: true,
         tabBarLabelStyle: { fontSize: 12, fontFamily: appBrand.fonts.semibold },
@@ -105,7 +159,30 @@ function MainTabs() {
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ title: 'Inicio' }} />
       {flavor === 'passenger' ? (
-        <Tab.Screen name="Passenger" component={PassengerScreen} options={{ title: 'Pasajero' }} />
+        <Tab.Screen
+          name="SavedRoutes"
+          component={SavedRoutesScreen}
+          options={{
+            title: 'Rutas',
+            headerTitle: 'Rutas guardadas',
+            tabBarButton: rutasVisible ? undefined : () => null,
+            tabBarItemStyle: rutasVisible ? undefined : HIDDEN_TAB_ITEM_STYLE,
+          }}
+        />
+      ) : null}
+      {flavor === 'driver' ? (
+        <Tab.Screen name="Ganancias" component={GananciasScreen} options={{ title: 'Ganancias' }} />
+      ) : null}
+      {flavor === 'passenger' ? (
+        <Tab.Screen
+          name="Passenger"
+          component={PassengerScreen}
+          options={{
+            title: 'Explorar',
+            tabBarButton: explorarVisible ? undefined : () => null,
+            tabBarItemStyle: explorarVisible ? undefined : HIDDEN_TAB_ITEM_STYLE,
+          }}
+        />
       ) : null}
       <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: 'Ajustes' }} />
     </Tab.Navigator>

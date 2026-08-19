@@ -179,7 +179,6 @@ export function SearchPublishedRidesScreen() {
   const [arrivalTimeHm, setArrivalTimeHm] = useState('');
   const arrivalSyncedFromStoredPickupRef = useRef(false);
   const [shareCodeQuery, setShareCodeQuery] = useState('');
-  const [routeNameQuery, setRouteNameQuery] = useState('');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
   const [originGeo, setOriginGeo] = useState<Point | null>(null);
@@ -227,8 +226,12 @@ export function SearchPublishedRidesScreen() {
     let cancelled = false;
     void (async () => {
       const snap = await getPassengerFavorite(userId, favoriteSlot);
-      if (cancelled || !snap) return;
-      setDate(snap.scheduledDateYmd?.trim() || snap.date);
+      if (cancelled) return;
+      if (!snap) {
+        setDate(toYmdLocal(new Date()));
+        return;
+      }
+      setDate(snap.scheduledDateYmd?.trim() || snap.date?.trim() || toYmdLocal(new Date()));
       setFromTime(snap.scheduledTimeHm?.trim() || snap.fromTime);
       const storedArrival = snap.scheduledArrivalTimeHm?.trim();
       if (storedArrival) {
@@ -238,7 +241,7 @@ export function SearchPublishedRidesScreen() {
         setArrivalTimeHm('');
         arrivalSyncedFromStoredPickupRef.current = false;
       }
-      setRouteNameQuery(snap.routeNameQuery);
+      setShareCodeQuery('');
       setOrigin(snap.origin);
       setDestination(snap.destination);
       setOriginGeo(
@@ -399,10 +402,11 @@ export function SearchPublishedRidesScreen() {
     saveFavoriteInFlightRef.current = true;
     setSavingFavorite(true);
     try {
+      // Guardar config no activa demanda: el switch de Rutas guardadas crea la trip_request + atajo admin.
       await upsertPassengerFavorite(userId, favoriteSlot, {
         date: date.trim(),
         fromTime: scheduledHm,
-        routeNameQuery: routeNameQuery.trim(),
+        routeNameQuery: '',
         origin: origin.trim(),
         destination: destination.trim(),
         originLat: originGeo?.lat ?? null,
@@ -410,7 +414,7 @@ export function SearchPublishedRidesScreen() {
         destinationLat: destGeo?.lat ?? null,
         destinationLng: destGeo?.lng ?? null,
         rideKind,
-        enabled: true,
+        enabled: false,
         scheduleDaily,
         scheduleWeekdayMask: scheduleDaily ? maskToSave : SCHEDULE_WEEKDAY_MASK_ALL,
         scheduledDateYmd: date.trim(),
@@ -422,12 +426,12 @@ export function SearchPublishedRidesScreen() {
       const store = await loadPassengerFavorites(userId);
       void pushPassengerHomeMapShortcuts(store);
       const lines = [`Se guardó tu favorito «${favoritePairLabel(favoriteSlot)}» en este dispositivo.`];
-      lines.push('Si querés registrar solicitud pending, activá el favorito desde Inicio.');
+      lines.push('Para que figure en demanda agrupada y en el mapa admin, activá el switch desde Rutas.');
 
       Alert.alert('Guardado', lines.join('\n\n'), [
         {
           text: 'OK',
-          onPress: () => navigation.navigate('MainTabs'),
+          onPress: () => navigation.navigate('MainTabs', { screen: 'SavedRoutes' }),
         },
       ]);
     } catch {
@@ -441,7 +445,6 @@ export function SearchPublishedRidesScreen() {
     userId,
     date,
     fromTime,
-    routeNameQuery,
     origin,
     destination,
     originGeo,
@@ -549,17 +552,23 @@ export function SearchPublishedRidesScreen() {
         <Text style={styles.formSectionKicker}>DETALLE DEL TRAYECTO</Text>
       ) : null}
 
-      <Text style={styles.label}>Ingrese código o nombre de ruta</Text>
-      <TextInput
-        style={styles.input}
-        value={shareCodeQuery}
-        onChangeText={(t) => setShareCodeQuery(t)}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="Ingrese código o nombre de ruta"
-        placeholderTextColor="#9ca3af"
-      />
-      <Text style={styles.label}>Fecha del viaje (opcional)</Text>
+      {!isFavoriteMode ? (
+        <>
+          <Text style={styles.label}>Ingrese código o nombre de ruta</Text>
+          <TextInput
+            style={styles.input}
+            value={shareCodeQuery}
+            onChangeText={(t) => setShareCodeQuery(t)}
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="Ingrese código o nombre de ruta"
+            placeholderTextColor="#9ca3af"
+          />
+        </>
+      ) : null}
+      <Text style={styles.label}>
+        {isFavoriteMode ? 'Fecha del viaje' : 'Fecha del viaje (opcional)'}
+      </Text>
       <TouchableOpacity
         style={styles.pickerRow}
         onPress={() => setShowDatePicker(true)}
@@ -567,7 +576,7 @@ export function SearchPublishedRidesScreen() {
         accessibilityLabel="Elegir fecha"
       >
         <Text style={date.trim() ? styles.pickerValue : styles.pickerPlaceholder}>
-          {date.trim() || 'Sin fecha'}
+          {date.trim() || (isFavoriteMode ? 'Elegí fecha' : 'Sin fecha')}
         </Text>
       </TouchableOpacity>
       {showDatePicker ? (
@@ -664,7 +673,7 @@ export function SearchPublishedRidesScreen() {
             <Text style={styles.dailyHint}>
               {favoriteArrivalCopy
                 ? 'Si activás, cada día se usa la misma hora de llegada y la salida se ajusta con la ruta del mapa.'
-                : 'Si activás, se agenda todos los días a esta hora hasta apagar el switch en Inicio.'}
+                : 'Si activás, se agenda todos los días a esta hora hasta apagar el switch en Rutas.'}
             </Text>
           </View>
           <Switch

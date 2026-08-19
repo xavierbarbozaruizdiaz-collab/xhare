@@ -17,6 +17,8 @@ const SHORTCUTS_KEY = 'passenger_home_shortcuts_visible';
 const FAVORITES_TITLE_KEY = 'passenger_home_favorites_title';
 const FAVORITES_SUBTITLE_KEY = 'passenger_home_favorites_subtitle';
 const PASSENGER_PRICING_POLYLINE_VISIBLE_KEY = 'passenger_pricing_polyline_visible';
+const PASSENGER_TAB_RUTAS_VISIBLE_KEY = 'passenger_tab_rutas_visible';
+const PASSENGER_TAB_EXPLORAR_VISIBLE_KEY = 'passenger_tab_explorar_visible';
 const DRIVER_HOME_HOW_TO_KEY = 'driver_home_how_to';
 
 const DEFAULT_DRIVER_HOW_TO = {
@@ -51,6 +53,14 @@ function parseShortcutsVisible(raw: unknown): boolean {
   return true;
 }
 
+function parseBooleanSetting(raw: unknown, fallback: boolean): boolean {
+  if (typeof raw === 'boolean') return raw;
+  if (raw && typeof raw === 'object' && 'visible' in (raw as object)) {
+    return Boolean((raw as { visible?: unknown }).visible);
+  }
+  return fallback;
+}
+
 export default function AdminSettingsPage() {
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
@@ -66,6 +76,13 @@ export default function AdminSettingsPage() {
   const [pricingPolylineLoading, setPricingPolylineLoading] = useState(true);
   const [pricingPolylineSaving, setPricingPolylineSaving] = useState(false);
   const [pricingPolylineDone, setPricingPolylineDone] = useState(false);
+  const [rutasTabVisible, setRutasTabVisible] = useState(false);
+  const [explorarTabVisible, setExplorarTabVisible] = useState(false);
+  const [passengerTabsLoading, setPassengerTabsLoading] = useState(true);
+  const [rutasTabSaving, setRutasTabSaving] = useState(false);
+  const [explorarTabSaving, setExplorarTabSaving] = useState(false);
+  const [rutasTabDone, setRutasTabDone] = useState(false);
+  const [explorarTabDone, setExplorarTabDone] = useState(false);
   const [favoritesTitle, setFavoritesTitle] = useState('');
   const [favoritesSubtitle, setFavoritesSubtitle] = useState('');
   const [favoritesCopyLoading, setFavoritesCopyLoading] = useState(true);
@@ -212,6 +229,17 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     (async () => {
+      const [rutasRes, explorarRes] = await Promise.all([
+        supabase.from('settings').select('value').eq('key', PASSENGER_TAB_RUTAS_VISIBLE_KEY).maybeSingle(),
+        supabase.from('settings').select('value').eq('key', PASSENGER_TAB_EXPLORAR_VISIBLE_KEY).maybeSingle(),
+      ]);
+      setRutasTabVisible(parseBooleanSetting(rutasRes.data?.value, false));
+      setExplorarTabVisible(parseBooleanSetting(explorarRes.data?.value, false));
+    })().finally(() => setPassengerTabsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    (async () => {
       const [titleRes, subtitleRes] = await Promise.all([
         supabase.from('settings').select('value').eq('key', FAVORITES_TITLE_KEY).maybeSingle(),
         supabase.from('settings').select('value').eq('key', FAVORITES_SUBTITLE_KEY).maybeSingle(),
@@ -315,6 +343,49 @@ export default function AdminSettingsPage() {
       setShortcutsDone(true);
       window.setTimeout(() => setShortcutsDone(false), 2500);
     }
+  }
+
+  async function upsertBooleanSetting(key: string, next: boolean): Promise<string | null> {
+    const nowIso = new Date().toISOString();
+    const row = { key, value: next, updated_at: nowIso };
+    let { error } = await supabase.from('settings').upsert(row, { onConflict: 'key' });
+    if (error) {
+      const updateRes = await supabase.from('settings').update({ value: next, updated_at: nowIso }).eq('key', key);
+      error = updateRes.error;
+    }
+    return error?.message ?? null;
+  }
+
+  async function handleRutasTabToggle(next: boolean) {
+    const prev = rutasTabVisible;
+    setRutasTabVisible(next);
+    setRutasTabSaving(true);
+    setRutasTabDone(false);
+    const message = await upsertBooleanSetting(PASSENGER_TAB_RUTAS_VISIBLE_KEY, next);
+    setRutasTabSaving(false);
+    if (message) {
+      setRutasTabVisible(prev);
+      alert(message);
+      return;
+    }
+    setRutasTabDone(true);
+    window.setTimeout(() => setRutasTabDone(false), 2500);
+  }
+
+  async function handleExplorarTabToggle(next: boolean) {
+    const prev = explorarTabVisible;
+    setExplorarTabVisible(next);
+    setExplorarTabSaving(true);
+    setExplorarTabDone(false);
+    const message = await upsertBooleanSetting(PASSENGER_TAB_EXPLORAR_VISIBLE_KEY, next);
+    setExplorarTabSaving(false);
+    if (message) {
+      setExplorarTabVisible(prev);
+      alert(message);
+      return;
+    }
+    setExplorarTabDone(true);
+    window.setTimeout(() => setExplorarTabDone(false), 2500);
   }
 
   async function handleFavoritesCopySave(e: React.FormEvent) {
@@ -681,6 +752,79 @@ export default function AdminSettingsPage() {
             </div>
             {shortcutsSaving && <span className="text-sm text-gray-500">Guardando…</span>}
             {shortcutsDone && !shortcutsSaving && <span className="text-sm text-green-600">Guardado en Supabase.</span>}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-xl mt-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">App pasajero — pestañas Rutas y Explorar</h2>
+        <p className="text-sm text-gray-600 mb-5">
+          Ocultá o mostrá las pestañas de la barra de abajo (estrella Rutas y brújula Explorar). Por ahora quedan
+          ocultas; cuando quieras que se vean, activá cada una acá. El cambio se aplica al reabrir la app o volver
+          de otra pantalla.
+        </p>
+        {passengerTabsLoading ? (
+          <div className="flex justify-center py-6">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600" />
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center gap-4">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={rutasTabVisible}
+                disabled={rutasTabSaving}
+                onClick={() => void handleRutasTabToggle(!rutasTabVisible)}
+                className={`relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 ${
+                  rutasTabVisible ? 'bg-green-600' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow ring-0 transition ${
+                    rutasTabVisible ? 'translate-x-6' : 'translate-x-0.5'
+                  }`}
+                  style={{ marginTop: '1px' }}
+                />
+              </button>
+              <div className="flex-1 min-w-[200px]">
+                <p className="text-sm font-medium text-gray-900">
+                  {rutasTabVisible ? 'Pestaña Rutas visible' : 'Pestaña Rutas oculta'}
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">Estrella en la barra de abajo.</p>
+              </div>
+              {rutasTabSaving && <span className="text-sm text-gray-500">Guardando…</span>}
+              {rutasTabDone && !rutasTabSaving && <span className="text-sm text-green-600">Guardado en Supabase.</span>}
+            </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={explorarTabVisible}
+                disabled={explorarTabSaving}
+                onClick={() => void handleExplorarTabToggle(!explorarTabVisible)}
+                className={`relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 ${
+                  explorarTabVisible ? 'bg-green-600' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow ring-0 transition ${
+                    explorarTabVisible ? 'translate-x-6' : 'translate-x-0.5'
+                  }`}
+                  style={{ marginTop: '1px' }}
+                />
+              </button>
+              <div className="flex-1 min-w-[200px]">
+                <p className="text-sm font-medium text-gray-900">
+                  {explorarTabVisible ? 'Pestaña Explorar visible' : 'Pestaña Explorar oculta'}
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">Brújula en la barra de abajo.</p>
+              </div>
+              {explorarTabSaving && <span className="text-sm text-gray-500">Guardando…</span>}
+              {explorarTabDone && !explorarTabSaving && (
+                <span className="text-sm text-green-600">Guardado en Supabase.</span>
+              )}
+            </div>
           </div>
         )}
       </div>

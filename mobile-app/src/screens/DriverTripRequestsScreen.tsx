@@ -3,7 +3,7 @@
  * "De sistema" agrupa rutas generadas por el motor de agrupación + viajes awaiting_driver.
  */
 import { appBrand } from '../ui/theme/brand';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../backend/supabase';
@@ -207,9 +207,11 @@ export function DriverTripRequestsScreen() {
     await load();
   }, [load]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
   const internalRequests = useMemo(
     () =>
@@ -370,7 +372,7 @@ export function DriverTripRequestsScreen() {
   if (loading && !refreshing) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="appBrand.colors.primary" />
+        <ActivityIndicator size="large" color={appBrand.colors.primary} />
       </View>
     );
   }
@@ -410,40 +412,65 @@ export function DriverTripRequestsScreen() {
 
       {apiError && <Text style={styles.apiError}>{apiError}</Text>}
 
-      {activeTab === 'internal' &&
-        (internalListData.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>No hay solicitudes disponibles pendientes.</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={internalListData}
-            keyExtractor={(item) =>
-              item.kind === 'group' ? `sys1_${item.g.id}` : `req_${String(item.r.id)}`
-            }
-            renderItem={renderInternalItem}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-            contentContainerStyle={styles.listContent}
-          />
-        ))}
-
-      {activeTab === 'long_distance' &&
-        (longRequests.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>No hay ofertas de viajes pendientes.</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={longRequests}
-            keyExtractor={(item) => String(item.id)}
-            renderItem={renderLongItem}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-            contentContainerStyle={styles.listContent}
-          />
-        ))}
-
-      {activeTab === 'system' && (
+      {activeTab === 'internal' ? (
         <FlatList
+          style={styles.list}
+          data={internalListData}
+          keyExtractor={(item) =>
+            item.kind === 'group' ? `sys1_${item.g.id}` : `req_${String(item.r.id)}`
+          }
+          renderItem={renderInternalItem}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>No hay solicitudes disponibles pendientes.</Text>
+              <Text style={styles.emptyHint}>Estirá hacia abajo para actualizar.</Text>
+            </View>
+          }
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void onRefresh()}
+              colors={[appBrand.colors.primary]}
+              tintColor={appBrand.colors.primary}
+            />
+          }
+          contentContainerStyle={[
+            styles.listContent,
+            internalListData.length === 0 ? styles.listContentEmpty : null,
+          ]}
+        />
+      ) : null}
+
+      {activeTab === 'long_distance' ? (
+        <FlatList
+          style={styles.list}
+          data={longRequests}
+          keyExtractor={(item) => String(item.id)}
+          renderItem={renderLongItem}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>No hay ofertas de viajes pendientes.</Text>
+              <Text style={styles.emptyHint}>Estirá hacia abajo para actualizar.</Text>
+            </View>
+          }
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void onRefresh()}
+              colors={[appBrand.colors.primary]}
+              tintColor={appBrand.colors.primary}
+            />
+          }
+          contentContainerStyle={[
+            styles.listContent,
+            longRequests.length === 0 ? styles.listContentEmpty : null,
+          ]}
+        />
+      ) : null}
+
+      {activeTab === 'system' ? (
+        <FlatList
+          style={styles.list}
           data={systemListData}
           keyExtractor={(item) => (item.kind === 'group' ? `g_${item.g.id}` : `r_${item.r.id}`)}
           ListHeaderComponent={
@@ -477,6 +504,7 @@ export function DriverTripRequestsScreen() {
               <Text style={styles.emptyText}>
                 No hay rutas o viajes de sistema para {activeSystemSubTab === 'hex' ? 'Hex' : 'Interior'}.
               </Text>
+              <Text style={styles.emptyHint}>Estirá hacia abajo para actualizar.</Text>
             </View>
           }
           renderItem={({ item }) =>
@@ -514,17 +542,33 @@ export function DriverTripRequestsScreen() {
               />
             )
           }
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void onRefresh()}
+              colors={[appBrand.colors.primary]}
+              tintColor={appBrand.colors.primary}
+            />
+          }
+          contentContainerStyle={[
+            styles.listContent,
+            systemListData.length === 0 ? styles.listContentEmpty : null,
+          ]}
         />
-      )}
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
+  list: { flex: 1 },
+  listContent: { paddingBottom: 24 },
+  listContentEmpty: { flexGrow: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  empty: { paddingVertical: 28, paddingHorizontal: 8, alignItems: 'center' },
+  emptyText: { fontSize: 14, color: '#6b7280', textAlign: 'center' },
+  emptyHint: { fontSize: 13, color: '#9ca3af', textAlign: 'center', marginTop: 8 },
   myRidesBtn: {
     backgroundColor: '#fff',
     borderWidth: 2,
@@ -579,7 +623,6 @@ const styles = StyleSheet.create({
   systemSubtabBtnText: { fontSize: 12, fontWeight: '700', color: '#6b7280' },
   systemSubtabBtnTextActive: { color: '#0f766e' },
   systemEmptyWrap: { paddingVertical: 8, paddingHorizontal: 4 },
-  listContent: { paddingBottom: 24 },
   card: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -622,6 +665,4 @@ const styles = StyleSheet.create({
   },
   kindBadgeInternal: { backgroundColor: appBrand.colors.greenLight, color: appBrand.colors.primary },
   kindBadgeLong: { backgroundColor: '#ccfbf1', color: '#115e59' },
-  empty: { alignItems: 'center', paddingVertical: 32 },
-  emptyText: { fontSize: 15, color: '#6b7280', textAlign: 'center', lineHeight: 22 },
 });

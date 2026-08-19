@@ -125,8 +125,10 @@ export default function AdminDemandGroupingPage() {
       <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 shadow-sm">
         <h2 className="text-lg font-semibold text-gray-900 mb-1">Ejecutar agrupamiento ahora</h2>
         <p className="text-sm text-gray-700 mb-3 max-w-3xl">
-          Corre el mismo pipeline que el cron (registro en <code className="text-xs bg-white px-1 rounded">demand_grouping_runs</code> con{' '}
-          <code className="text-xs bg-white px-1 rounded">trigger_source: manual</code>). Límite: hasta 4 veces cada 2 minutos por sesión
+          Corre el mismo pipeline que el cron: primero convierte atajos favoritos activos en solicitudes pending (si faltan),
+          luego agrupa con HEX (origen/destino cercanos, misma ventana de hora; no usa el label Casa↔Trabajo). Registro en{' '}
+          <code className="text-xs bg-white px-1 rounded">demand_grouping_runs</code> con{' '}
+          <code className="text-xs bg-white px-1 rounded">trigger_source: manual</code>. Límite: hasta 4 veces cada 2 minutos por sesión
           admin.
         </p>
         <button
@@ -164,7 +166,10 @@ export default function AdminDemandGroupingPage() {
           </li>
           <li>
             <strong>Mapa despacho</strong> puede mostrar <code className="text-xs bg-white px-1 rounded">trip_requests</code> y atajos aunque
-            no haya grupos: son capas distintas.
+            no haya grupos: son capas distintas. Al ejecutar agrupamiento, los atajos activos se materializan a solicitudes antes del HEX.
+          </li>
+          <li>
+            Casa→Trabajo vs Trabajo→Casa es solo el slot del favorito: el motor mira coordenadas (misma dirección geográfica), no el nombre del slot.
           </li>
         </ul>
       </details>

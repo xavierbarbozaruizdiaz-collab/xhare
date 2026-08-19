@@ -1124,7 +1124,7 @@ export async function cancelTripRequest(requestId: string, userId: string) {
 }
 
 /**
- * Al desactivar el favorito en Inicio: cancela solicitudes **pendientes** vinculadas a ese slot.
+ * Al desactivar el favorito en Rutas guardadas: cancela solicitudes **pendientes** vinculadas a ese slot.
  * (Si la solicitud ya pasó a agrupada, el pasajero sigue viendo “Mis solicitudes” hasta salir del grupo desde ahí.)
  */
 export async function cancelTripRequestsForPassengerFavoriteSlot(userId: string, favoriteSlot: string): Promise<void> {
@@ -1198,7 +1198,7 @@ export async function fetchMyBookings(passengerId: string) {
 }
 
 /**
- * Favoritos (Inicio): si el pasajero ya tiene una reserva cuyo ride está `en_route` y coincide con
+ * Favoritos (Rutas guardadas): si el pasajero ya tiene una reserva cuyo ride está `en_route` y coincide con
  * el trayecto del favorito, devolver ese ride para abrir el mapa directo.
  */
 export async function findEnRouteRideIdForFavorite(

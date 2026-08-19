@@ -165,7 +165,7 @@ export function MyBookingsScreen() {
         ListEmptyComponent={
           <Text style={styles.emptyText}>
             {tab === 'active'
-              ? 'No tenés reservas activas. Buscá viajes desde Inicio o la pestaña Pasajero.'
+              ? 'No tenés reservas activas. Buscá viajes desde Inicio o Explorar.'
               : 'Todavía no hay viajes en tu historial. Cuando un viaje termine, vas a verlo acá.'}
           </Text>
         }

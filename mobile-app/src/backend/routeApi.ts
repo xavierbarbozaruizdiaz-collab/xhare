@@ -379,3 +379,4 @@ export async function fetchSegmentStats(
 
   return cloneSegmentResult(await promise);
 }
+

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { runHexGroupingGooglePass } from '@/lib/demand-hex-google-optimize';
+import { materializeEnabledShortcutsToTripRequests } from '@/lib/materialize-shortcut-trip-requests';
 
 function parseHexGroupIds(data: unknown): string[] {
   if (!data || typeof data !== 'object') return [];
@@ -34,9 +35,15 @@ export function normalizeDemandGroupingParams(body: {
   };
 }
 
+/** Tolerancia vecina HEX: el mayor entre origen/destino (mín. 6 km, alineado al default del RPC). */
+export function neighborKmFromParams(params: DemandGroupingParams): number {
+  return Math.max(6, params.maxOriginKm, params.maxDestKm);
+}
+
 /**
  * Pipeline actual: solo HEX.
  * Los motores corridor/classified y geo_sync quedan deshabilitados en runtime.
+ * Antes del RPC: materializa atajos favoritos activos → trip_requests pending.
  */
 export async function runDemandGroupingPipeline(
   service: SupabaseClient,
@@ -45,10 +52,36 @@ export async function runDemandGroupingPipeline(
 ): Promise<{ steps: DemandGroupingStep[] }> {
   const steps: DemandGroupingStep[] = [];
   const { maxSeats } = params;
+  const neighborKm = neighborKmFromParams(params);
+
+  try {
+    const mat = await materializeEnabledShortcutsToTripRequests(service);
+    // No bloquea el HEX: errores parciales van en el body; solo falla el paso si no se pudo listar atajos.
+    const listFailed = mat.errors.length > 0 && mat.scanned === 0;
+    steps.push({
+      name: 'materialize_shortcut_trip_requests',
+      status: listFailed ? 500 : 200,
+      body: {
+        ok: !listFailed,
+        ...mat,
+        note: 'Atajos con switch activo → solicitudes pending hex-ready (no reemplaza trip_requests).',
+      },
+    });
+  } catch (e) {
+    steps.push({
+      name: 'materialize_shortcut_trip_requests',
+      status: 500,
+      body: {
+        ok: false,
+        error: e instanceof Error ? e.message : 'Error materializando atajos',
+      },
+    });
+  }
 
   if (mode === 'both' || mode === 'classified' || mode === 'geo') {
     const { data: hexData, error: hexErr } = await service.rpc('auto_group_hex_trip_requests_v3', {
       p_max_seats: maxSeats,
+      p_neighbor_km: neighborKm,
     });
     if (hexErr) {
       steps.push({
@@ -89,6 +122,7 @@ export async function runDemandGroupingPipeline(
       disabled: ['corridor_bucket', 'classified', 'geo_sync'],
       note: 'Pipeline ejecutado en modo HEX-only.',
       requested_mode: mode,
+      neighbor_km: neighborKm,
     },
   });
 

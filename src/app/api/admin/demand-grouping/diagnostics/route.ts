@@ -44,6 +44,24 @@ export async function GET(request: NextRequest) {
         .or('origin_super_hex.is.null,dest_super_hex.is.null');
       if (noHexErr) notes.push(`pending sin hex: ${noHexErr.message}`);
 
+      const todayYmd = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Asuncion',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+      const { count: enabledShortcutsAhead, error: shortcutErr } = await service
+        .from('passenger_home_map_shortcuts')
+        .select('*', { count: 'exact', head: true })
+        .eq('enabled', true)
+        .gte('scheduled_date', todayYmd);
+      if (shortcutErr) notes.push(`atajos activos: ${shortcutErr.message}`);
+      else {
+        notes.push(
+          'Al ejecutar agrupamiento se materializan atajos activos → trip_requests pending (paso materialize_shortcut_trip_requests).'
+        );
+      }
+
       const routingByEngine: Record<string, number | null> = {};
       for (const engine of ['hex', 'corridor', 'geo', 'unknown'] as const) {
         const { count, error } = await service
@@ -90,6 +108,7 @@ export async function GET(request: NextRequest) {
         routingByEngine,
         pendingHexReadyCount: pendingHexReady ?? null,
         pendingWithoutHexCount: pendingWithoutHex ?? null,
+        enabledShortcutsScheduledFromToday: enabledShortcutsAhead ?? null,
         demandRouteGroupsTotal: groupsTotal ?? null,
         demandRouteGroupsRequestedDateGte7d: groupsLast7d ?? null,
         demandRouteMembersTotal: membersTotal ?? null,

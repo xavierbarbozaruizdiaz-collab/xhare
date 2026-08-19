@@ -12,6 +12,7 @@ import {
   Platform,
   StatusBar,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import MapView, { Polyline, Marker, type MapPressEvent, type Region } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,6 +21,7 @@ import * as Location from 'expo-location';
 import { androidMapProvider } from '../lib/androidMapProvider';
 import { getLocationPermissionStatus, requestLocationPermission } from '../permissions';
 import { MAX_DRIVER_PUBLISH_WAYPOINTS } from '../core/publishRouteLimits';
+import { snapToNearestRoad } from '../lib/snapToNearestRoad';
 
 const GREEN = appBrand.colors.primary;
 
@@ -74,6 +76,7 @@ export function PublishRouteMapModal({
   const [locationOk, setLocationOk] = useState(false);
   const [locating, setLocating] = useState(false);
   const [selectionCenter, setSelectionCenter] = useState<{ lat: number; lng: number } | null>(null);
+  const [snapping, setSnapping] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -180,18 +183,41 @@ export function PublishRouteMapModal({
     [requestRemoveWaypoint]
   );
 
-  const confirmPointAtCenter = useCallback(() => {
-    if (!allowEditingPoints || !selectionCenter) return;
-    const synthetic = {
-      nativeEvent: {
-        coordinate: {
-          latitude: selectionCenter.lat,
-          longitude: selectionCenter.lng,
+  const confirmPointAtCenter = useCallback(async () => {
+    if (!allowEditingPoints || !selectionCenter || snapping) return;
+    setSnapping(true);
+    try {
+      const snapped = await snapToNearestRoad(selectionCenter.lat, selectionCenter.lng);
+      if (snapped.error || snapped.code === 'not_on_road') {
+        Alert.alert(
+          'Marcá sobre una calle',
+          snapped.error ||
+            'Ese punto no está sobre una vía. Mové el mapa hasta una calle y volvé a confirmar.',
+        );
+        return;
+      }
+      mapRef.current?.animateToRegion(
+        {
+          latitude: snapped.lat,
+          longitude: snapped.lng,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
         },
-      },
-    } as MapPressEvent;
-    onMapPress(synthetic);
-  }, [allowEditingPoints, selectionCenter, onMapPress]);
+        280,
+      );
+      const synthetic = {
+        nativeEvent: {
+          coordinate: {
+            latitude: snapped.lat,
+            longitude: snapped.lng,
+          },
+        },
+      } as MapPressEvent;
+      onMapPress(synthetic);
+    } finally {
+      setSnapping(false);
+    }
+  }, [allowEditingPoints, selectionCenter, snapping, onMapPress]);
 
   const modeLabel =
     mapMode === 'origin'
@@ -377,8 +403,9 @@ export function PublishRouteMapModal({
           </View>
           {allowEditingPoints ? (
             <TouchableOpacity
-              style={styles.confirmBtn}
-              onPress={confirmPointAtCenter}
+              style={[styles.confirmBtn, snapping && styles.confirmBtnDisabled]}
+              onPress={() => void confirmPointAtCenter()}
+              disabled={snapping}
               accessibilityRole="button"
               accessibilityLabel={
                 mapMode === 'origin'
@@ -388,13 +415,17 @@ export function PublishRouteMapModal({
                     : 'Confirmar ajuste'
               }
             >
-              <Text style={styles.confirmBtnText}>
-                {mapMode === 'origin'
-                  ? 'Confirmar origen'
-                  : mapMode === 'destination'
-                    ? 'Confirmar destino'
-                    : 'Confirmar ajuste'}
-              </Text>
+              {snapping ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.confirmBtnText}>
+                  {mapMode === 'origin'
+                    ? 'Confirmar origen'
+                    : mapMode === 'destination'
+                      ? 'Confirmar destino'
+                      : 'Confirmar ajuste'}
+                </Text>
+              )}
             </TouchableOpacity>
           ) : null}
         </SafeAreaView>
@@ -484,6 +515,7 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     alignItems: 'center',
   },
+  confirmBtnDisabled: { opacity: 0.6 },
   confirmBtnText: {
     color: '#fff',
     fontSize: 15,

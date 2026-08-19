@@ -10,6 +10,8 @@ const DEFAULT = {
   favoritesSubtitle:
     'Lista apilada con switch: activas solo el trayecto que quieras usar. Cada fila muestra la hora de recogida.',
   pricingPolylineVisible: false,
+  rutasTabVisible: false,
+  explorarTabVisible: false,
 };
 
 function asBoolean(raw: unknown, fallback: boolean): boolean {
@@ -32,12 +34,15 @@ function asText(raw: unknown, fallback: string): string {
 export async function GET() {
   try {
     const service = createServiceClient();
-    const [shortcutsRes, titleRes, subtitleRes, pricingPolylineRes] = await Promise.all([
-      service.from('settings').select('value').eq('key', 'passenger_home_shortcuts_visible').maybeSingle(),
-      service.from('settings').select('value').eq('key', 'passenger_home_favorites_title').maybeSingle(),
-      service.from('settings').select('value').eq('key', 'passenger_home_favorites_subtitle').maybeSingle(),
-      service.from('settings').select('value').eq('key', 'passenger_pricing_polyline_visible').maybeSingle(),
-    ]);
+    const [shortcutsRes, titleRes, subtitleRes, pricingPolylineRes, rutasTabRes, explorarTabRes] =
+      await Promise.all([
+        service.from('settings').select('value').eq('key', 'passenger_home_shortcuts_visible').maybeSingle(),
+        service.from('settings').select('value').eq('key', 'passenger_home_favorites_title').maybeSingle(),
+        service.from('settings').select('value').eq('key', 'passenger_home_favorites_subtitle').maybeSingle(),
+        service.from('settings').select('value').eq('key', 'passenger_pricing_polyline_visible').maybeSingle(),
+        service.from('settings').select('value').eq('key', 'passenger_tab_rutas_visible').maybeSingle(),
+        service.from('settings').select('value').eq('key', 'passenger_tab_explorar_visible').maybeSingle(),
+      ]);
 
     return NextResponse.json(
       {
@@ -45,6 +50,8 @@ export async function GET() {
         favoritesTitle: asText(titleRes.data?.value, DEFAULT.favoritesTitle),
         favoritesSubtitle: asText(subtitleRes.data?.value, DEFAULT.favoritesSubtitle),
         pricingPolylineVisible: asBoolean(pricingPolylineRes.data?.value, DEFAULT.pricingPolylineVisible),
+        rutasTabVisible: asBoolean(rutasTabRes.data?.value, DEFAULT.rutasTabVisible),
+        explorarTabVisible: asBoolean(explorarTabRes.data?.value, DEFAULT.explorarTabVisible),
       },
       {
         headers: {

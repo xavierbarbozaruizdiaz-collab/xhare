@@ -3,7 +3,7 @@
  * Tap → detalle → "Unirme a esta ruta" → marcar puntos en mapa.
  */
 import { appBrand } from '../ui/theme/brand';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -26,6 +27,9 @@ const PRIMARY = appBrand.colors.primary;
 const PAGE_BG = '#f7f8fa';
 const ICON_TILE_BG = '#edf7f1';
 
+const EXPLORAR_HELP =
+  'Mirá rutas con demanda cerca y viajes publicados. Unite marcando origen y destino en el mapa. Te avisamos cuando haya móvil y vas a ver la hora de recogida.';
+
 function formatDate(d: string | null | undefined): string {
   if (!d) return '—';
   return new Date(d + 'T12:00:00').toLocaleDateString('es-PY', {
@@ -39,6 +43,10 @@ function formatTime(t: string | null | undefined): string {
   if (!t) return '—';
   const m = String(t).trim().match(/^(\d{1,2}):(\d{2})/);
   return m ? `${m[1].padStart(2, '0')}:${m[2]}` : '—';
+}
+
+function showExplorarHelp() {
+  Alert.alert('Explorar', EXPLORAR_HELP, [{ text: 'Entendido', style: 'default' }]);
 }
 
 export function PassengerDemandRoutesScreen() {
@@ -75,14 +83,43 @@ export function PassengerDemandRoutesScreen() {
     load();
   }, [load]);
 
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      title: 'Explorar',
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={showExplorarHelp}
+          accessibilityRole="button"
+          accessibilityLabel="Ayuda: Explorar"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={{ marginRight: 12, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.18)' }}
+        >
+          <Ionicons name="information-circle-outline" size={20} color={appBrand.colors.headerTint} />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
+
   const parentNav = navigation.getParent() as { navigate: (a: string, b?: object) => void } | undefined;
 
   const listHeader = (
     <View style={styles.headerBlock}>
-      <Text style={styles.kicker}>EXPLORÁ</Text>
-      <Text style={styles.leadTitle}>Demanda y viajes publicados</Text>
+      <View style={styles.titleRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.kicker}>EXPLORÁ</Text>
+          <Text style={styles.leadTitle}>Demanda y viajes publicados</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.tinyHelpBtn}
+          onPress={showExplorarHelp}
+          accessibilityRole="button"
+          accessibilityLabel="Ayuda: Explorar"
+        >
+          <Ionicons name="information-circle-outline" size={16} color={PRIMARY} />
+        </TouchableOpacity>
+      </View>
       <Text style={styles.leadSubtitle}>
-        Buscá por código o recorrido, abrí la lista del día o revisá tus reservas.
+        Buscá por código o recorrido, o abrí Viajes y Reservas desde Inicio.
       </Text>
 
       <TouchableOpacity
@@ -95,34 +132,9 @@ export function PassengerDemandRoutesScreen() {
         <Text style={styles.searchCardPlaceholder}>Buscá un código o ruta…</Text>
       </TouchableOpacity>
 
-      <View style={styles.quickRow}>
-        <TouchableOpacity
-          style={styles.quickTile}
-          onPress={() => parentNav?.navigate('AvailableRides')}
-          accessibilityRole="button"
-          accessibilityLabel="Ver viajes disponibles publicados hoy"
-        >
-          <View style={styles.quickIconSquare}>
-            <Ionicons name="car-outline" size={24} color={PRIMARY} />
-          </View>
-          <Text style={styles.quickTileLabel}>Viajes disponibles</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.quickTile}
-          onPress={() => parentNav?.navigate('MyBookings')}
-          accessibilityRole="button"
-          accessibilityLabel="Ver mis reservas"
-        >
-          <View style={styles.quickIconSquare}>
-            <Ionicons name="calendar-outline" size={24} color={PRIMARY} />
-          </View>
-          <Text style={styles.quickTileLabel}>Mis reservas</Text>
-        </TouchableOpacity>
-      </View>
-
       <Text style={styles.sectionLabel}>RUTAS CON DEMANDA</Text>
       <Text style={styles.intro}>
-        Varias solicitudes parecidas se agrupan acá. Para viajes ya publicados usá los accesos de arriba.
+        Varias solicitudes parecidas se agrupan acá. Tocá una ruta, marcá origen y destino, y esperá la asignación del móvil.
       </Text>
       {error ? <Text style={styles.apiError}>{error}</Text> : null}
       {loading && groups.length === 0 ? (
@@ -141,7 +153,7 @@ export function PassengerDemandRoutesScreen() {
       </View>
       <Text style={styles.emptyText}>No hay rutas con demanda para mostrar</Text>
       <Text style={styles.emptySub}>
-        Eso no significa que no haya viajes: usá Viajes disponibles o el buscador para ver publicaciones.
+        Eso no significa que no haya viajes: usá Viajes en Inicio o el buscador para ver publicaciones.
       </Text>
     </View>
   );
@@ -191,6 +203,16 @@ export function PassengerDemandRoutesScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: PAGE_BG },
   headerBlock: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 4 },
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 6 },
+  tinyHelpBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: ICON_TILE_BG,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
   kicker: {
     fontSize: 11,
     fontWeight: '800',
@@ -248,6 +270,7 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 2,
   },
+  quickTileSolo: { flexGrow: 0, flexBasis: '48%', maxWidth: '48%' },
   quickIconSquare: {
     width: 48,
     height: 48,

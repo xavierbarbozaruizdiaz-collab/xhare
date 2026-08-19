@@ -11,12 +11,52 @@ export const PASSENGER_HOME_SHORTCUTS_VISIBLE_KEY = 'passenger_home_shortcuts_vi
 export const PASSENGER_HOME_FAVORITES_TITLE_KEY = 'passenger_home_favorites_title';
 export const PASSENGER_HOME_FAVORITES_SUBTITLE_KEY = 'passenger_home_favorites_subtitle';
 export const PASSENGER_PRICING_POLYLINE_VISIBLE_KEY = 'passenger_pricing_polyline_visible';
+export const PASSENGER_TAB_RUTAS_VISIBLE_KEY = 'passenger_tab_rutas_visible';
+export const PASSENGER_TAB_EXPLORAR_VISIBLE_KEY = 'passenger_tab_explorar_visible';
+
+const PASSENGER_NAV_TABS_CACHE_KEY = '@xhare/passenger_nav_tabs_visible_v1';
+
+export type PassengerNavTabsVisible = { rutas: boolean; explorar: boolean };
+
+const DEFAULT_PASSENGER_NAV_TABS_VISIBLE: PassengerNavTabsVisible = { rutas: false, explorar: false };
+
+const PASSENGER_HOME_HERO_DISMISSED_FP_KEY = '@xhare/passenger_home_hero_dismissed_fp_v1';
+
+/** Eyebrow fijo del bloque verde de Inicio (entra en la huella del anuncio). */
+export const PASSENGER_HOME_HERO_EYEBROW = 'VIAJÁ INTELIGENTE';
 
 /** Solo si no hay cache ni red; no usar como estado inicial de pantalla (evita pestañeo). */
 export const DEFAULT_PASSENGER_HOME_FAVORITES_TITLE = 'Precio de moto, comodidad de auto';
 export const DEFAULT_PASSENGER_HOME_FAVORITES_SUBTITLE = 'Activa solo el trayecto que quieras';
 
 export type PassengerHomeFavoritesCopy = { title: string; subtitle: string };
+
+/** Huella del anuncio: si el admin cambia título/subtítulo (o el eyebrow), vuelve a mostrarse. */
+export function passengerHomeHeroFingerprint(copy: {
+  title: string;
+  subtitle: string;
+  eyebrow?: string;
+}): string {
+  const eyebrow = String(copy.eyebrow ?? PASSENGER_HOME_HERO_EYEBROW).trim();
+  return `${eyebrow}\n${String(copy.title ?? '').trim()}\n${String(copy.subtitle ?? '').trim()}`;
+}
+
+export async function isPassengerHomeHeroDismissed(fingerprint: string): Promise<boolean> {
+  try {
+    const stored = await AsyncStorage.getItem(PASSENGER_HOME_HERO_DISMISSED_FP_KEY);
+    return Boolean(stored && stored === fingerprint);
+  } catch {
+    return false;
+  }
+}
+
+export async function dismissPassengerHomeHero(fingerprint: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(PASSENGER_HOME_HERO_DISMISSED_FP_KEY, fingerprint);
+  } catch {
+    /* ignore */
+  }
+}
 
 export async function readPassengerHomeFavoritesCopyCache(): Promise<PassengerHomeFavoritesCopy | null> {
   try {
@@ -91,7 +131,29 @@ type PassengerUiSettingsPayload = {
   favoritesTitle?: string;
   favoritesSubtitle?: string;
   pricingPolylineVisible?: boolean;
+  rutasTabVisible?: boolean;
+  explorarTabVisible?: boolean;
 };
+
+async function readPassengerNavTabsVisibleCache(): Promise<PassengerNavTabsVisible | null> {
+  try {
+    const raw = await AsyncStorage.getItem(PASSENGER_NAV_TABS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { rutas?: unknown; explorar?: unknown };
+    if (typeof parsed.rutas !== 'boolean' || typeof parsed.explorar !== 'boolean') return null;
+    return { rutas: parsed.rutas, explorar: parsed.explorar };
+  } catch {
+    return null;
+  }
+}
+
+async function writePassengerNavTabsVisibleCache(value: PassengerNavTabsVisible): Promise<void> {
+  try {
+    await AsyncStorage.setItem(PASSENGER_NAV_TABS_CACHE_KEY, JSON.stringify(value));
+  } catch {
+    /* ignore */
+  }
+}
 
 async function fetchPassengerUiSettingsFromApi(): Promise<PassengerUiSettingsPayload | null> {
   const base = env.apiBaseUrl?.trim();
@@ -163,4 +225,39 @@ export async function fetchPassengerPricingPolylineVisible(): Promise<boolean> {
     .maybeSingle();
   if (error || data == null) return false;
   return parseBooleanSetting(data.value, false);
+}
+
+/**
+ * Pestañas Rutas y Explorar (pasajero). Default ocultas; Admin las puede mostrar.
+ */
+export async function fetchPassengerNavTabsVisible(): Promise<PassengerNavTabsVisible> {
+  const cached = await readPassengerNavTabsVisibleCache();
+  const api = await fetchPassengerUiSettingsFromApi();
+  if (api && (typeof api.rutasTabVisible === 'boolean' || typeof api.explorarTabVisible === 'boolean')) {
+    const next: PassengerNavTabsVisible = {
+      rutas: typeof api.rutasTabVisible === 'boolean' ? api.rutasTabVisible : false,
+      explorar: typeof api.explorarTabVisible === 'boolean' ? api.explorarTabVisible : false,
+    };
+    await writePassengerNavTabsVisibleCache(next);
+    return next;
+  }
+  if (!isEnvConfigured()) {
+    return cached ?? DEFAULT_PASSENGER_NAV_TABS_VISIBLE;
+  }
+  const [rutasRes, explorarRes] = await Promise.all([
+    supabase.from('settings').select('value').eq('key', PASSENGER_TAB_RUTAS_VISIBLE_KEY).maybeSingle(),
+    supabase.from('settings').select('value').eq('key', PASSENGER_TAB_EXPLORAR_VISIBLE_KEY).maybeSingle(),
+  ]);
+  const next: PassengerNavTabsVisible = {
+    rutas:
+      rutasRes.error || rutasRes.data == null
+        ? (cached?.rutas ?? false)
+        : parseBooleanSetting(rutasRes.data.value, false),
+    explorar:
+      explorarRes.error || explorarRes.data == null
+        ? (cached?.explorar ?? false)
+        : parseBooleanSetting(explorarRes.data.value, false),
+  };
+  await writePassengerNavTabsVisibleCache(next);
+  return next;
 }

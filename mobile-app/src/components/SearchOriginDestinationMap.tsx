@@ -22,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { androidMapProvider } from '../lib/androidMapProvider';
 import { reverseGeocodeStructured } from '../backend/geocodeApi';
 import { fetchRoute } from '../backend/routeApi';
+import { snapToNearestRoad } from '../lib/snapToNearestRoad';
 import type { Point } from '../lib/geo';
 import { getLocationPermissionStatus, requestLocationPermission } from '../permissions';
 
@@ -88,33 +89,79 @@ type Props = {
 
 function ModeChipRow(props: {
   mode: 'origin' | 'destination';
+  originSet: boolean;
+  destinationSet: boolean;
   onSelectOrigin: () => void;
   onSelectDestination: () => void;
+  onClearOrigin: () => void;
+  onClearDestination: () => void;
   variant: 'compact' | 'footer';
 }) {
-  const { mode, onSelectOrigin, onSelectDestination, variant } = props;
-  const chipStyle = variant === 'footer' ? styles.modeBtn : styles.modeChip;
-  const chipActive = variant === 'footer' ? styles.modeBtnActive : styles.modeChipActive;
-  const textStyle = variant === 'footer' ? styles.modeBtnText : styles.modeChipText;
-  const textActive = variant === 'footer' ? styles.modeBtnTextActive : styles.modeChipTextActive;
+  const {
+    mode,
+    originSet,
+    destinationSet,
+    onSelectOrigin,
+    onSelectDestination,
+    onClearOrigin,
+    onClearDestination,
+    variant,
+  } = props;
+  const isFooter = variant === 'footer';
+  const chipStyle = isFooter ? styles.modeBtn : styles.modeChip;
+  const chipActive = isFooter ? styles.modeBtnActive : styles.modeChipActive;
+  const textStyle = isFooter ? styles.modeBtnText : styles.modeChipText;
+  const textActive = isFooter ? styles.modeBtnTextActive : styles.modeChipTextActive;
+
+  const renderStep = (
+    stepMode: 'origin' | 'destination',
+    label: string,
+    set: boolean,
+    onSelect: () => void,
+    onClear: () => void,
+  ) => {
+    const active = mode === stepMode;
+    return (
+      <View style={styles.stepWrap}>
+        <TouchableOpacity
+          style={[chipStyle, active && chipActive, set && !active && styles.modeBtnDone]}
+          onPress={onSelect}
+          accessibilityRole="button"
+          accessibilityState={{ selected: active }}
+          accessibilityLabel={label}
+        >
+          <View style={styles.stepInner}>
+            {set ? (
+              <Ionicons name="checkmark-circle" size={16} color={active ? MAP_PRIMARY : '#16a34a'} />
+            ) : (
+              <Text style={[styles.stepNum, active && styles.stepNumActive]}>
+                {stepMode === 'origin' ? '1' : '2'}
+              </Text>
+            )}
+            <Text style={[textStyle, active && textActive]} numberOfLines={1}>
+              {label}
+            </Text>
+          </View>
+        </TouchableOpacity>
+        {set && isFooter ? (
+          <TouchableOpacity
+            onPress={onClear}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={stepMode === 'origin' ? 'Quitar origen' : 'Quitar destino'}
+            style={styles.stepClearBtn}
+          >
+            <Ionicons name="close-circle" size={18} color="#94a3b8" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  };
+
   return (
     <View style={styles.modeRow}>
-      <TouchableOpacity
-        style={[chipStyle, mode === 'origin' && chipActive]}
-        onPress={onSelectOrigin}
-        accessibilityRole="button"
-        accessibilityState={{ selected: mode === 'origin' }}
-      >
-        <Text style={[textStyle, mode === 'origin' && textActive]}>Marcar origen</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[chipStyle, mode === 'destination' && chipActive]}
-        onPress={onSelectDestination}
-        accessibilityRole="button"
-        accessibilityState={{ selected: mode === 'destination' }}
-      >
-        <Text style={[textStyle, mode === 'destination' && textActive]}>Marcar destino</Text>
-      </TouchableOpacity>
+      {renderStep('origin', 'Origen', originSet, onSelectOrigin, onClearOrigin)}
+      {renderStep('destination', 'Destino', destinationSet, onSelectDestination, onClearDestination)}
     </View>
   );
 }
@@ -260,26 +307,83 @@ export function SearchOriginDestinationMap({
     async (p: Point) => {
       setGeocoding(true);
       try {
-        const r = await reverseGeocodeStructured(p.lat, p.lng);
+        const snapped = await snapToNearestRoad(p.lat, p.lng);
+        if (snapped.error || snapped.code === 'not_on_road') {
+          Alert.alert(
+            'Marcá sobre una calle',
+            snapped.error ||
+              'Ese punto no está sobre una vía. Mové el mapa hasta una calle y volvé a confirmar.',
+          );
+          return;
+        }
+        const point: Point = { lat: snapped.lat, lng: snapped.lng };
+        const moved =
+          Math.abs(point.lat - p.lat) > 1e-6 || Math.abs(point.lng - p.lng) > 1e-6;
+        if (moved) {
+          setSelectionCenter(point);
+          mapRef.current?.animateToRegion(
+            {
+              latitude: point.lat,
+              longitude: point.lng,
+              latitudeDelta: Math.max(region.latitudeDelta, 0.01),
+              longitudeDelta: Math.max(region.longitudeDelta, 0.01),
+            },
+            280,
+          );
+        }
+        const r = await reverseGeocodeStructured(point.lat, point.lng);
         const label = shortenLabel(r.displayName);
         if (mode === 'origin') {
-          onOriginChange(p);
+          onOriginChange(point);
           onOriginLabelResolved?.(label);
+          if (!destination) setMode('destination');
         } else {
-          onDestinationChange(p);
+          onDestinationChange(point);
           onDestinationLabelResolved?.(label);
         }
       } finally {
         setGeocoding(false);
       }
     },
-    [mode, onOriginChange, onDestinationChange, onOriginLabelResolved, onDestinationLabelResolved]
+    [
+      mode,
+      destination,
+      region.latitudeDelta,
+      region.longitudeDelta,
+      onOriginChange,
+      onDestinationChange,
+      onOriginLabelResolved,
+      onDestinationLabelResolved,
+    ],
   );
 
   const confirmPointAtCenter = useCallback(() => {
     if (!selectionCenter) return;
     void applyPoint(selectionCenter);
   }, [selectionCenter, applyPoint]);
+
+  const tryCloseFullMap = useCallback(() => {
+    const missingOrigin = !origin;
+    const missingDest = !destination;
+    if (missingOrigin && missingDest) {
+      setFullVisible(false);
+      return;
+    }
+    if (missingOrigin || missingDest) {
+      Alert.alert(
+        'Trayecto incompleto',
+        missingOrigin
+          ? 'Todavía falta marcar el origen. ¿Cerrar igual?'
+          : 'Todavía falta marcar el destino. ¿Cerrar igual?',
+        [
+          { text: 'Seguir marcando', style: 'cancel' },
+          { text: 'Cerrar', style: 'destructive', onPress: () => setFullVisible(false) },
+        ],
+      );
+      return;
+    }
+    setFullVisible(false);
+  }, [origin, destination]);
 
   const goToMyLocation = useCallback(async () => {
     setLocating(true);
@@ -384,35 +488,18 @@ export function SearchOriginDestinationMap({
         ) : null}
       </View>
 
-      <View style={styles.clearRow}>
-        {origin ? (
-          <TouchableOpacity onPress={() => onOriginChange(null)} accessibilityRole="button">
-            <Text style={styles.clearLink}>Quitar origen del mapa</Text>
-          </TouchableOpacity>
-        ) : null}
-        {destination ? (
-          <TouchableOpacity onPress={() => onDestinationChange(null)} accessibilityRole="button">
-            <Text style={styles.clearLink}>Quitar destino del mapa</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
-
-      <Modal visible={fullVisible} animationType="slide" onRequestClose={() => setFullVisible(false)} statusBarTranslucent>
+      <Modal visible={fullVisible} animationType="slide" onRequestClose={tryCloseFullMap} statusBarTranslucent>
         <StatusBar barStyle="dark-content" />
         <SafeAreaView style={styles.modalSafe} edges={['top', 'left', 'right']}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setFullVisible(false)} hitSlop={12} accessibilityRole="button">
-              <Text style={styles.modalHeaderBtn}>Listo</Text>
+            <TouchableOpacity onPress={tryCloseFullMap} hitSlop={12} accessibilityRole="button">
+              <Text style={styles.modalHeaderBtn}>Cerrar</Text>
             </TouchableOpacity>
             <Text style={styles.modalHeaderTitle} numberOfLines={1}>
-              Origen y destino en el mapa
+              Origen y destino
             </Text>
             <View style={styles.modalHeaderSpacer} />
           </View>
-
-          <Text style={styles.modalHint}>
-            Mové el mapa; el ícono del centro marca el punto. Confirmá con el botón de abajo.
-          </Text>
 
           <View style={styles.modalMapWrap}>
             <MapView
@@ -432,11 +519,23 @@ export function SearchOriginDestinationMap({
             >
               {mapChildren}
             </MapView>
-            <View style={styles.centerPinWrap} pointerEvents="none">
-              <Ionicons
-                name={mode === 'origin' ? 'location' : 'flag'}
-                size={34}
-                color={mode === 'destination' ? '#b91c1c' : MAP_PRIMARY}
+            <View
+              style={styles.centerPinWrap}
+              pointerEvents="none"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <View
+                style={[
+                  styles.pinHead,
+                  { backgroundColor: mode === 'destination' ? '#dc2626' : MAP_PRIMARY },
+                ]}
+              />
+              <View
+                style={[
+                  styles.pinStick,
+                  { backgroundColor: mode === 'destination' ? '#dc2626' : MAP_PRIMARY },
+                ]}
               />
             </View>
             <TouchableOpacity
@@ -465,32 +564,38 @@ export function SearchOriginDestinationMap({
             <ModeChipRow
               mode={mode}
               variant="footer"
+              originSet={origin != null}
+              destinationSet={destination != null}
               onSelectOrigin={() => setMode('origin')}
               onSelectDestination={() => setMode('destination')}
+              onClearOrigin={() => onOriginChange(null)}
+              onClearDestination={() => onDestinationChange(null)}
             />
+            <Text style={styles.confirmHint}>Centrá el mapa sobre una calle y tocá Confirmar</Text>
             <TouchableOpacity
-              style={[styles.confirmBtn, geocoding && styles.confirmBtnDisabled]}
+              style={[
+                styles.confirmBtn,
+                mode === 'destination' && styles.confirmBtnDest,
+                geocoding && styles.confirmBtnDisabled,
+              ]}
               onPress={confirmPointAtCenter}
               disabled={geocoding || !selectionCenter}
               accessibilityRole="button"
               accessibilityLabel={mode === 'origin' ? 'Confirmar origen' : 'Confirmar destino'}
             >
+              <View
+                style={[
+                  styles.confirmPinIcon,
+                  mode === 'destination' && styles.confirmPinIconDest,
+                ]}
+              >
+                <View style={styles.confirmPinHead} />
+                <View style={styles.confirmPinStick} />
+              </View>
               <Text style={styles.confirmBtnText}>
                 {mode === 'origin' ? 'Confirmar origen' : 'Confirmar destino'}
               </Text>
             </TouchableOpacity>
-            <View style={styles.modalClearRow}>
-              {origin ? (
-                <TouchableOpacity onPress={() => onOriginChange(null)} accessibilityRole="button">
-                  <Text style={styles.clearLink}>Quitar origen</Text>
-                </TouchableOpacity>
-              ) : null}
-              {destination ? (
-                <TouchableOpacity onPress={() => onDestinationChange(null)} accessibilityRole="button">
-                  <Text style={styles.clearLink}>Quitar destino</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
           </SafeAreaView>
         </SafeAreaView>
       </Modal>
@@ -509,7 +614,24 @@ const styles = StyleSheet.create({
     fontFamily: appBrand.fonts.semibold,
   },
   hint: { fontSize: 13, color: '#64748b', lineHeight: 19, marginBottom: 12, fontFamily: appBrand.fonts.regular },
-  modeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  modeRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  stepWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  stepInner: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  stepNum: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 18,
+    fontWeight: '800',
+    color: '#6b7280',
+    backgroundColor: '#e5e7eb',
+    overflow: 'hidden',
+    fontFamily: appBrand.fonts.semibold,
+  },
+  stepNumActive: { color: '#fff', backgroundColor: MAP_PRIMARY },
+  stepClearBtn: { padding: 2 },
   modeChip: {
     borderWidth: 1,
     borderColor: '#d1d5db',
@@ -525,16 +647,25 @@ const styles = StyleSheet.create({
   modeChipText: { fontSize: 13, fontWeight: '600', color: '#374151', fontFamily: appBrand.fonts.semibold },
   modeChipTextActive: { color: MAP_PRIMARY },
   modeBtn: {
-    flexGrow: 1,
-    minWidth: '42%',
+    flex: 1,
     paddingVertical: 12,
+    paddingHorizontal: 10,
     borderRadius: 14,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
     alignItems: 'center',
   },
-  modeBtnActive: { backgroundColor: MAP_PRIMARY },
-  modeBtnText: { fontSize: 13, fontWeight: '600', color: '#374151', fontFamily: appBrand.fonts.semibold },
-  modeBtnTextActive: { color: '#fff', fontFamily: appBrand.fonts.semibold },
+  modeBtnActive: {
+    backgroundColor: '#edf7f1',
+    borderColor: MAP_PRIMARY,
+  },
+  modeBtnDone: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#86efac',
+  },
+  modeBtnText: { fontSize: 13, fontWeight: '600', color: '#6b7280', fontFamily: appBrand.fonts.semibold },
+  modeBtnTextActive: { color: MAP_PRIMARY, fontFamily: appBrand.fonts.semibold },
   previewShell: {
     width: '100%',
     borderRadius: 18,
@@ -585,38 +716,103 @@ const styles = StyleSheet.create({
     fontFamily: appBrand.fonts.semibold,
   },
   modalHeaderSpacer: { minWidth: 48 },
-  modalHint: {
-    fontSize: 13,
-    color: '#6b7280',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: '#f9fafb',
-    fontFamily: appBrand.fonts.regular,
-  },
   modalMapWrap: { flex: 1, position: 'relative' },
   modalMap: { ...StyleSheet.absoluteFillObject },
   centerPinWrap: {
     position: 'absolute',
     top: '50%',
     left: '50%',
-    marginLeft: -17,
-    marginTop: -34,
+    width: 28,
+    marginLeft: -14,
+    /** La punta del palito queda en el centro exacto del mapa. */
+    marginTop: -42,
     zIndex: 5,
+    alignItems: 'center',
+  },
+  pinHead: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 3,
+    borderColor: '#fff',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.25,
+        shadowRadius: 2,
+      },
+      android: { elevation: 3 },
+    }),
+  },
+  pinStick: {
+    width: 3,
+    height: 16,
+    marginTop: -1,
+    borderBottomLeftRadius: 2,
+    borderBottomRightRadius: 2,
   },
   confirmBtn: {
-    marginTop: 10,
+    marginTop: 4,
     marginHorizontal: 4,
-    paddingVertical: 14,
+    paddingVertical: 15,
     borderRadius: 14,
     backgroundColor: MAP_PRIMARY,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+    ...Platform.select({
+      ios: {
+        shadowColor: MAP_PRIMARY,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.28,
+        shadowRadius: 8,
+      },
+      android: { elevation: 5 },
+    }),
+  },
+  confirmBtnDest: {
+    backgroundColor: '#dc2626',
+    ...Platform.select({
+      ios: { shadowColor: '#dc2626' },
+      android: {},
+    }),
   },
   confirmBtnDisabled: { opacity: 0.55 },
   confirmBtnText: {
     color: '#fff',
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     fontFamily: appBrand.fonts.semibold,
+  },
+  confirmPinIcon: {
+    width: 18,
+    alignItems: 'center',
+  },
+  confirmPinIconDest: {},
+  confirmPinHead: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#fff',
+  },
+  confirmPinStick: {
+    width: 2,
+    height: 8,
+    marginTop: -1,
+    backgroundColor: '#fff',
+    borderBottomLeftRadius: 1,
+    borderBottomRightRadius: 1,
+  },
+  confirmHint: {
+    fontSize: 13,
+    color: '#374151',
+    marginTop: 10,
+    marginBottom: 8,
+    marginHorizontal: 4,
+    textAlign: 'center',
+    fontFamily: appBrand.fonts.medium,
   },
   locateBtn: {
     position: 'absolute',
@@ -669,14 +865,6 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 4 : 10,
     paddingHorizontal: 8,
   },
-  modalClearRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 8,
-    marginBottom: 4,
-    paddingHorizontal: 4,
-  },
   dot: {
     width: 18,
     height: 18,
@@ -686,6 +874,4 @@ const styles = StyleSheet.create({
   },
   dotOrigin: { backgroundColor: '#ea580c' },
   dotDest: { backgroundColor: '#b91c1c' },
-  clearRow: { marginTop: 8, gap: 6 },
-  clearLink: { fontSize: 13, color: MAP_PRIMARY, fontWeight: '700', fontFamily: appBrand.fonts.semibold },
 });

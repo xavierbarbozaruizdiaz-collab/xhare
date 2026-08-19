@@ -291,6 +291,7 @@ async function fetchDemandRouteDetailFromSupabase(
           blockSize: 4,
           blockMultiplier: 1.5,
           driverFeePercentOfCollected: 10,
+          driverDebtLimitDefault: 50000,
           pricingSettingsId: null,
         };
 

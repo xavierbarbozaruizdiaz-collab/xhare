@@ -14,7 +14,7 @@ export type FavoritePreset = {
   id: PassengerFavoriteSlot;
   from: string;
   to: string;
-  /** Texto para accesibilidad y filas del Inicio (no hace falta en el modal solo-iconos). */
+  /** Texto para accesibilidad y filas de Rutas guardadas (no hace falta en el modal solo-iconos). */
   label: string;
 };
 
@@ -84,7 +84,7 @@ export type PassengerFavoriteSnapshot = {
   destinationLat: number | null;
   destinationLng: number | null;
   rideKind: 'all' | 'internal' | 'long_distance';
-  /** Activado para uso rapido (switch en Inicio). */
+  /** Activado para uso rapido (switch en Rutas guardadas). */
   enabled?: boolean;
   /** Si es true, corre todos los dias a la misma hora. */
   scheduleDaily?: boolean;
@@ -110,6 +110,20 @@ export type PassengerFavoriteSnapshot = {
 export function isFavoriteEnabled(snap: PassengerFavoriteSnapshot | null | undefined): boolean {
   if (!snap) return false;
   return snap.enabled !== false;
+}
+
+/** Trayecto con origen y destino (texto o coordenadas) listo para activar. */
+export function favoriteHasConfig(snap: PassengerFavoriteSnapshot | null | undefined): boolean {
+  if (!snap) return false;
+  const o = typeof snap.origin === 'string' ? snap.origin.trim() : '';
+  const d = typeof snap.destination === 'string' ? snap.destination.trim() : '';
+  if (o && d) return true;
+  return (
+    snap.originLat != null &&
+    snap.originLng != null &&
+    snap.destinationLat != null &&
+    snap.destinationLng != null
+  );
 }
 
 /** 127 = domingo(1) + … + sábado(64), mismo orden que `Date.getDay()`. */
@@ -184,7 +198,7 @@ function storageKey(userId: string): string {
 }
 
 /**
- * Inicio solo muestra `home_to_work` y `work_to_home`. Los favoritos guardados como `custom_*`
+ * Rutas guardadas siempre muestra `home_to_work` y `work_to_home`. Los favoritos guardados como `custom_*`
  * quedaban invisibles; al cargar los reasignamos a esos slots vacíos (por fecha de actualización).
  */
 function migrateCustomFavoritesIntoFixedSlots(store: Store): { next: Store; changed: boolean } {
@@ -340,7 +354,7 @@ export async function removePassengerFavorite(userId: string, slot: PassengerFav
   await AsyncStorage.setItem(storageKey(userId), JSON.stringify(all));
 }
 
-/** Orden del Inicio: todos los presets, luego custom guardados (mas reciente primero). */
+/** Orden de Rutas guardadas: todos los presets, luego custom guardados (mas reciente primero). */
 export function listHomeFavoriteSlotIds(store: Store): PassengerFavoriteSlot[] {
   const custom = Object.keys(store).filter((k) => isCustomFavoriteSlot(k));
   custom.sort((a, b) => {

@@ -1,6 +1,7 @@
 /**
  * Navigation param lists for type-safe routes.
  */
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { PassengerFavoriteSlot } from '../lib/passengerFavorites';
 
 /** Params para Main cuando se navega por deep link a una pantalla anidada. */
@@ -14,7 +15,7 @@ export type RootStackParamList = {
 };
 
 export type MainStackParamList = {
-  MainTabs: undefined;
+  MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   RideDetail: {
     rideId: string;
     /** Tras publicar: mostrar diálogo de compartir código en el detalle. */
@@ -80,6 +81,9 @@ export type MainStackParamList = {
 
 export type MainTabParamList = {
   Home: undefined;
+  /** Pasajero: favoritos / rutas guardadas. `openAdd` abre el modal de agregar. */
+  SavedRoutes: { openAdd?: boolean } | undefined;
+  Ganancias: undefined;
   Passenger: undefined;
   Settings: undefined;
 };
