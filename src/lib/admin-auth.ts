@@ -80,6 +80,26 @@ export async function withAdminAuth(
   return handler(request, user);
 }
 
+/** Devuelve el admin autenticado o null. No consume el body del request. */
+export async function getAdminUserFromRequest(request: NextRequest): Promise<AdminUser | null> {
+  const jwt = getJwtFromRequest(request);
+  let user: AdminUser | null = null;
+  if (jwt) {
+    const res = await getUserFromBearerJwt(jwt);
+    user = res.user;
+  }
+  if (!user) {
+    const supabaseAuth = createServerClient(request);
+    const res = await supabaseAuth.auth.getUser();
+    user = res.data.user ? { id: res.data.user.id } : null;
+  }
+  if (!user) return null;
+  const service = createServiceClient();
+  const { data: profile } = await service.from('profiles').select('role').eq('id', user.id).maybeSingle();
+  if (profile?.role !== 'admin') return null;
+  return user;
+}
+
 const DEV = process.env.NODE_ENV === 'development';
 
 /** Logs seguros por bloque: nombre + mensaje corto. Sin PII/tokens/stack en producción. */

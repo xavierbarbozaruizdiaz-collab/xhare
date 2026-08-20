@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { upload } from '@vercel/blob/client';
 import { supabase } from '@/lib/supabase/client';
 import {
   DEFAULT_PRIVACY_CONTENT,
@@ -689,41 +690,50 @@ export default function AdminSettingsPage() {
       return;
     }
 
-    const maxBytes = 50 * 1024 * 1024;
+    const maxBytes = 100 * 1024 * 1024;
     if (file.size > maxBytes) {
-      alert('El APK pesa más de 50 MB, que es el máximo que acepta el depósito ahora. Usá el APK más liviano o avisame para subir el límite.');
+      alert('El APK pesa más de 100 MB. Avisame si necesitás un tope más alto.');
       e.target.value = '';
       return;
     }
 
-    const bucket = mediaBucket.trim() || 'app-releases';
-    const stamp = Date.now();
-    const path = `apks/${track}-${stamp}.apk`;
-    const field = track === 'passenger' ? 'apk-passenger' : 'apk-driver';
-    setUploadingField(field);
-
-    const uploadRes = await supabase.storage.from(bucket).upload(path, file, {
-      cacheControl: '3600',
-      upsert: true,
-      contentType: 'application/vnd.android.package-archive',
-    });
-    setUploadingField(null);
-    e.target.value = '';
-
-    if (uploadRes.error) {
-      alert(`No se pudo subir el APK: ${uploadRes.error.message}`);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token?.trim();
+    if (!token) {
+      alert('La sesión venció. Volvé a iniciar sesión.');
+      e.target.value = '';
       return;
     }
 
-    const publicUrl = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
-    if (track === 'passenger') setPassengerApkUrl(publicUrl);
-    else setDriverApkUrl(publicUrl);
+    const stamp = Date.now();
+    const pathname = `apks/${track}-${stamp}.apk`;
+    const field = track === 'passenger' ? 'apk-passenger' : 'apk-driver';
+    setUploadingField(field);
 
-    const key =
-      track === 'passenger' ? DOWNLOAD_SETTINGS_KEYS.passengerApkUrl : DOWNLOAD_SETTINGS_KEYS.driverApkUrl;
-    const persistError = await persistDownloadSetting(key, publicUrl);
-    if (persistError) {
-      alert('El archivo se subió, pero falta tocar “Guardar descargas” para publicarlo.');
+    try {
+      const blob = await upload(pathname, file, {
+        access: 'public',
+        handleUploadUrl: '/api/admin/apk-upload',
+        headers: { Authorization: `Bearer ${token}` },
+        contentType: 'application/vnd.android.package-archive',
+        clientPayload: JSON.stringify({ track }),
+        multipart: true,
+      });
+      if (track === 'passenger') setPassengerApkUrl(blob.url);
+      else setDriverApkUrl(blob.url);
+      const key =
+        track === 'passenger' ? DOWNLOAD_SETTINGS_KEYS.passengerApkUrl : DOWNLOAD_SETTINGS_KEYS.driverApkUrl;
+      const persistError = await persistDownloadSetting(key, blob.url);
+      if (persistError) {
+        alert('El archivo se subió, pero falta tocar “Guardar descargas” para publicarlo.');
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'No se pudo subir el APK.');
+    } finally {
+      setUploadingField(null);
+      e.target.value = '';
     }
   }
 
@@ -1178,7 +1188,7 @@ export default function AdminSettingsPage() {
                 {uploadingField === 'apk-passenger' ? (
                   <p className="text-xs text-gray-500 mt-1">Subiendo APK pasajero...</p>
                 ) : (
-                  <p className="text-xs text-gray-500 mt-1">Elegí el archivo .apk de pasajero desde tu computadora (hasta 50 MB).</p>
+                  <p className="text-xs text-gray-500 mt-1">Elegí el archivo .apk de pasajero desde tu computadora (hasta 100 MB).</p>
                 )}
               </div>
             </div>
@@ -1201,7 +1211,7 @@ export default function AdminSettingsPage() {
                 {uploadingField === 'apk-driver' ? (
                   <p className="text-xs text-gray-500 mt-1">Subiendo APK conductor...</p>
                 ) : (
-                  <p className="text-xs text-gray-500 mt-1">Elegí el archivo .apk de conductor desde tu computadora (hasta 50 MB).</p>
+                  <p className="text-xs text-gray-500 mt-1">Elegí el archivo .apk de conductor desde tu computadora (hasta 100 MB).</p>
                 )}
               </div>
             </div>
