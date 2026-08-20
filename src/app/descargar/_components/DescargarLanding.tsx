@@ -110,9 +110,9 @@ function TrackCard({ title, subtitle, apkUrl, version, tone, isDark, highContras
   const tiltClass = reduceMotion ? '' : 'hover:-translate-y-0.5 hover:rotate-[0.35deg]';
 
   async function copyApk() {
-    const shareUrl = `${window.location.origin}/api/descargar/apk/${tone}`;
+    if (!apkUrl) return;
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      await navigator.clipboard.writeText(apkUrl);
       setToast('Link copiado');
       window.setTimeout(() => setToast(null), 1800);
     } catch {
@@ -156,8 +156,7 @@ function TrackCard({ title, subtitle, apkUrl, version, tone, isDark, highContras
           {apkUrl ? (
             <>
               <a
-                href={`/api/descargar/apk/${tone}`}
-                download={tone === 'passenger' ? 'nandebus-pasajero.apk' : 'nandebus-conductor.apk'}
+                href={apkUrl}
                 className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-[#45d10a] to-[#2f9a00] px-5 py-3 text-sm font-bold text-white shadow-[0_10px_30px_rgba(56,176,0,0.28)] ring-1 ring-white/10 hover:brightness-110 active:translate-y-px active:shadow-[0_6px_18px_rgba(42,157,0,0.55)]"
               >
                 <AndroidBadge />
@@ -176,7 +175,7 @@ function TrackCard({ title, subtitle, apkUrl, version, tone, isDark, highContras
                 Copiar link
               </button>
               <p className={`w-full text-xs ${isDark ? 'text-white/50' : 'text-slate-500'}`}>
-                El archivo pesa unos 80 MB. Dejá que termine; puede tardar un minuto. Abrilo en Chrome, no en WhatsApp.
+                El archivo pesa unos 80 MB. Esperá a que Chrome muestre “finalizado”; no lo abras hasta que termine.
               </p>
             </>
           ) : (

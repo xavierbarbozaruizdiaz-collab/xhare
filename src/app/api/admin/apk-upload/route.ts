@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
           try {
             const parsed = tokenPayload ? (JSON.parse(tokenPayload) as { track?: string }) : {};
             if (parsed.track === 'passenger' || parsed.track === 'driver') {
-              await persistApkUrl(parsed.track, blob.url);
+              await persistApkUrl(parsed.track, blob.downloadUrl || blob.url);
             }
             logBlockOk(BLOCK);
           } catch (error) {
