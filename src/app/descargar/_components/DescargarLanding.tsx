@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { InstallStepper } from './InstallStepper';
 import { APP_NAME } from '@/lib/brand';
+import { supabase } from '@/lib/supabase/client';
 
 export type DescargarLandingProps = {
   passengerApkUrl: string;
@@ -232,6 +233,9 @@ export function DescargarLanding(props: DescargarLandingProps) {
   const topBar = isDark ? 'border-white/10 bg-black/30' : 'border-slate-200 bg-white/70';
 
   const [heroIndex, setHeroIndex] = useState(0);
+  const [signedIn, setSignedIn] = useState(false);
+  const [accountLabel, setAccountLabel] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const previewScrollerRef = useRef<HTMLDivElement | null>(null);
   const normalizedHeroImages = props.heroImageUrls.filter((url) => !!url.trim());
   const effectiveHeroImages =
@@ -244,6 +248,37 @@ export function DescargarLanding(props: DescargarLandingProps) {
   useEffect(() => {
     setHeroIndex(0);
   }, [effectiveHeroImages.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const applySession = (email: string | null | undefined, hasSession: boolean) => {
+      if (cancelled) return;
+      setSignedIn(hasSession);
+      setAccountLabel(email?.trim() || null);
+    };
+
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      applySession(session?.user?.email, !!session);
+    });
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySession(session?.user?.email, !!session);
+    });
+
+    return () => {
+      cancelled = true;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  async function handleSignOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      window.location.href = '/';
+    }
+  }
 
   useEffect(() => {
     if (reduceMotion || effectiveHeroImages.length <= 1) return;
@@ -279,6 +314,30 @@ export function DescargarLanding(props: DescargarLandingProps) {
           <Link href="/" className="text-sm font-bold tracking-tight text-[#20A050]">
             {APP_NAME}
           </Link>
+          {signedIn ? (
+            <div className="flex min-w-0 items-center gap-3">
+              {accountLabel ? (
+                <span
+                  className={`hidden max-w-[12rem] truncate text-xs sm:inline ${isDark ? 'text-white/55' : 'text-slate-500'}`}
+                  title={accountLabel}
+                >
+                  {accountLabel}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void handleSignOut()}
+                disabled={signingOut}
+                className={`min-h-[44px] shrink-0 rounded-xl px-3 py-2 text-sm font-semibold transition disabled:opacity-60 ${
+                  isDark
+                    ? 'text-white/85 hover:bg-white/10 hover:text-white'
+                    : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                {signingOut ? 'Saliendo…' : 'Cerrar sesión'}
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-10 grid items-center gap-10 lg:grid-cols-2">
