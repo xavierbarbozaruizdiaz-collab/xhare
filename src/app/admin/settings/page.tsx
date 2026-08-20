@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { upload } from '@vercel/blob/client';
+import { put } from '@vercel/blob/client';
 import { supabase } from '@/lib/supabase/client';
 import {
   DEFAULT_PRIVACY_CONTENT,
@@ -713,12 +713,30 @@ export default function AdminSettingsPage() {
     setUploadingField(field);
 
     try {
-      const blob = await upload(pathname, file, {
+      const tokenRes = await fetch('/api/admin/apk-upload', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'blob.generate-client-token',
+          payload: {
+            pathname,
+            callbackUrl: `${window.location.origin}/api/admin/apk-upload`,
+            clientPayload: JSON.stringify({ track }),
+            multipart: true,
+          },
+        }),
+      });
+      const tokenJson = (await tokenRes.json().catch(() => ({}))) as { clientToken?: string; error?: string };
+      if (!tokenRes.ok || !tokenJson.clientToken) {
+        throw new Error(tokenJson.error || 'No se pudo preparar la subida del APK.');
+      }
+      const blob = await put(pathname, file, {
         access: 'public',
-        handleUploadUrl: '/api/admin/apk-upload',
-        headers: { Authorization: `Bearer ${token}` },
+        token: tokenJson.clientToken,
         contentType: 'application/vnd.android.package-archive',
-        clientPayload: JSON.stringify({ track }),
         multipart: true,
       });
       if (track === 'passenger') setPassengerApkUrl(blob.url);
