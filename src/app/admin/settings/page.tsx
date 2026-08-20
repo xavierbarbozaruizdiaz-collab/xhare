@@ -665,6 +665,68 @@ export default function AdminSettingsPage() {
     if (nextUrls[4]) setHeroImage5Url(nextUrls[4]);
   }
 
+  async function persistDownloadSetting(key: string, value: string) {
+    const nowIso = new Date().toISOString();
+    let { error } = await supabase.from('settings').upsert({ key, value, updated_at: nowIso }, { onConflict: 'key' });
+    if (error) {
+      const updated = await supabase.from('settings').update({ value, updated_at: nowIso }).eq('key', key);
+      error = updated.error;
+    }
+    return error;
+  }
+
+  async function handleApkUpload(
+    e: React.ChangeEvent<HTMLInputElement>,
+    track: 'passenger' | 'driver'
+  ) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const name = file.name.toLowerCase();
+    if (!name.endsWith('.apk')) {
+      alert('Elegí un archivo .apk');
+      e.target.value = '';
+      return;
+    }
+
+    const maxBytes = 50 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      alert('El APK pesa más de 50 MB, que es el máximo que acepta el depósito ahora. Usá el APK más liviano o avisame para subir el límite.');
+      e.target.value = '';
+      return;
+    }
+
+    const bucket = mediaBucket.trim() || 'app-releases';
+    const stamp = Date.now();
+    const path = `apks/${track}-${stamp}.apk`;
+    const field = track === 'passenger' ? 'apk-passenger' : 'apk-driver';
+    setUploadingField(field);
+
+    const uploadRes = await supabase.storage.from(bucket).upload(path, file, {
+      cacheControl: '3600',
+      upsert: true,
+      contentType: 'application/vnd.android.package-archive',
+    });
+    setUploadingField(null);
+    e.target.value = '';
+
+    if (uploadRes.error) {
+      alert(`No se pudo subir el APK: ${uploadRes.error.message}`);
+      return;
+    }
+
+    const publicUrl = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+    if (track === 'passenger') setPassengerApkUrl(publicUrl);
+    else setDriverApkUrl(publicUrl);
+
+    const key =
+      track === 'passenger' ? DOWNLOAD_SETTINGS_KEYS.passengerApkUrl : DOWNLOAD_SETTINGS_KEYS.driverApkUrl;
+    const persistError = await persistDownloadSetting(key, publicUrl);
+    if (persistError) {
+      alert('El archivo se subió, pero falta tocar “Guardar descargas” para publicarlo.');
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex justify-center py-12">
@@ -1066,7 +1128,8 @@ export default function AdminSettingsPage() {
       >
         <h2 className="text-lg font-semibold text-gray-900 mb-1">Descarga APK (landing / ads)</h2>
         <p className="text-sm text-gray-600 mb-5">
-          Configurá links públicos para <code>/descargar</code> (flyers, Meta Ads, landing).
+          Subí acá los archivos <code>.apk</code> de pasajero y conductor. Quedan públicos en{' '}
+          <code>/descargar</code>. También podés pegar un link si el archivo ya está en otro lado.
         </p>
         {downloadLoading ? (
           <div className="flex justify-center py-6">
@@ -1097,7 +1160,7 @@ export default function AdminSettingsPage() {
               </div>
             </div>
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">URL APK pasajero</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">APK pasajero</label>
               <input
                 type="url"
                 value={passengerApkUrl}
@@ -1105,9 +1168,22 @@ export default function AdminSettingsPage() {
                 placeholder="https://..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               />
+              <div className="mt-2">
+                <input
+                  type="file"
+                  accept=".apk,application/vnd.android.package-archive"
+                  onChange={(e) => void handleApkUpload(e, 'passenger')}
+                  className="text-sm"
+                />
+                {uploadingField === 'apk-passenger' ? (
+                  <p className="text-xs text-gray-500 mt-1">Subiendo APK pasajero...</p>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-1">Elegí el archivo .apk de pasajero desde tu computadora (hasta 50 MB).</p>
+                )}
+              </div>
             </div>
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">URL APK conductor</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">APK conductor</label>
               <input
                 type="url"
                 value={driverApkUrl}
@@ -1115,6 +1191,19 @@ export default function AdminSettingsPage() {
                 placeholder="https://..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               />
+              <div className="mt-2">
+                <input
+                  type="file"
+                  accept=".apk,application/vnd.android.package-archive"
+                  onChange={(e) => void handleApkUpload(e, 'driver')}
+                  className="text-sm"
+                />
+                {uploadingField === 'apk-driver' ? (
+                  <p className="text-xs text-gray-500 mt-1">Subiendo APK conductor...</p>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-1">Elegí el archivo .apk de conductor desde tu computadora (hasta 50 MB).</p>
+                )}
+              </div>
             </div>
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-1">URL guía de instalación (opcional)</label>
