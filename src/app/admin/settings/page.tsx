@@ -12,6 +12,34 @@ import {
   LEGAL_SETTINGS_KEYS,
 } from '@/lib/legal-documents';
 import { DEFAULT_DOWNLOAD_VALUES, DOWNLOAD_SETTINGS_KEYS } from '@/lib/download-links';
+import { LandingMediaSlot } from '@/components/admin/LandingMediaSlot';
+
+type LandingImageField =
+  | 'hero'
+  | 'hero2'
+  | 'hero3'
+  | 'hero4'
+  | 'hero5'
+  | 's1'
+  | 's2'
+  | 's3'
+  | 's4'
+  | 's5';
+
+const LANDING_IMAGE_SETTING_KEYS: Record<LandingImageField, string> = {
+  hero: DOWNLOAD_SETTINGS_KEYS.heroImageUrl,
+  hero2: DOWNLOAD_SETTINGS_KEYS.heroImage2Url,
+  hero3: DOWNLOAD_SETTINGS_KEYS.heroImage3Url,
+  hero4: DOWNLOAD_SETTINGS_KEYS.heroImage4Url,
+  hero5: DOWNLOAD_SETTINGS_KEYS.heroImage5Url,
+  s1: DOWNLOAD_SETTINGS_KEYS.screenshot1Url,
+  s2: DOWNLOAD_SETTINGS_KEYS.screenshot2Url,
+  s3: DOWNLOAD_SETTINGS_KEYS.screenshot3Url,
+  s4: DOWNLOAD_SETTINGS_KEYS.screenshot4Url,
+  s5: DOWNLOAD_SETTINGS_KEYS.screenshot5Url,
+};
+
+const LANDING_HERO_FIELDS: LandingImageField[] = ['hero', 'hero2', 'hero3', 'hero4', 'hero5'];
 
 const KEY = 'driver_pending_instructions';
 const SHORTCUTS_KEY = 'passenger_home_shortcuts_visible';
@@ -565,19 +593,33 @@ export default function AdminSettingsPage() {
     window.setTimeout(() => setDownloadDone(false), 2500);
   }
 
+  function applyLandingImageUrl(field: LandingImageField, url: string) {
+    if (field === 'hero') setHeroImageUrl(url);
+    if (field === 'hero2') setHeroImage2Url(url);
+    if (field === 'hero3') setHeroImage3Url(url);
+    if (field === 'hero4') setHeroImage4Url(url);
+    if (field === 'hero5') setHeroImage5Url(url);
+    if (field === 's1') setScreenshot1Url(url);
+    if (field === 's2') setScreenshot2Url(url);
+    if (field === 's3') setScreenshot3Url(url);
+    if (field === 's4') setScreenshot4Url(url);
+    if (field === 's5') setScreenshot5Url(url);
+  }
+
+  async function persistLandingImage(field: LandingImageField, url: string) {
+    applyLandingImageUrl(field, url);
+    const persistError = await persistDownloadSetting(LANDING_IMAGE_SETTING_KEYS[field], url);
+    if (persistError) {
+      alert('El cambio quedó en el formulario, pero falta tocar “Guardar descargas” para publicarlo.');
+      return;
+    }
+    setDownloadDone(true);
+    window.setTimeout(() => setDownloadDone(false), 2500);
+  }
+
   async function handleImageUpload(
     e: React.ChangeEvent<HTMLInputElement>,
-    field:
-      | 'hero'
-      | 'hero2'
-      | 'hero3'
-      | 'hero4'
-      | 'hero5'
-      | 's1'
-      | 's2'
-      | 's3'
-      | 's4'
-      | 's5'
+    field: LandingImageField
   ) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -602,16 +644,12 @@ export default function AdminSettingsPage() {
     }
 
     const publicUrl = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
-    if (field === 'hero') setHeroImageUrl(publicUrl);
-    if (field === 'hero2') setHeroImage2Url(publicUrl);
-    if (field === 'hero3') setHeroImage3Url(publicUrl);
-    if (field === 'hero4') setHeroImage4Url(publicUrl);
-    if (field === 'hero5') setHeroImage5Url(publicUrl);
-    if (field === 's1') setScreenshot1Url(publicUrl);
-    if (field === 's2') setScreenshot2Url(publicUrl);
-    if (field === 's3') setScreenshot3Url(publicUrl);
-    if (field === 's4') setScreenshot4Url(publicUrl);
-    if (field === 's5') setScreenshot5Url(publicUrl);
+    await persistLandingImage(field, publicUrl);
+  }
+
+  async function handleImageClear(field: LandingImageField) {
+    if (!window.confirm('¿Quitar esta imagen de la landing?')) return;
+    await persistLandingImage(field, '');
   }
 
   async function handleHeroBatchUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -659,11 +697,20 @@ export default function AdminSettingsPage() {
 
     setUploadingField(null);
     e.target.value = '';
-    if (nextUrls[0]) setHeroImageUrl(nextUrls[0]);
-    if (nextUrls[1]) setHeroImage2Url(nextUrls[1]);
-    if (nextUrls[2]) setHeroImage3Url(nextUrls[2]);
-    if (nextUrls[3]) setHeroImage4Url(nextUrls[3]);
-    if (nextUrls[4]) setHeroImage5Url(nextUrls[4]);
+    const uploadedUntil = Math.min(startSlot + files.length, 5);
+    for (let i = startSlot; i < uploadedUntil; i += 1) {
+      const field = LANDING_HERO_FIELDS[i];
+      const url = nextUrls[i];
+      if (!field || !url) continue;
+      applyLandingImageUrl(field, url);
+      const persistError = await persistDownloadSetting(LANDING_IMAGE_SETTING_KEYS[field], url);
+      if (persistError) {
+        alert('Las imágenes se subieron, pero falta tocar “Guardar descargas” para publicarlas.');
+        return;
+      }
+    }
+    setDownloadDone(true);
+    window.setTimeout(() => setDownloadDone(false), 2500);
   }
 
   async function persistDownloadSetting(key: string, value: string) {
@@ -1312,7 +1359,8 @@ export default function AdminSettingsPage() {
             <div className="mb-4 rounded-lg border border-gray-200 p-3 bg-gray-50">
               <p className="text-sm font-medium text-gray-800 mb-1">Hero carrusel (1 a 5 imágenes)</p>
               <p className="text-xs text-gray-600 mb-2">
-                Seleccioná varias imágenes juntas y se asignan automáticamente a Hero 1..5 en orden.
+                Ves la imagen actual en cada recuadro. Podés reemplazarla, quitarla, o subir varias juntas
+                (se asignan a los huecos vacíos, o desde Hero 1 si ya están todas ocupadas).
               </p>
               <input
                 type="file"
@@ -1323,156 +1371,106 @@ export default function AdminSettingsPage() {
               />
               {uploadingField === 'hero-batch' ? (
                 <p className="text-xs text-gray-500 mt-1">Subiendo carrusel hero...</p>
-              ) : null}
+              ) : (
+                <p className="text-xs text-gray-500 mt-1">
+                  Subir, reemplazar o quitar se publica en /descargar al momento.
+                </p>
+              )}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 1 URL</label>
-                <input
-                  type="url"
-                  value={heroImageUrl}
-                  onChange={(e) => setHeroImageUrl(e.target.value)}
-                  placeholder="https://.../hero1.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 2 URL</label>
-                <input
-                  type="url"
-                  value={heroImage2Url}
-                  onChange={(e) => setHeroImage2Url(e.target.value)}
-                  placeholder="https://.../hero2.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 3 URL</label>
-                <input
-                  type="url"
-                  value={heroImage3Url}
-                  onChange={(e) => setHeroImage3Url(e.target.value)}
-                  placeholder="https://.../hero3.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 4 URL</label>
-                <input
-                  type="url"
-                  value={heroImage4Url}
-                  onChange={(e) => setHeroImage4Url(e.target.value)}
-                  placeholder="https://.../hero4.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Hero 5 URL</label>
-                <input
-                  type="url"
-                  value={heroImage5Url}
-                  onChange={(e) => setHeroImage5Url(e.target.value)}
-                  placeholder="https://.../hero5.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+              <LandingMediaSlot
+                label="Hero 1"
+                variant="hero"
+                url={heroImageUrl}
+                onUrlChange={setHeroImageUrl}
+                onFileSelected={(e) => void handleImageUpload(e, 'hero')}
+                onClear={() => void handleImageClear('hero')}
+                uploading={uploadingField === 'hero'}
+              />
+              <LandingMediaSlot
+                label="Hero 2"
+                variant="hero"
+                url={heroImage2Url}
+                onUrlChange={setHeroImage2Url}
+                onFileSelected={(e) => void handleImageUpload(e, 'hero2')}
+                onClear={() => void handleImageClear('hero2')}
+                uploading={uploadingField === 'hero2'}
+              />
+              <LandingMediaSlot
+                label="Hero 3"
+                variant="hero"
+                url={heroImage3Url}
+                onUrlChange={setHeroImage3Url}
+                onFileSelected={(e) => void handleImageUpload(e, 'hero3')}
+                onClear={() => void handleImageClear('hero3')}
+                uploading={uploadingField === 'hero3'}
+              />
+              <LandingMediaSlot
+                label="Hero 4"
+                variant="hero"
+                url={heroImage4Url}
+                onUrlChange={setHeroImage4Url}
+                onFileSelected={(e) => void handleImageUpload(e, 'hero4')}
+                onClear={() => void handleImageClear('hero4')}
+                uploading={uploadingField === 'hero4'}
+              />
+              <LandingMediaSlot
+                label="Hero 5"
+                variant="hero"
+                url={heroImage5Url}
+                onUrlChange={setHeroImage5Url}
+                onFileSelected={(e) => void handleImageUpload(e, 'hero5')}
+                uploading={uploadingField === 'hero5'}
+                onClear={() => void handleImageClear('hero5')}
+              />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 1 URL</label>
-                <input
-                  type="url"
-                  value={screenshot1Url}
-                  onChange={(e) => setScreenshot1Url(e.target.value)}
-                  placeholder="https://.../s1.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-                <div className="mt-2">
-                  <input
-                    type="file"
-                    accept="image/webp,image/avif,image/png,image/jpeg"
-                    onChange={(e) => void handleImageUpload(e, 's1')}
-                    className="text-sm"
-                  />
-                  {uploadingField === 's1' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 1...</p> : null}
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 2 URL</label>
-                <input
-                  type="url"
-                  value={screenshot2Url}
-                  onChange={(e) => setScreenshot2Url(e.target.value)}
-                  placeholder="https://.../s2.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-                <div className="mt-2">
-                  <input
-                    type="file"
-                    accept="image/webp,image/avif,image/png,image/jpeg"
-                    onChange={(e) => void handleImageUpload(e, 's2')}
-                    className="text-sm"
-                  />
-                  {uploadingField === 's2' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 2...</p> : null}
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 3 URL</label>
-                <input
-                  type="url"
-                  value={screenshot3Url}
-                  onChange={(e) => setScreenshot3Url(e.target.value)}
-                  placeholder="https://.../s3.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-                <div className="mt-2">
-                  <input
-                    type="file"
-                    accept="image/webp,image/avif,image/png,image/jpeg"
-                    onChange={(e) => void handleImageUpload(e, 's3')}
-                    className="text-sm"
-                  />
-                  {uploadingField === 's3' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 3...</p> : null}
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 4 URL</label>
-                <input
-                  type="url"
-                  value={screenshot4Url}
-                  onChange={(e) => setScreenshot4Url(e.target.value)}
-                  placeholder="https://.../s4.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-                <div className="mt-2">
-                  <input
-                    type="file"
-                    accept="image/webp,image/avif,image/png,image/jpeg"
-                    onChange={(e) => void handleImageUpload(e, 's4')}
-                    className="text-sm"
-                  />
-                  {uploadingField === 's4' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 4...</p> : null}
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Screenshot 5 URL</label>
-                <input
-                  type="url"
-                  value={screenshot5Url}
-                  onChange={(e) => setScreenshot5Url(e.target.value)}
-                  placeholder="https://.../s5.webp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-                <div className="mt-2">
-                  <input
-                    type="file"
-                    accept="image/webp,image/avif,image/png,image/jpeg"
-                    onChange={(e) => void handleImageUpload(e, 's5')}
-                    className="text-sm"
-                  />
-                  {uploadingField === 's5' ? <p className="text-xs text-gray-500 mt-1">Subiendo screenshot 5...</p> : null}
-                </div>
-              </div>
+            <p className="text-sm font-medium text-gray-800 mb-2">Screenshots</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+              <LandingMediaSlot
+                label="Screenshot 1"
+                variant="screenshot"
+                url={screenshot1Url}
+                onUrlChange={setScreenshot1Url}
+                onFileSelected={(e) => void handleImageUpload(e, 's1')}
+                onClear={() => void handleImageClear('s1')}
+                uploading={uploadingField === 's1'}
+              />
+              <LandingMediaSlot
+                label="Screenshot 2"
+                variant="screenshot"
+                url={screenshot2Url}
+                onUrlChange={setScreenshot2Url}
+                onFileSelected={(e) => void handleImageUpload(e, 's2')}
+                onClear={() => void handleImageClear('s2')}
+                uploading={uploadingField === 's2'}
+              />
+              <LandingMediaSlot
+                label="Screenshot 3"
+                variant="screenshot"
+                url={screenshot3Url}
+                onUrlChange={setScreenshot3Url}
+                onFileSelected={(e) => void handleImageUpload(e, 's3')}
+                onClear={() => void handleImageClear('s3')}
+                uploading={uploadingField === 's3'}
+              />
+              <LandingMediaSlot
+                label="Screenshot 4"
+                variant="screenshot"
+                url={screenshot4Url}
+                onUrlChange={setScreenshot4Url}
+                onFileSelected={(e) => void handleImageUpload(e, 's4')}
+                onClear={() => void handleImageClear('s4')}
+                uploading={uploadingField === 's4'}
+              />
+              <LandingMediaSlot
+                label="Screenshot 5"
+                variant="screenshot"
+                url={screenshot5Url}
+                onUrlChange={setScreenshot5Url}
+                onFileSelected={(e) => void handleImageUpload(e, 's5')}
+                onClear={() => void handleImageClear('s5')}
+                uploading={uploadingField === 's5'}
+              />
             </div>
             <button
               type="submit"
